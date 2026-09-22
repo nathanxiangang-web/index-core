@@ -1,0 +1,10 @@
+.work/
+.codeartsbridge/
+.codeartsdoer/
+.arts/
+.opencode/
+bridge-probe-w02.txt
+bridge-probe-w02-v2.txt
+worker_test_w02.py
+*.tmp
+__pycache__/
