@@ -48,6 +48,18 @@ Canonical Inventory
    Change Journal
 ```
 
+## 2.1 Initial persistence decision
+
+The first formal persistence target for PoC and MVP is **PostgreSQL**.
+
+There is no SQLite-first implementation phase.
+
+This is a storage implementation decision, not a Domain coupling decision:
+
+- Kernel depends on Store Interface
+- Domain types do not depend on PostgreSQL schema/ORM
+- another store may be introduced later without redefining Canonical Inventory semantics
+
 ## 3. Responsibility boundaries
 
 ### Collector layer
