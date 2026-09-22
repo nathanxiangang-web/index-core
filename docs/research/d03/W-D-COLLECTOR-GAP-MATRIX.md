@@ -257,14 +257,14 @@ D02 (`docs/research/d02/W-D-PROVIDER-SNAPSHOT-MATRIX.md`) established for AList/
 - **Pagination**: offset-based, unstable under concurrent modification (D02 V4, C4).
 
 | Dimension | AList/OpenList (D02) | rclone (D03) | fsspec (D03) | Gap status |
-|-----------|----------------------|--------------|--------------|------------|
-| 1. Identity | NO (path-based, provider ID discarded) | DRIVER_DEPENDENT (optional `IDer`, 38 backends) | NO (abstract) / DRIVER_DEPENDENT (concrete) | rclone is strictly better; fsspec matches AList in the abstract. |
-| 2. Completeness | NO (inferred from page size) | PARTIAL (iterator exhaustion + error count) | PARTIAL (generator exhaustion, `on_error="omit"` default swallows) | rclone and fsspec are slightly better (streamed), but none provide an explicit done flag. |
-| 3. Partial failure | PARTIAL (HTTP status, non-uniform) | PARTIAL (typed errors + per-dir log, first error only) | PARTIAL (`on_error` callback, no typed errors) | rclone best (typed errors), fsspec second (callable), AList worst. |
-| 4. Checkpoint | NO | NO | NO | Universal gap. All three require restart-from-root. |
-| 5. Delta/notify | NO | DRIVER_DEPENDENT (14/69 backends, polling, no replay) | NO | rclone has a partial hint mechanism; AList and fsspec have none. |
-| 6. Hash | NO (not in list) | DRIVER_DEPENDENT (real hashes on most backends, opt-in) | PARTIAL (weak, metadata-hash default) | rclone best, fsspec second (metadata hash is a hint, not content), AList worst. |
-| 7. Pagination | PARTIAL (offset, unstable) | YES (internal) / PARTIAL (RC buffers, no resume) | NO (abstract) / DRIVER_DEPENDENT (concrete) | rclone best (internal handling), AList second (offset, unstable), fsspec abstract has none. |
+|-----------|----------------------|----------------------|----------------------|--------------|--------|
+| 1. Identity | AList: DRIVER_DEPENDENT (`id` in `/api/fs/list`, some Drivers); OpenList: NO (public FS API no id) | DRIVER_DEPENDENT (optional `IDer`, 38 backends) | NO (abstract) / DRIVER_DEPENDENT (concrete) | rclone is strictly better; AList partial; OpenList/fsspec weakest. |
+| 2. Completeness | AList/OpenList: PARTIAL (inferred from page size, error silently swallowed) | PARTIAL (contract-level completeness with explicit failure propagation; cannot prevent silent truncation) | PARTIAL (generator exhaustion, `on_error="omit"` default swallows) | rclone best (explicit error return); fsspec and AList/OpenList swallow errors. |
+| 3. Partial failure | AList/OpenList: NO (`storage.List` error silently swallowed, HTTP status non-uniform) | PARTIAL (typed errors + per-dir log, non-nil error return) | PARTIAL (`on_error` callback, no typed errors) | rclone best (typed errors + non-nil return), fsspec second (callable), AList/OpenList worst. |
+| 4. Checkpoint | AList/OpenList: NO | NO | NO | Universal gap. All require restart-from-root. |
+| 5. Delta/notify | AList/OpenList: NO | DRIVER_DEPENDENT (14/69 backends, polling, no replay) | NO | rclone has a partial hint mechanism; AList/OpenList and fsspec have none. |
+| 6. Hash | AList/OpenList: DRIVER_DEPENDENT (`hash_info` field exists, Driver-dependent) | DRIVER_DEPENDENT (real hashes on most backends, opt-in) | PARTIAL (weak, metadata-hash default) | rclone best, AList/OpenList DRIVER_DEPENDENT, fsspec weak (metadata hash). |
+| 7. Pagination | AList/OpenList: PARTIAL (offset, unstable) | YES (internal) / PARTIAL (RC buffers, no resume) | NO (abstract) / DRIVER_DEPENDENT (concrete) | rclone best (internal handling), AList/OpenList second (offset, unstable), fsspec abstract has none. |
 
 ---
 
@@ -288,9 +288,16 @@ FACT: fsspec is strictly weaker than rclone here. rclone at least defines an opt
 
 ### F3. Can rclone prove provider-complete traversal?
 
-**NO.** rclone's `ListR` (`fs/features.go:670-685`) signals completion by returning nil (iterator exhaustion). There is no `done`/`total`/`has_more` field in the contract. `fs/walk/walk.go:168-179` continues past per-directory errors and returns the first error at the end; the set of skipped directories is logged, not returned as a structured value. `fs/operations/rc.go:69-79` buffers the full list and returns it whole, with no completeness flag.
+**PARTIAL — contract-level completeness with explicit failure propagation, not proof against silent backend truncation.**
 
-FACT: rclone cannot *prove* completeness. It can signal "an error occurred" (via the returned error) but not "this is the complete list, nothing was skipped". A silent backend truncation yields a partial list indistinguishable from a complete one. This confirms D02 C10.
+- `List()` contract expects a complete single directory (`fs/types.go:20-29`)
+- Explicit directory-list errors ultimately return non-nil error (`listRwalk` continues other directories but returns error at end, `fs/walk/walk.go:168-185`)
+- `err == nil` is a "successful traversal" signal based on rclone contract
+- `err != nil` can explicitly downgrade Snapshot to incomplete
+- Missing done flag is not the core issue; even with a done flag, cannot prove backend didn't silently omit items
+- rclone cannot prove provider never silent-truncates
+
+This is where D03 proves rclone is stronger than AList/OpenList: AList `storage.List` silently swallows errors, rclone propagates them.
 
 ### F4. Can fsspec prove provider-complete traversal?
 
@@ -311,41 +318,53 @@ FACT: fsspec is strictly weaker than rclone here. With `on_error="omit"`, fsspec
 
 INFERENCE: the *reliably exposed* partial failures are those where the backend returns an explicit error (rclone logs+counts, fsspec `on_error` callback). The *unreliably exposed* ones are silent truncation, stale cache, and (for fsspec/AList) error-type conflation. A snapshot builder can rely on "error returned => scan incomplete" but cannot rely on "no error => scan complete".
 
-### F6. Which capabilities must IndexCore ultimately bear itself?
+### F6. Capability ownership candidates (final assignment deferred to Architecture Gate)
 
-Based on the D03 matrix and the D02 cross-reference, these capabilities are **not reliably provided by any of rclone, fsspec, AList, or OpenList** and must be borne by IndexCore:
+"Tool does not provide" ≠ "Kernel must implement". The following are three-tier ownership candidates. Final assignment is deferred to Architecture Gate.
 
-1. **Stable object identity through rename/move.** rclone's `IDer` is optional and absent on S3/WebDAV/local; fsspec has no id interface; AList/OpenList discard the provider ID (D02 V16). IndexCore must either (a) accept path-based identity with its known fragility, or (b) bypass these tools and call provider APIs directly for backends where a stable ID exists.
+#### Kernel safety semantic candidates
+- canonical resource identity 的决策/连续性规则
+- Snapshot completeness acceptance / Safety Gate
+- Canonical Inventory
+- Safe Reconcile / removal safety
+- Change Journal (canonical change journal, not equal to provider-native delta)
 
-2. **Scan-state checkpoint and resume.** None of the four tools have it (D03 sections 2.4, 3.4; D02 does not list it). IndexCore must build its own checkpoint (persisted scan position, visited-set, skipped-set) and restart from there on interruption.
+#### Collector / Scanner responsibility candidates
+- traversal / pagination
+- provider error capture
+- skipped-path evidence
+- cache bypass / refresh policy
+- scan checkpoint/resume (蓝图已明确放在 Scanner Resume 阶段，不能直接塞进 Kernel)
 
-3. **Provable completeness signal.** None emit an explicit "this is the complete list, nothing was skipped/truncated" flag (D03 sections 2.2, 3.2; D02 C10). IndexCore must treat every listing as provisional and reconcile via diff + re-scan.
+#### Optional capability, must not be forced
+- provider_object_id
+- hash / content hash (蓝图明确 `hash optional`，第一阶段绝不能要求所有 Provider 有 hash)
+- native delta / change notify
+- provider metadata
 
-4. **Content hash for all backends.** rclone's `Hashes()` is DRIVER_DEPENDENT and returns `hash.None` for WebDAV (`backend/webdav/webdav.go:1319`); fsspec's `checksum`/`ukey` default to metadata-hash (`fsspec/spec.py:766`, `fsspec/spec.py:1453`); AList has no hash in list (D02 V1). IndexCore must compute content hashes itself where the tool does not provide them, accepting the cost.
-
-5. **Durable delta log with replay.** rclone `ChangeNotify` is a polling hint on 14/69 backends with no replay (`fs/features.go:569-581`); fsspec and AList have no notify (D03 sections 2.5, 3.5; D02 V2). IndexCore must build its own change log (snapshot diff + persisted event log) and cannot rely on any tool's delta.
-
-6. **Structured skipped-set on partial failure.** rclone returns only the first error (`fs/march/march.go:283`); fsspec `walk(on_error="omit")` swallows failures by default (`fsspec/spec.py:471`); AList gives HTTP status only (D02 C11). IndexCore must capture the skipped-set itself (by tracking visited dirs and diffing against expected) rather than relying on the tool to return it.
-
-7. **Cross-root disambiguation in the entry.** Neither rclone nor fsspec embeds the root/storage identity in each listed entry (D02 C7). IndexCore must carry root identity out-of-band and attach it to each `SnapshotEntry`.
-
-8. **Real-time state under cache.** rclone VFS cache and fsspec `DirCache` return stale data within TTL (`fsspec/dircache.py:1-100`; D02 C6). IndexCore must pin cache=off for snapshot scans or treat cached listings as eventual-consistency only.
+#### Known facts (ownership TBD — Architecture Gate must assign responsibility)
+- Stable object identity through rename/move: rclone `IDer` optional and absent on S3/WebDAV/local; fsspec no id interface; AList has `id` but DRIVER_DEPENDENT; OpenList does not expose id.
+- Scan-state checkpoint and resume: none of the four tools have it.
+- Provable completeness signal: none emit an explicit "complete" flag; rclone provides contract-level completeness with explicit failure propagation (Q3).
+- Structured skipped-set on partial failure: rclone returns only the first error; fsspec default omits; AList gives HTTP status only.
+- Cross-root disambiguation in the entry: neither rclone nor fsspec embeds root/storage identity in each listed entry.
+- Real-time state under cache: rclone VFS cache and fsspec `DirCache` return stale data within TTL.
 
 ### F7. Is Discovery already sufficient to enter Architecture Gate?
 
-**YES, with explicit scope.** The D02 + D03 investigation has established, with source citations, the capability profile of four candidate collector layers (AList, OpenList, rclone, fsspec) across seven dimensions. The gaps are now precisely characterized:
+**YES.** D02 + D03 evidence is sufficient to enter Architecture Gate. The capability profile of four candidate collector layers (AList, OpenList, rclone, fsspec) across seven dimensions is established with source citations.
 
-- **Identity**: rclone partial (optional `IDer`), fsspec/AList/OpenList absent.
-- **Completeness**: all four infer from exhaustion, none prove.
-- **Partial failure**: rclone best (typed errors + log), fsspec second (callback), AList/OpenList worst.
-- **Checkpoint**: universal absence -- IndexCore must build it.
-- **Delta**: rclone partial hint, others absent -- IndexCore must build it.
-- **Hash**: rclone DRIVER_DEPENDENT, fsspec weak, AList/OpenList absent.
-- **Pagination**: rclone internal, fsspec/AList offset/unstable.
+- **Identity**: rclone partial (optional `IDer`), AList DRIVER_DEPENDENT, fsspec/OpenList absent.
+- **Completeness**: rclone PARTIAL (contract-level with explicit failure propagation), others infer from exhaustion.
+- **Partial failure**: rclone best (typed errors + log + non-nil error return), fsspec second (callback), AList/OpenList worst (silent swallow).
+- **Checkpoint**: universal absence.
+- **Delta**: rclone partial hint (polling, no replay), others absent.
+- **Hash**: rclone DRIVER_DEPENDENT, fsspec weak (metadata hash), AList/OpenList DRIVER_DEPENDENT.
+- **Pagination**: rclone internal, fsspec/AList/OpenList offset/unstable.
 
-FACT: every gap is now backed by a source citation (this document) or the D02 document. No cell is UNKNOWN. The remaining unknowns from D02 (U1-U3 exact commit SHAs) are resolved for rclone and fsspec in D03 section 0; AList/OpenList SHAs remain unverified but their structural facts (D02 V1-V16) are long-stable and do not depend on a specific commit.
+Remaining unknowns (U1-U5) are not blockers for defining the first architecture contracts; they are implementation/integration validation items.
 
-INFERENCE: Discovery has produced enough evidence to decide what IndexCore must build itself (F6) and what it can delegate to a collector layer. The Architecture Gate can now be entered with a grounded contract: the collector provides best-effort listing with per-path error visibility; IndexCore provides identity, checkpoint, completeness reconciliation, content hash, delta log, skipped-set capture, root disambiguation, and cache bypass. No further source investigation is required to scope the architecture; remaining work is design, not discovery.
+INFERENCE: No further source investigation is required to scope the architecture; remaining work is design, not discovery. Architecture Gate decides: which Collector to use, and how identity/completeness/checkpoint/delta/hash responsibilities are assigned across Kernel and Collector layers.
 
 ---
 
@@ -413,10 +432,10 @@ INFERENCE: Discovery has produced enough evidence to decide what IndexCore must 
 
 ## 8. Summary
 
-- **rclone** provides the richest collector interface of the four tools examined across D02+D03: optional `IDer` (38 backends), `Hashes()` (68 backends), `Mover` (51 backends), `ListR` (27 backends), `ChangeNotifier` (14 backends), and typed errors. But every advanced capability is DRIVER_DEPENDENT -- identity, hash, delta, and move are each absent on a material subset of backends (S3, WebDAV, local). `ChangeNotify` is a polling hint with no replay. There is no checkpoint/resume and no provable completeness signal.
+- **rclone** provides the richest collector interface of the four tools examined across D02+D03: optional `IDer` (38 backends), `Hashes()` (68 backends), `Mover` (51 backends), `ListR` (27 backends), `ChangeNotifier` (14 backends), and typed errors. But every advanced capability is DRIVER_DEPENDENT -- identity, hash, delta, and move are each absent on a material subset of backends (S3, WebDAV, local). `ChangeNotify` is a polling hint with no replay. There is no checkpoint/resume. Completeness is PARTIAL: contract-level with explicit failure propagation, but cannot prevent silent backend truncation.
 - **fsspec** provides a clean Pythonic abstract filesystem with explicit partial-failure visibility (`on_error` callback) and an in-memory listing cache. But it has no object identity interface, no content hash by default (`checksum`/`ukey` are metadata hashes), no change notification, no checkpoint/resume, and no abstract pagination. Its in-tree implementations are limited to local/memory/HTTP/WebHDFS/FTP/SFTP/git/github/jupyter -- the major cloud backends live in external packages not inspected here.
-- **AList/OpenList** (from D02) remain the weakest: path-based identity with provider ID discarded, no hash in list, no delta, no notify, offset pagination with no completion flag, and a cache layer that breaks real-time completeness.
-- **No tool** provides: stable identity through rename/move for all backends, content hash for all backends, provable completeness, checkpoint/resume, durable delta with replay, real-time state under cache, structured skipped-set, or cross-root disambiguation in the entry. These eight capabilities must be borne by IndexCore (F6).
-- **Discovery is sufficient** to enter the Architecture Gate (F7). Every gap is source-cited; no cell is UNKNOWN. The Architecture Gate can now scope a grounded contract: collector provides best-effort listing with per-path error visibility; IndexCore provides identity, checkpoint, completeness reconciliation, content hash, delta log, skipped-set capture, root disambiguation, and cache bypass.
+- **AList** (from D02) has `id` in `/api/fs/list` (DRIVER_DEPENDENT) and `hash_info` (DRIVER_DEPENDENT), but `storage.List` error is silently swallowed. **OpenList** does not expose `id` in public FS API. Both have offset pagination with no completion flag, and a cache layer that breaks real-time completeness.
+- **No tool** provides: stable identity through rename/move for all backends, provable completeness, checkpoint/resume, durable delta with replay, real-time state under cache, structured skipped-set, or cross-root disambiguation in the entry. Capability ownership is deferred to Architecture Gate (F6).
+- **Discovery is sufficient** to enter the Architecture Gate (F7). Remaining unknowns (U1-U5) are not blockers for defining the first architecture contracts; they are implementation/integration validation items. Architecture Gate decides: which Collector to use, and how identity/completeness/checkpoint/delta/hash responsibilities are assigned across Kernel and Collector layers.
 
-This report presents facts and cross-references only. It does not select a collector and does not design the snapshot architecture.
+This report presents facts and cross-references only. It does not select a collector, does not assign Kernel ownership, and does not design the snapshot architecture.
