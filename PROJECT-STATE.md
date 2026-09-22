@@ -67,6 +67,16 @@ The immediate question is:
 
 These become D03 candidates only if D02 proves AList/OpenList insufficient.
 
+## Accepted persistence decision
+
+**PostgreSQL-first**
+
+- PoC inventory uses PostgreSQL
+- MVP canonical inventory uses PostgreSQL
+- there is no SQLite-first formal implementation stage
+- final schema is still deferred until Architecture Gate
+- Kernel remains dependent on Store Interface rather than PostgreSQL-specific Domain types
+
 ## Architecture status
 
 **NOT FROZEN**
