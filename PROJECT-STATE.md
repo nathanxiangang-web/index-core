@@ -12,43 +12,32 @@
 
 Latest accepted baseline:
 
-`02a5a5e525ef5fd626418063f33b217b0b34e498`
+`74ae0ab2598ea7e86e4dfbc16fb9b6ec7dc7ea35`
 
-Accepted content now includes:
+Accepted content includes:
 
 - project blueprint v0.1
 - context governance
 - PostgreSQL-first persistence decision
 - Discovery 01 Xiaoya research
 - Discovery 02 AList/OpenList collector research
+- Discovery 03 rclone/fsspec collector gap comparison
 
 ## Current phase
 
-**Discovery 03 — Collector gap comparison**
+**Gate 1 — Architecture**
 
 Status:
 
-**PLANNED / AUTHORIZED NEXT**
+**READY TO START / NOT YET FROZEN**
 
-D03 is intentionally narrow.
+Discovery is closed.
 
-It exists only because D02 proved two unresolved hard gaps:
-
-1. no cross-driver stable resource identity
-2. public traversal cannot self-prove provider-complete snapshot semantics
-
-Research targets are limited to:
-
-- rclone
-- fsspec
-
-The purpose is not to replace AList/OpenList by default.
-
-The purpose is to determine whether mature alternatives already solve either hard gap before IndexCore designs its own solution.
+No product implementation is authorized yet.
 
 ## Latest accepted phase
 
-**Discovery 02 — AList / OpenList Collector capability investigation**
+**Discovery 03 — Collector Gap Comparison**
 
 Status:
 
@@ -56,31 +45,62 @@ Status:
 
 Accepted consolidated report:
 
-`docs/research/ALIST-OPENLIST-COLLECTOR-DISCOVERY-REPORT.md`
+`docs/research/D03-COLLECTOR-GAP-COMPARISON.md`
 
-## D02 accepted findings
+## Accepted D03 comparison findings
 
-1. AList/OpenList search index is a search projection, not Canonical Inventory.
-2. Public FS APIs can recursively enumerate resource candidates.
-3. Public API success does not prove provider-complete Snapshot semantics.
-4. `len(content)==total` and storage health checks are only weak sanity checks.
-5. `Parent + Name` / virtual path is a path-based matching key, not stable resource identity.
-6. AList provider `id` is driver-dependent.
-7. OpenList public FS API does not expose a general provider object ID.
-8. Representative drivers show materially different ID/hash/mtime behavior.
-9. No public native delta/change feed was found.
-10. AList/OpenList search indexing lacks durable checkpoint/resume, staging and atomic reconcile.
-11. Provider partial-list behavior can create unsafe deletion signals.
-12. D03 comparison is justified, but D02 does not select rclone/fsspec.
+1. rclone has the richest general Collector capability of the investigated options.
+2. rclone identity remains DRIVER_DEPENDENT; `IDer` is optional and absent on important backends such as local/WebDAV/S3.
+3. rclone completeness is PARTIAL:
+   - successful traversal is a contract-level success signal
+   - explicit traversal errors propagate and can mark a Snapshot incomplete
+   - silent backend truncation still cannot be disproven
+4. fsspec does not provide a general per-object stable identity abstraction.
+5. fsspec does not show a material architectural advantage for the current project.
+6. AList remains a viable Provider aggregation / Snapshot-source candidate:
+   - provider `id` is DRIVER_DEPENDENT
+   - `hash_info` is DRIVER_DEPENDENT
+   - error/completeness semantics are weaker than rclone's
+7. OpenList public FS API does not expose provider `id`.
+8. Broad donor discovery should stop. Remaining unknowns are implementation/integration validation items, not blockers for first architecture contracts.
 
-## Current control issues
+## Important non-decision
 
-- #1 — Project control tower
-- #17 — Windows Foreman D03
-- #18 — Worker A: rclone identity/metadata
-- #19 — Worker B: rclone completeness/RC/failure semantics
-- #20 — Worker C: fsspec identity/completeness gap check
-- #21 — Worker D: independent collector gap matrix
+D03 does **not** select the final Collector.
+
+Gate 1 must compare and assign responsibilities without prematurely choosing:
+
+- AList/OpenList
+- rclone
+- direct provider adapters
+- combinations of the above
+
+## Capability ownership candidates
+
+### Kernel safety semantic candidates
+
+- canonical resource identity decision / continuity rules
+- Snapshot completeness acceptance / Safety Gate
+- Canonical Inventory
+- Safe Reconcile / removal safety
+- Change Journal
+
+### Collector / Scanner responsibility candidates
+
+- traversal / pagination
+- provider error capture
+- skipped-path evidence
+- cache bypass / refresh policy
+- scan checkpoint / resume
+
+### Optional capabilities
+
+- provider_object_id
+- hash / content hash
+- native delta / change notify
+- provider metadata
+
+Final ownership is a Gate 1 architecture decision.
 
 ## Accepted persistence decision
 
@@ -89,71 +109,52 @@ Accepted consolidated report:
 - PoC inventory uses PostgreSQL
 - MVP canonical inventory uses PostgreSQL
 - there is no SQLite-first formal implementation stage
-- final schema is still deferred until Architecture Gate
+- final schema is still deferred until Gate 1
 - Kernel remains dependent on Store Interface rather than PostgreSQL-specific Domain types
 
-## Architecture status
+## Gate 1 must define
 
-**NOT FROZEN**
-
-Architecture Gate has not been reached.
-
-Do not treat current diagrams or donor comparisons as final architecture.
+1. Domain Model
+2. Snapshot Contract
+3. Collector / Input Contract
+4. Store Contract
+5. Query Contract
+6. Failure Model
+7. Stable Identity v1 semantics
+8. Completeness / Safe Reconcile semantics
+9. PostgreSQL persistence boundaries and transaction guarantees
+10. Collector selection criteria and adapter boundary
+11. Change Journal semantics distinct from provider-native delta
+12. responsibilities for checkpoint / skipped-path evidence / cache policy
 
 ## Implementation status
 
 **NO PRODUCT CODE**
 
-Discovery stage only.
-
-Do not create:
+Do not create yet:
 
 - formal kernel implementation
 - provider adapters
-- database migrations
+- migrations
 - production APIs
 - UI
 - CloudSite integration
 
-unless a later accepted gate explicitly authorizes them.
-
-## Current open questions
-
-1. Can rclone expose a stronger cross-backend stable identity than AList/OpenList?
-2. Can rclone make partial traversal failures visible enough to support Snapshot completeness decisions?
-3. Can fsspec solve either stable identity or completeness more generally?
-4. Which completeness properties must remain IndexCore-owned regardless of Collector?
-5. Which identity properties must remain IndexCore-owned regardless of Collector?
-6. After D03, is further Discovery necessary, or can Gate 0 close and Architecture Gate begin?
-
 ## Current project risks
 
-- Mistaking a search index for canonical inventory
-- Mistaking path/name/hash for stable identity
-- Mistaking successful traversal for complete snapshot
-- Mistaking directory refresh/diff for native delta
-- Generalizing one backend's capability to all providers
-- Letting donor capabilities expand the Kernel unnecessarily
-- Letting AI workers change architecture outside their task
-- Losing project truth in chat history instead of Git
-
-## Current licensing posture
-
-Research records license facts.
-
-The project does not make broad legal conclusions from license names.
-
-Current engineering posture:
-
-- do not copy code without confirmed permission
-- avoid coupling kernel implementation to restrictive/uncertain donor code until intentionally reviewed
-- prefer public API / process boundaries where technically appropriate
-- perform separate license review before actual adoption when needed
+- selecting a Collector before contracts are defined
+- treating provider ID/path/hash as universally stable
+- treating `err == nil` as proof against silent backend truncation
+- pushing Scanner mechanics into the Kernel
+- making optional hash/native-delta mandatory
+- confusing provider-native delta with Canonical Change Journal
+- letting PostgreSQL schema become the Domain model
+- reopening broad donor research without a concrete blocker
 
 ## State maintenance rule
 
-Foreman may update this file only as part of an Architect-approved phase closeout or explicit context-maintenance task.
+Accepted project state lives in Git.
 
-Foreman must not convert research candidates into accepted architecture.
+Architecture decisions must be explicit and reviewable.
 
-Architect reviews every state transition before merge.
+Workers may investigate assigned design questions, but cannot freeze architecture without Architect review.
