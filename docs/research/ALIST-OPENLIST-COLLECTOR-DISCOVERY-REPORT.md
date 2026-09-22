@@ -27,7 +27,7 @@
 |--------|------|----------|------|
 | W-A | 搜索索引内部机制 | **W-A**（本轮新增） | 16 问全答，含 BuildIndex/Update/rename/move/checkpoint/staging/atomic reconcile |
 | W-B | HTTP API 字段与行为 | **W-B**（独立完成） | 20 问详查，349 行 |
-| W-C | Driver 元数据与能力差异 | **COVERED_BY_W_D** | W-D COUNTEREXAMPLES 覆盖 7 代表性 driver（Local/WebDAV/S3/GoogleDrive/Aliyundrive/115/OneDrive），建立 path-based 与 id-based 两种 identity 模型；能力维度（ID/hash/mtime/cache/error/pagination/rename/move）全覆盖。夸克未逐一调查但遵循 id-based 模式 |
+| W-C | Driver 元数据与能力差异 | **COVERED_BY_W_D** | W-D COUNTEREXAMPLES 覆盖 7 代表性 driver（Local/WebDAV/S3/GoogleDrive/Aliyundrive/115/OneDrive），建立 path-based 与 id-based 两种 identity 模型；能力维度（ID/hash/mtime/cache/error/pagination/rename/move）全覆盖。夸克未逐一调查，本阶段不作推断 |
 | W-D | Provider 能力矩阵 / Collector 可行性 | **W-D**（子智能体替代） | 原 Bridge w04 造假已取消，子智能体独立完成 591 行 |
 
 **结论**：4 个任务职责全部覆盖，无遗漏。
