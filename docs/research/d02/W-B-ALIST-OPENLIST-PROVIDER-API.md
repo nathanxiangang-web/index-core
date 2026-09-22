@@ -18,9 +18,8 @@
 | License | GNU AGPL v3 (`LICENSE`, "GNU AFFERO GENERAL PUBLIC LICENSE Version 3") | GNU AGPL v3 (`LICENSE`, identical header) |
 | Language | Go (module `github.com/alist-org/alist/v3`) | Go (module `github.com/OpenListTeam/OpenList/v4`) |
 
-Both are AGPL-3.0. IndexCore must not copy source from these repos into a
-non-AGPL product; this report only reads public API behavior and quotes minimal
-Go signatures under fair-use research, not for relicensing.
+Both are AGPL-3.0. 当前工程策略：不复制其源码、不链接其源码进入 Kernel、优先独立进程 /
+public API 边界、实际采用前单独进行许可证审查。本报告不替代法务结论。
 
 OpenList is a fork of AList (v4 module path vs v3). The FS read API shape
 diverged: OpenList removed `id` / `path` / `virtual_path` from the public
@@ -176,7 +175,7 @@ The `model.Obj.GetID()` doc itself warns (`model/obj.go:36-37`): "The internal i
 - `name` alone is not unique (collisions across dirs).
 - `size`+`name`+`modified` is a weak composite key but not guaranteed unique and `modified` can change.
 - `hashinfo` when present is a strong content identity but is **unavailable for local/webdav/s3** and is content-addressed (changes on content change, not on rename).
-**INFERENCE**: For a collector, the best stable identity is `(mount_path, virtual_path)` or, for OpenList, `(provider, parent, name)` reconstructed per call. There is no guaranteed stable opaque id across all drivers via the public API.
+**INFERENCE**: For a collector, the best available **matching key** is `(mount_path, virtual_path)` or, for OpenList, `(provider, parent, name)` reconstructed per call. This is a **path-based matching key**, not a stable resource identity — rename changes name, move changes parent. There is no guaranteed stable opaque id across all drivers via the public API.
 
 ### Q7. After rename/move on the same path, which fields stay invariant?
 **FACT** (`op/fs.go:407-439` Rename, `364-405` Move): rename/move operate by `srcObj` resolved from current path, then call driver. Cache is updated by name (`updateCacheObj`/`delCacheObj` match by `GetName()`).
@@ -185,7 +184,7 @@ The `model.Obj.GetID()` doc itself warns (`model/obj.go:36-37`): "The internal i
 - `id` (when present): for cloud drivers the underlying file_id is **typically invariant** under rename/move (GoogleDrive patch changes name only `google_drive/driver.go:93-101`; Aliyundrive Move changes parent only). But this is provider behavior, not an API contract, and the API does not return the old+new id in one response.
 - `size`, `hashinfo` (content) are invariant under rename/move.
 - `modified`: may or may not change (provider-dependent; local `os.Rename` preserves mtime).
-**INFERENCE**: No public API field is guaranteed invariant under rename/move across all drivers except content hash (when available). The virtual path is the identity that the API itself mutates.
+**INFERENCE**: No public API field is guaranteed invariant under rename/move across all drivers except content hash (when available). The virtual path is a **matching key** that the API itself mutates on rename/move; it is **not a stable resource identity**.
 
 ### Q8. Is the API paginated? How to judge pagination completeness?
 **FACT** (AList `fsread.go:84-88, 253-299`): yes. `DefaultPerPage=200`, `MaxPerPage=500`, `AllPerPage=-1`. `has_more = page*per_page < total`. `pages_total = ceil(total/per_page)`. Response includes `total`, `page`, `per_page`, `has_more`, `pages_total` — sufficient to detect completeness.
@@ -346,4 +345,4 @@ An external IndexCore Collector using only the public HTTP API can reliably obta
 - **DERIVABLE with extra call**: `raw_url` (via `get`, but unstable/expiring — not an identity).
 - **UNAVAILABLE**: `storage_id` (instance), live delta/changes, webhook notifications, cache staleness indicator, unfiltered child count, per-child error.
 
-The collector **cannot** assume `id` is present or stable across all storages, **cannot** detect cache staleness, **cannot** get a change stream, and **cannot** distinguish not-found from provider-error via HTTP status alone. The strongest cross-project stable identity is the **virtual path** (plus `hash` when present as a content check). OpenList exposes strictly less than AList (no `id`/`path`/`virtual_path`), so a portable collector should target the OpenList subset.
+The collector **cannot** assume `id` is present or stable across all storages, **cannot** detect cache staleness, **cannot** get a change stream, and **cannot** distinguish not-found from provider-error via HTTP status alone. The strongest cross-project **matching key** is the **virtual path** (plus `hash` when present as a content check), but this is a path-based matching key, not a stable resource identity (rename/move changes path). OpenList exposes strictly less than AList (no `id`/`path`/`virtual_path`), so a portable collector should target the OpenList subset.

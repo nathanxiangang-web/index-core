@@ -24,7 +24,7 @@
 1. **Provider 抽象**：AList 与 OpenList 的 driver 抽象**几乎完全相同**——核心 `Driver = Meta + Reader` 接口，能力通过 Go 可选接口（`Getter`/`Mkdir`/`Put`/`ArchiveReader`…）类型断言表达，非 bit field。OpenList 额外增加 `WithDetails`/`LinkCacheModeResolver`/`DirectUploader` 三个可选接口。`Obj` 接口暴露 `GetID()/GetPath()/GetHash()` 等 8 个方法，`model.Object` 结构含 `ID/Path/Name/Size/Modified/Ctime/IsFolder/HashInfo` 8 字段。
 2. **API 字段**：**两者存在重大分歧**。AList 的 `/api/fs/list` 响应包含 `id`/`path`/`virtual_path` 以及完整分页元数据（`page`/`per_page`/`has_more`/`pages_total`/`total`）。OpenList 的 `/api/fs/list` 响应**完全不含** `id`/`path`/`virtual_path`，也**不含** 分页元数据（仅 `content`+`total`）。`hash_info`/`hashinfo` 两者都暴露但**driver 依赖**（local/webdav/aliyundrive 为空，google_drive/115 有值）。`is_dir`/`size`/`modified`/`created`/`name` 两者都直接提供。
 3. **完整遍历 Root**：**有条件可靠**。driver.List 一次性返回目录全部内容，API 分页是内存切片（非服务端分页）。AList 有 `has_more` 信号；OpenList 需靠 `total` 与已获取数自行判断。`refresh=true` 可绕过 cache。多 root 通过 `/api/admin/storage/list`（需 admin）枚举 `MountPath`。**关键隐患**：遍历中途某 storage.List 出错时，若该路径下存在虚拟挂载点，错误被**静默吞没**（只 log，返回部分结果不报错），遍历者无法感知数据缺失。
-4. **直接成为 IndexCore Collector**：**作为"全量快照型 Collector"可行，作为"增量/delta 型 Collector"不可行**。硬缺口：(a) OpenList 不暴露 provider object_id；(b) AList 的 id 字段 driver 依赖（local/webdav 返回空字符串）；(c) 无 native delta API；(d) 遍历错误静默吞没；(e) 分页为内存切片，超大目录有 OOM/超时风险。AList 自身搜索索引的 stable identity 就是 **path（Parent+Name）**，非 object_id 非 hash。若 IndexCore 接受 path 作为 identity + 全量遍历做 delta，则 AList/OpenList 够用，无需 rclone。
+4. **直接成为 IndexCore Collector**：**作为 Snapshot candidate/source 有条件可行，作为"增量/delta 型 Collector"不可行**。硬缺口：(a) OpenList 不暴露 provider object_id；(b) AList 的 id 字段 driver 依赖（local/webdav 返回空字符串）；(c) 无 native delta API；(d) 遍历错误静默吞没；(e) 分页为内存切片，超大目录有 OOM/超时风险；(f) 无通用 stable resource identity（path 是 matching key 非 stable identity）。一次 API 遍历不等于 complete snapshot，`complete=true` 需外部校验。`NEED_D03_RCLONE_OR_FSSPEC: YES`。
 
 ---
 
@@ -363,7 +363,7 @@ OpenList 额外有 `/api/scan/start`（`server/handles/scan.go:14-25`，admin）
 
 ### 4.2 硬缺口（FACT + INFERENCE）
 
-1. **OpenList 不暴露 provider object_id**（FACT，`fsread.go:35-47` ObjResp 无 `id` 字段，`fsread.go:228-248` toObjsResp 不设 Id）→ OpenList 上 stable identity 只能用 path。
+1. **OpenList 不暴露 provider object_id**（FACT，`fsread.go:35-47` ObjResp 无 `id` 字段，`fsread.go:228-248` toObjsResp 不设 Id）→ OpenList 上无通用 stable resource identity，path 仅作 matching key。
 2. **AList 的 `id` 字段 driver 依赖且不保证非空**（FACT，见 COUNTEREXAMPLES：local/webdav 返回空字符串）→ AList 上 `id` 不能作为通用 stable identity。
 3. **无 native delta API**（FACT）：`/api/fs/list` 无 `since`/`cursor`/`if_modified_since` 参数，`ListReq`（`fsread.go:22-27`）仅 `Page`/`Path`/`Password`/`Refresh`。无"列出变更"接口。
 4. **遍历错误静默吞没**（FACT，`fs/list.go:32-38`）→ 遍历完整性无法通过 API 响应保证，需外部一致性校验。
@@ -371,30 +371,32 @@ OpenList 额外有 `/api/scan/start`（`server/handles/scan.go:14-25`，admin）
 6. **hash 无法服务端计算**（FACT）：`hash_info` 仅来自 driver（provider API 返回的），无法请求 AList/OpenList 对 local driver 文件计算 hash。local driver 的 `FileInfoToObj`（`local/driver.go:167-205`）不设置 `HashInfo`。
 7. **`refresh=true` 需要写权限**（FACT，AList `fsread.go:118-121`）→ 只读账户无法强制刷新 cache，可能拿到过期数据。
 
-### 4.3 Stable Identity 问题（FACT + INFERENCE）
+### 4.3 Path-based Matching Key 问题（FACT + INFERENCE）
 
-AList 自身搜索索引的 identity 机制（FACT）：
+AList 自身搜索索引的 key 机制（FACT）：
 - `model.SearchNode`（`internal/model/search.go:23-28`）：仅 `Parent`/`Name`/`IsDir`/`Size`，**无 ID/Hash 字段**。
-- 索引构建（`internal/search/build.go:169-174`）：`ObjWithParent{Obj: info, Parent: path.Dir(indexPath)}` → identity = **Parent + Name（路径）**。
+- 索引构建（`internal/search/build.go:169-174`）：`ObjWithParent{Obj: info, Parent: path.Dir(indexPath)}` → key = **Parent + Name（路径）**。
 - 增量更新（`build.go:224-234`）：用 `name` 集合差异（`now.Difference(old)`）检测新增/删除，**基于 name 而非 ID**。
 
 OpenList `model.SearchNode`（`internal/model/search.go:23-28`）**相同**：`Parent`/`Name`/`IsDir`/`Size`。
 
-**结论（INFERENCE）**：AList/OpenList 自身设计就是以 **path（Parent+Name）** 作为 stable identity，而非 provider object_id 或 hash。path 在 rename/move 后变化 → identity 不稳定，但这是 AList 自身接受的设计取舍。若 IndexCore 沿用此模型，AList/OpenList 可直接适配。
+**结论（INFERENCE）**：AList/OpenList 自身设计使用 **path（Parent+Name）** 作为 **search-node matching key**，而非 provider object_id 或 hash。path 在 rename/move 后变化 → **path-based matching key != stable resource identity**。这是 AList 自身接受的设计取舍。IndexCore 若沿用 path 作 matching key，AList/OpenList 可适配，但 IndexCore 需独立解决 stable resource identity 问题。
 
 ### 4.4 Delta 问题（FACT + INFERENCE）
 
-- **全量**：可行。递归遍历所有 root → 所有目录 → 收集全部条目，构建全量快照。
+- **全量**：可递归枚举。但一次 HTTP 200 的完整递归遍历**不等于** provider-complete snapshot（静默吞没 + `len(content)==total` 不可靠）。可作为 Snapshot candidate/source，但 `complete=true` 需外部校验。
 - **增量（native delta）**：**不可行**。无 `since`/`cursor` API（见 4.2 第 3 点）。
 - **增量（对比 delta）**：可行但需客户端实现。全量遍历后与上次快照按 path 对比（新增/删除/修改）。AList 内部 `search.Update`（`build.go:202-268`）正是此模式。
 - **mtime-based delta**：部分可行。`modified` 字段可做"自某时间点后变更"的客户端过滤，但 AList 不保证目录的 `modified` 在子文件变更时更新（driver 依赖）。
 
-### 4.5 是否需要 rclone 补充（INFERENCE）
+### 4.5 NEED_D03_RCLONE_OR_FSSPEC（INFERENCE）
 
-- 若 IndexCore 的 Collector 需求为**全量快照 + path identity**：AList/OpenList **够用**，无需 rclone。AList 更优（暴露 `id`/`path`/`has_more`）。
-- 若需要 **provider object_id 作 stable identity**：AList 部分满足（仅 id-setting driver），OpenList 不满足。rclone 的 `--metadata` 可暴露 provider id（如 Drive file_id），但 rclone 同样不提供 native delta（除少数 backend 如 S3 versioning）。
-- 若需要 **native delta**：两者都不满足，rclone 也不普遍满足。需直接对接 provider SDK（如 Google Drive Changes API、OneDrive delta）。
-- **结论**：对于"全量快照型 Collector"，AList/OpenList 够用，rclone 无额外优势。对于"delta 型 Collector"，三者都需 provider-specific 方案。
+D02 范围为 AList/OpenList only。已发现两个核心硬缺口：
+
+1. **无通用 stable resource identity**：path 是 matching key 非 stable identity；AList `id` driver 依赖；OpenList API 不暴露 `id`。
+2. **Snapshot completeness 无法通过 public API 可靠证明**：静默吞没 + `len(content)==total` 不可靠。
+
+**结论**：`NEED_D03_RCLONE_OR_FSSPEC: YES`。值得进行一个窄范围 D03 对照调查，比较其它成熟 Collector / provider abstraction 是否能补这两个缺口。D02 不对 rclone 做具体技术能力判断。
 
 ---
 
@@ -572,13 +574,13 @@ OpenList `drivers/aliyundrive/types.go:37` 设置 `ID: f.FileId`（与 AList 一
 ## RISKS
 
 1. **遍历完整性静默失败（高）**：`storage.List` 出错时返回部分结果不报错（`fs/list.go:32-38`）。Collector 若不做事后校验，索引会静默缺数据。**缓解**：遍历后对比目录数与 `total`，或对每个 storage 做健康检查。
-2. **stable identity 不稳定（中）**：path 在 rename/move 后变化。AList 自身接受此风险（搜索索引用 path）。若 IndexCore 需要跨 rename 稳定 identity，需用 AList `id` 字段（仅 id-setting driver）或 hash（仅 hash-setting driver），且 OpenList 完全无 `id`。
+2. **无通用 stable resource identity（高）**：path 是 matching key 非 stable identity（rename/move 后变化）。AList `id` driver 依赖（local/webdav 空），OpenList API 不暴露 `id`。IndexCore 需独立解决 stable identity 问题。
 3. **cache 过期（中）**：不传 `refresh=true` 时返回缓存列表，可能过期。`refresh=true` 需写权限（AList）。**缓解**：Collector 用 admin token + `refresh=true`。
 4. **超大目录 OOM/超时（中）**：分页是内存切片，`driver.List` 必须先全量获取。单目录 10万+文件可能 OOM 或 HTTP 超时。**缓解**：限制单 storage 规模，或分拆 mount path。
 5. **无 native delta（高）**：全量遍历做 delta，大规模 root 频繁全量成本高。**缓解**：用 mtime 客户端过滤（不保证目录 mtime 反映子文件变更），或接受全量。
-6. **OpenList API 字段缺失（中）**：无 `id`/`path`/`has_more`。若 IndexCore 设计依赖 provider object_id，OpenList 不可用，只能用 AList。**缓解**：统一用 path identity。
+6. **OpenList API 字段缺失（中）**：无 `id`/`path`/`has_more`。若 IndexCore 设计依赖 provider object_id，OpenList 不可用，只能用 AList。**缓解**：统一用 path-based matching key。
 7. **balance storage 路由不确定性（低）**：多 storage 同 mount path 前缀时轮询（`storage.go:433-435`），遍历可能命中不同 storage。但 `MountPath` unique，仅显式 `.balance` 配置时触发。**缓解**：不使用 balance storage 配置。
-8. **AGPL-3.0 传染性（高，非技术）**：AList/OpenList 均为 AGPL-3.0。若 IndexCore 以网络服务形式集成（调用其 API 不传染，但嵌入/修改源码传染），需法务确认。本调查仅通过 HTTP API 集成，不修改其源码，风险较低。
+8. **AGPL-3.0（高，非技术）**：AList/OpenList 均为 AGPL-3.0。当前工程策略：不复制源码、不链接源码进 Kernel、优先独立进程/API 边界、实际采用前单独进行许可证审查。
 9. **driver 实现质量参差（中）**：95/89 个 driver，每个对 `ID`/`HashInfo`/`Path` 的填充不一致（见 COUNTEREXAMPLES）。Collector 不能假设任何字段非空，必须按 driver 类型降级处理。
 
 ---
@@ -588,4 +590,4 @@ OpenList `drivers/aliyundrive/types.go:37` 设置 `ID: f.FileId`（与 AList 一
 - AList: **GNU Affero General Public License v3**（`/tmp/d02/alist/LICENSE:1`，661 行完整文本）
 - OpenList: **GNU Affero General Public License v3**（`/tmp/d02/openlist/LICENSE:1`，661 行完整文本）
 
-**合规说明（INFERENCE，非法务结论）**：通过 HTTP API 调用 AList/OpenList（作为独立服务部署）通常不触发 AGPL 传染（API 调用是"交互"而非"衍生作品"）。但嵌入其源码、修改后分发需开源。IndexCore 作为 Collector 客户端通过 API 集成，风险较低。最终需法务确认。
+当前工程策略：不复制其源码、不链接其源码进入 Kernel、优先独立进程 / public API 边界、实际采用前单独进行许可证审查。本报告不替代法务结论。
