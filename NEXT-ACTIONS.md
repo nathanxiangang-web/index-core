@@ -5,13 +5,34 @@
 
 ## Current phase
 
-Discovery 02 — AList / OpenList Collector capability investigation
+Discovery 03 — Collector gap comparison
 
 ## Immediate objective
 
-Answer:
+Answer only:
 
-> Can AList/OpenList provide a sufficiently reliable external Collector boundary for Index Core, or is another provider abstraction investigation required?
+> Can rclone or fsspec materially improve the two unresolved D02 gaps — stable resource identity and snapshot completeness — or must IndexCore own those properties itself?
+
+## Scope
+
+In scope:
+
+- rclone
+- fsspec
+- only the two hard gaps above
+- representative backend evidence
+- public/process boundary capabilities
+- failure visibility
+
+Out of scope:
+
+- broad provider popularity comparisons
+- performance bake-offs
+- UI
+- CloudSite integration
+- database schema design
+- implementation
+- choosing final architecture before evidence review
 
 ## Execution order
 
@@ -25,50 +46,51 @@ Foreman must:
    - `PROJECT-STATE.md`
    - `ARCHITECTURE-INVARIANTS.md`
    - this file
+   - D02 consolidated report
    - Issue #1
-   - Issue #9
-3. verify the current accepted main baseline
+   - Issue #17
+3. verify current accepted main baseline
 4. create only:
-   `research/d02-alist-openlist-discovery`
+   `research/d03-collector-gap-comparison`
 
 ### 2. Dispatch four narrow worker tasks
 
-- #10 Worker A — indexing/search internals
-- #11 Worker B — public FS API / resource metadata
-- #12 Worker C — representative driver capability differences
-- #13 Worker D — independent Snapshot matrix and counter-evidence
+- #18 Worker A — rclone stable identity / metadata
+- #19 Worker B — rclone traversal completeness / RC / failure semantics
+- #20 Worker C — fsspec identity / completeness
+- #21 Worker D — independent gap matrix / counter-evidence
 
 Workers do not operate Git/GitHub.
 
-### 3. Required D02 outputs
+### 3. Required D03 outputs
 
 ```text
-docs/research/d02/
-  W-A-ALIST-OPENLIST-INDEXING.md
-  W-B-ALIST-OPENLIST-PROVIDER-API.md
-  W-C-ALIST-OPENLIST-DRIVER-CAPABILITIES.md
-  W-D-ALIST-OPENLIST-SNAPSHOT-MATRIX.md
+docs/research/d03/
+  W-A-RCLONE-IDENTITY-METADATA.md
+  W-B-RCLONE-COMPLETENESS-RC.md
+  W-C-FSSPEC-GAP-CHECK.md
+  W-D-COLLECTOR-GAP-MATRIX.md
 
 docs/research/
-  ALIST-OPENLIST-COLLECTOR-DISCOVERY-REPORT.md
+  D03-COLLECTOR-GAP-COMPARISON.md
 ```
 
 ### 4. Foreman cross-check
 
 Before PR:
 
-- A internal fields vs B public API
-- B API claims vs C real driver behavior
-- D independently attacks optimistic assumptions
-- path vs stable identity checked
-- cache/full listing/native delta terminology checked
-- unsupported/driver-dependent fields clearly represented
+- do not treat path as stable identity
+- do not treat hash as object identity
+- do not treat recursive success as completeness proof
+- do not generalize one backend to all backends
+- native delta vs polling/list diff must remain distinct
+- every YES in capability matrix must have evidence
 
 ### 5. Submit one PR
 
 Branch:
 
-`research/d02-alist-openlist-discovery`
+`research/d03-collector-gap-comparison`
 
 Base:
 
@@ -78,59 +100,32 @@ Only Foreman submits.
 
 ### 6. Architect gate
 
-Architect reviews actual files/diff, not just Foreman summary.
+Architect reviews actual files and evidence.
 
-Possible result:
+Possible outcome:
 
-- ACCEPT D02
+- ACCEPT D03 and close Gate 0 Discovery
 - REWORK
-- BLOCKED / evidence insufficient
+- authorize one additional narrow discovery only if a material unknown remains
 
-## D02 exit questions
+## D03 exit questions
 
-Before D02 can be accepted, the evidence must support answers to:
-
-1. Can public API produce a complete root listing?
-2. Can completeness be distinguished from failure/staleness?
-3. Which SnapshotEntry fields are reliable?
-4. Which are driver-dependent?
-5. Is any stable provider object identity externally available?
-6. Is rename/move identity observable?
-7. Is native delta available?
-8. Can multi-root identity be isolated?
-9. What safety responsibilities remain for Index Core?
-10. Is D03 needed?
-
-## D03 trigger
-
-Do **not** start rclone/fsspec research automatically.
-
-D03 becomes eligible only if Architect concludes from D02 that AList/OpenList are insufficient and a broader provider abstraction comparison is necessary.
-
-## Context maintenance at phase close
-
-When Architect accepts D02:
-
-Foreman prepares updates to:
-
-- `PROJECT-STATE.md`
-- `NEXT-ACTIONS.md`
-
-Architect reviews those updates before merge.
-
-Do not rewrite `PROJECT-CONTEXT.md` or `ARCHITECTURE-INVARIANTS.md` just because a phase completed.
-
-Those change only when project meaning or accepted invariants actually change.
+1. Does rclone provide a general stable object identity?
+2. Does fsspec provide a general stable object identity?
+3. Can either prove a provider-complete traversal?
+4. Can either reliably surface partial traversal failure?
+5. Can either expose useful provider-specific identity metadata without embedding donor code?
+6. Which properties still must be owned by IndexCore?
+7. Is there any remaining reason to continue Discovery?
 
 ## Current prohibited actions
 
-Until D02 is accepted:
+Until D03 is accepted:
 
 - no product code
-- no formal DB schema
-- no CloudSite integration
-- no rclone/fsspec investigation
-- no UI
-- no premature Provider adapter
+- no PostgreSQL schema/migrations
 - no PoC
-- no final architecture decision
+- no CloudSite integration
+- no final provider adapter
+- no final architecture
+- no broad new donor search
