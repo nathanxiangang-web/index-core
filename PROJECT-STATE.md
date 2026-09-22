@@ -12,9 +12,9 @@
 
 Latest accepted baseline:
 
-`02a5a5e525ef5fd626418063f33b217b0b34e498`
+`80ce33846fca8b4b2e2c2eef236ad2afed49e301`
 
-Accepted content now includes:
+Accepted content includes:
 
 - project blueprint v0.1
 - context governance
@@ -24,27 +24,15 @@ Accepted content now includes:
 
 ## Current phase
 
-**Discovery 03 — Collector gap comparison**
+**Post-D02 Decision Review**
 
 Status:
 
-**PLANNED / AUTHORIZED NEXT**
+**ACTIVE**
 
-D03 is intentionally narrow.
+No D03 research is currently authorized.
 
-It exists only because D02 proved two unresolved hard gaps:
-
-1. no cross-driver stable resource identity
-2. public traversal cannot self-prove provider-complete snapshot semantics
-
-Research targets are limited to:
-
-- rclone
-- fsspec
-
-The purpose is not to replace AList/OpenList by default.
-
-The purpose is to determine whether mature alternatives already solve either hard gap before IndexCore designs its own solution.
+The project is deciding, from D02 evidence, whether a narrow rclone/fsspec comparison can materially change architecture boundaries.
 
 ## Latest accepted phase
 
@@ -71,16 +59,23 @@ Accepted consolidated report:
 9. No public native delta/change feed was found.
 10. AList/OpenList search indexing lacks durable checkpoint/resume, staging and atomic reconcile.
 11. Provider partial-list behavior can create unsafe deletion signals.
-12. D03 comparison is justified, but D02 does not select rclone/fsspec.
+
+## Current decision question
+
+Should the project run a narrow D03 comparison of rclone (and only if justified, fsspec)?
+
+D03 is worth doing only if it could materially change one or more of these boundaries:
+
+1. whether AList/OpenList remain the primary external Collector candidate
+2. whether Stable Identity must be owned entirely by IndexCore
+3. whether Snapshot completeness / partial-failure semantics must be owned entirely by IndexCore
+4. whether IndexCore must implement provider/scanner functionality itself
 
 ## Current control issues
 
 - #1 — Project control tower
-- #17 — Windows Foreman D03
-- #18 — Worker A: rclone identity/metadata
-- #19 — Worker B: rclone completeness/RC/failure semantics
-- #20 — Worker C: fsspec identity/completeness gap check
-- #21 — Worker D: independent collector gap matrix
+- #17 — Post-D02 decision review
+- #18-#21 — closed / not authorized
 
 ## Accepted persistence decision
 
@@ -96,15 +91,11 @@ Accepted consolidated report:
 
 **NOT FROZEN**
 
-Architecture Gate has not been reached.
-
-Do not treat current diagrams or donor comparisons as final architecture.
+Architecture Gate has not been entered.
 
 ## Implementation status
 
 **NO PRODUCT CODE**
-
-Discovery stage only.
 
 Do not create:
 
@@ -115,45 +106,37 @@ Do not create:
 - UI
 - CloudSite integration
 
-unless a later accepted gate explicitly authorizes them.
+## Current options under review
 
-## Current open questions
+### Option A — Skip D03
 
-1. Can rclone expose a stronger cross-backend stable identity than AList/OpenList?
-2. Can rclone make partial traversal failures visible enough to support Snapshot completeness decisions?
-3. Can fsspec solve either stable identity or completeness more generally?
-4. Which completeness properties must remain IndexCore-owned regardless of Collector?
-5. Which identity properties must remain IndexCore-owned regardless of Collector?
-6. After D03, is further Discovery necessary, or can Gate 0 close and Architecture Gate begin?
+Proceed to Architecture Gate using AList/OpenList as the current Collector reference and make IndexCore explicitly own:
+
+- stable identity
+- completeness semantics
+- safe reconcile
+- canonical inventory
+- removal safety
+
+### Option B — Narrow D03
+
+Investigate rclone only enough to answer:
+
+- does it expose stronger cross-backend identity through a usable process/API boundary?
+- does it surface partial traversal failures/completeness materially better than AList/OpenList?
+
+Only add fsspec if rclone comparison leaves a material unresolved question.
 
 ## Current project risks
 
-- Mistaking a search index for canonical inventory
-- Mistaking path/name/hash for stable identity
-- Mistaking successful traversal for complete snapshot
-- Mistaking directory refresh/diff for native delta
-- Generalizing one backend's capability to all providers
-- Letting donor capabilities expand the Kernel unnecessarily
-- Letting AI workers change architecture outside their task
-- Losing project truth in chat history instead of Git
-
-## Current licensing posture
-
-Research records license facts.
-
-The project does not make broad legal conclusions from license names.
-
-Current engineering posture:
-
-- do not copy code without confirmed permission
-- avoid coupling kernel implementation to restrictive/uncertain donor code until intentionally reviewed
-- prefer public API / process boundaries where technically appropriate
-- perform separate license review before actual adoption when needed
+- choosing a donor because it looks powerful rather than because evidence changes the boundary
+- rejecting a mature donor before testing the exact gap
+- mistaking path/name/hash for stable identity
+- treating successful traversal as complete snapshot
+- reopening broad Discovery and delaying Architecture indefinitely
 
 ## State maintenance rule
 
-Foreman may update this file only as part of an Architect-approved phase closeout or explicit context-maintenance task.
+Accepted project state lives in Git.
 
-Foreman must not convert research candidates into accepted architecture.
-
-Architect reviews every state transition before merge.
+Architect decides the next gate from evidence, not chat momentum.
