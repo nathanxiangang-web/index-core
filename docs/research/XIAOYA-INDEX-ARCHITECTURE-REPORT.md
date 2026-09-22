@@ -227,7 +227,7 @@ xiaoya-alist-search 直接操作 AList 内部 SQLite 表（x_search_nodes / x_st
 | xiaoya_db (Python) | 无 LICENSE | 不复制代码，借思想独立实现 |
 | xiaoya_emd_go (Go) | GPL-3.0 | 不复制代码，借思想独立实现 |
 
-**工程策略**：IndexCore 不直接链接 AList/Go 同步器源码，通过外部接口（SQLite 文件 / HTTP API）交互，规避许可证约束。是否足够需 Architect 与法律顾问确认。
+**工程策略**：当前工程策略是不复制、不链接相关源码，优先通过公开 API 或独立进程边界交互；具体许可证义务在实际采用相关组件前另行审查。
 
 ---
 
@@ -364,7 +364,7 @@ xiaoya-alist-search 直接操作 AList 内部 SQLite 表（x_search_nodes / x_st
 
 - AList 的搜索/302/代理逻辑只借思想
 - IndexCore 提供 Query API，AList 作为 Consumer 读取
-- 不嵌入 AList 二进制（规避 AGPLv3）
+- 不嵌入 AList 二进制（不链接其源码）
 - 符合蓝图第四节"Layer 4: Consumers"
 
 ---
@@ -374,7 +374,7 @@ xiaoya-alist-search 直接操作 AList 内部 SQLite 表（x_search_nodes / x_st
 | 蓝图问题 | 调查结论 |
 |----------|----------|
 | 1. index.zip 包含什么？ | 41 个 TXT，562k 行，路径#元数据格式，按媒体分类 |
-| 2. 谁生成？ | 小雅官方服务端预生成（生成逻辑闭源） |
+| 2. 谁生成？ | 未找到生成器源码；已证实客户端消费预生成索引，不自行扫描 |
 | 3. 完整索引如何更新？ | 全量替换（version.txt 判断是否下载新 zip） |
 | 4. 客户端是否需要遍历 Provider？ | 不需要，索引完全预生成 |
 | 5. x_search_nodes 真实语义？ | (parent, name) 路径索引，LIKE 子串搜索 |
@@ -394,8 +394,8 @@ xiaoya-alist-search 直接操作 AList 内部 SQLite 表（x_search_nodes / x_st
 
 Discovery 01 调查完成。四份 Worker 报告全部 PASS，交叉核验无冲突。
 
-小雅系统的核心思想是"服务端预生成索引 + 客户端拉取导入"，值得借鉴。但数据格式缺关键字段（is_dir/size/mtime/hash/object_id），安全机制有缺口（Go 无 Complete Gate、Python 无回收站），且大部分组件许可证不允许直接复制代码。
+从客户端可观察到的模式是"预生成索引资产 + 客户端拉取导入"，值得借鉴。但数据格式缺关键字段（is_dir/size/mtime/hash/object_id），安全机制有缺口（Go 无 Complete Gate、Python 无回收站），且大部分组件许可证不允许直接复制代码。
 
-唯一可直接复用的代码是 xiaoya-alist-search（Apache-2.0）的 TXT 解析和 SQLite 批量导入逻辑。其余安全机制（原子写入、回收站、Complete Gate）值得借鉴但需独立实现。
+xiaoya-alist-search（Apache-2.0）的 TXT 解析和 SQLite 批量导入逻辑已降级为 REFERENCE/OPTIONAL_COPY，以后再决定是否真搬。其余安全机制（原子写入、回收站、Complete Gate）值得借鉴但需独立实现。
 
 最终架构决策由 Architect 决定。
