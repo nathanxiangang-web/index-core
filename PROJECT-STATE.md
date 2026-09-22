@@ -12,27 +12,43 @@
 
 Latest accepted baseline:
 
-`db7663b30862a969625dd006b0dc0a868df0ab49`
+`02a5a5e525ef5fd626418063f33b217b0b34e498`
 
-Accepted content at that baseline:
+Accepted content now includes:
 
 - project blueprint v0.1
-- Discovery 01 Xiaoya reports
-- Xiaoya consolidated architecture research report
+- context governance
+- PostgreSQL-first persistence decision
+- Discovery 01 Xiaoya research
+- Discovery 02 AList/OpenList collector research
 
 ## Current phase
 
-**Discovery 02 — AList / OpenList Collector capability investigation**
+**Discovery 03 — Collector gap comparison**
 
 Status:
 
-**PLANNED / NOT YET ACCEPTED**
+**PLANNED / AUTHORIZED NEXT**
 
-No formal Index Core implementation is authorized yet.
+D03 is intentionally narrow.
+
+It exists only because D02 proved two unresolved hard gaps:
+
+1. no cross-driver stable resource identity
+2. public traversal cannot self-prove provider-complete snapshot semantics
+
+Research targets are limited to:
+
+- rclone
+- fsspec
+
+The purpose is not to replace AList/OpenList by default.
+
+The purpose is to determine whether mature alternatives already solve either hard gap before IndexCore designs its own solution.
 
 ## Latest accepted phase
 
-**Discovery 01 — Xiaoya indexing chain investigation**
+**Discovery 02 — AList / OpenList Collector capability investigation**
 
 Status:
 
@@ -40,32 +56,31 @@ Status:
 
 Accepted consolidated report:
 
-`docs/research/XIAOYA-INDEX-ARCHITECTURE-REPORT.md`
+`docs/research/ALIST-OPENLIST-COLLECTOR-DISCOVERY-REPORT.md`
+
+## D02 accepted findings
+
+1. AList/OpenList search index is a search projection, not Canonical Inventory.
+2. Public FS APIs can recursively enumerate resource candidates.
+3. Public API success does not prove provider-complete Snapshot semantics.
+4. `len(content)==total` and storage health checks are only weak sanity checks.
+5. `Parent + Name` / virtual path is a path-based matching key, not stable resource identity.
+6. AList provider `id` is driver-dependent.
+7. OpenList public FS API does not expose a general provider object ID.
+8. Representative drivers show materially different ID/hash/mtime behavior.
+9. No public native delta/change feed was found.
+10. AList/OpenList search indexing lacks durable checkpoint/resume, staging and atomic reconcile.
+11. Provider partial-list behavior can create unsafe deletion signals.
+12. D03 comparison is justified, but D02 does not select rclone/fsspec.
 
 ## Current control issues
 
 - #1 — Project control tower
-- #9 — Windows Foreman D02
-- #10 — Worker A: AList/OpenList indexing internals
-- #11 — Worker B: AList/OpenList public FS API/provider metadata
-- #12 — Worker C: AList/OpenList driver capability differences
-- #13 — Worker D: independent AList/OpenList → Snapshot capability matrix / counter-evidence
-
-## Current D02 scope
-
-D02 is intentionally limited to **AList / OpenList**.
-
-The immediate question is:
-
-> Can AList/OpenList already serve as the external Collector/provider aggregation boundary, so Index Core does not need to implement dozens of cloud-storage scanners?
-
-### Explicitly deferred
-
-- rclone
-- fsspec
-- other provider abstraction frameworks
-
-These become D03 candidates only if D02 proves AList/OpenList insufficient.
+- #17 — Windows Foreman D03
+- #18 — Worker A: rclone identity/metadata
+- #19 — Worker B: rclone completeness/RC/failure semantics
+- #20 — Worker C: fsspec identity/completeness gap check
+- #21 — Worker D: independent collector gap matrix
 
 ## Accepted persistence decision
 
@@ -83,7 +98,7 @@ These become D03 candidates only if D02 proves AList/OpenList insufficient.
 
 Architecture Gate has not been reached.
 
-Do not treat current diagrams or candidate designs as final.
+Do not treat current diagrams or donor comparisons as final architecture.
 
 ## Implementation status
 
@@ -102,37 +117,24 @@ Do not create:
 
 unless a later accepted gate explicitly authorizes them.
 
-## Accepted findings from D01
-
-1. Xiaoya demonstrates a useful pattern: pre-generated index assets can be distributed and imported by clients.
-2. The exact Xiaoya index generator and generation location were not proven.
-3. Xiaoya `index.zip` is insufficient as a general canonical resource snapshot because important resource facts are missing.
-4. AList `x_search_nodes` is a search projection, not proof of a canonical resource inventory.
-5. Xiaoya search data does not provide a reliable resource-level stable object identity.
-6. Safety ideas such as completeness gating and soft deletion are useful references, but no donor implementation is accepted as the Index Core safety model.
-7. Search/access and resource truth should remain separate concerns.
-
 ## Current open questions
 
-1. Can AList/OpenList public API enumerate an entire root reliably?
-2. Which resource fields are directly exposed?
-3. Which fields are driver-dependent?
-4. Is provider-native object ID exposed through the public API?
-5. How reliable are mtime/hash semantics across drivers?
-6. Can cache/refresh behavior cause stale or incomplete snapshots?
-7. Is there any genuine native change/delta feed?
-8. How are multiple storage roots uniquely isolated?
-9. Does rename/move preserve any externally visible stable identity?
-10. After D02, is D03 investigation of rclone/fsspec necessary?
+1. Can rclone expose a stronger cross-backend stable identity than AList/OpenList?
+2. Can rclone make partial traversal failures visible enough to support Snapshot completeness decisions?
+3. Can fsspec solve either stable identity or completeness more generally?
+4. Which completeness properties must remain IndexCore-owned regardless of Collector?
+5. Which identity properties must remain IndexCore-owned regardless of Collector?
+6. After D03, is further Discovery necessary, or can Gate 0 close and Architecture Gate begin?
 
 ## Current project risks
 
 - Mistaking a search index for canonical inventory
-- Mistaking path/name for stable identity
+- Mistaking path/name/hash for stable identity
+- Mistaking successful traversal for complete snapshot
 - Mistaking directory refresh/diff for native delta
-- Generalizing one driver's fields to all providers
-- Letting AI workers design architecture outside their task
-- Letting discovery scope expand before a gate is accepted
+- Generalizing one backend's capability to all providers
+- Letting donor capabilities expand the Kernel unnecessarily
+- Letting AI workers change architecture outside their task
 - Losing project truth in chat history instead of Git
 
 ## Current licensing posture
