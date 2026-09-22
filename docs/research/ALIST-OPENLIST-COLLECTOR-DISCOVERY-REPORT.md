@@ -299,7 +299,6 @@ OpenList: **AGPL-3.0**（`LICENSE:1`）
 2. **(INFERENCE)** 超大目录 OOM/超时行为（源码显示一次性返回，未实测具体 driver）
 3. **(INFERENCE)** `raw_url` 同一路径跨调用变化（presign 代码支持，未穷举所有 driver）
 4. **(INFERENCE)** OpenList 移除 `id`/`path` 是有意设计（可能安全考虑，未查 commit message）
-5. **(INFERENCE)** 夸克 driver 遵循 id-based 模式（未逐一调查源码，基于 google_drive/aliyundrive/115/onedrive 模式推断）
 6. **(UNVERIFIED)** AList `id` 在 rename 后是否稳定（未查各 provider 文档）
 7. **(UNVERIFIED)** OpenList 是否有其他 API 暴露 object_id（仅查了 `fsread.go`，未全面扫描所有 handler）
 
