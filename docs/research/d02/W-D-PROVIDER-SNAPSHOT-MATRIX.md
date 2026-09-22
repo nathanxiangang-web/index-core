@@ -518,6 +518,38 @@ obj := &model.ObjThumb{
 
 OpenList `drivers/aliyundrive/types.go:37` 设置 `ID: f.FileId`（与 AList 一致），但 `server/handles/fsread.go:228-248`（`toObjsResp`）不读取 `obj.GetID()`。→ **driver 内部有 provider object_id，HTTP API 不暴露**。
 
+### C7. onedrive driver — `id` 有值，`hash` 空，`created` 未设（FACT）
+
+`drivers/onedrive/types.go:50-69`（`fileToObj`）：
+```go
+return &Object{
+    ObjThumb: model.ObjThumb{
+        Object: model.Object{
+            ID:       f.Id,                              // ✅ OneDrive item id
+            Name:     f.Name,
+            Size:     f.Size,
+            Modified: f.FileSystemInfo.LastModifiedDateTime,
+            IsFolder: f.File == nil,
+            // ❌ 未设置 HashInfo
+            // ❌ 未设置 Ctime（CreateTime() 将回退 ModTime）
+        },
+        Thumbnail: model.Thumbnail{Thumbnail: thumb},
+    },
+    ParentID: parentID,
+}
+```
+
+- **ID**：✅ `f.Id`（OneDrive Graph API item id）。AList `/api/fs/list` 暴露 `id` 字段；OpenList 不暴露。
+- **Hash**：❌ `File` 结构（`types.go:26-43`）无 hash 字段。`getFiles` 的 `$select`（`util.go:129`）不含 `file.hashes`。OneDrive Graph API 支持 `sha1Hash`/`sha256Hash`/`quickXorHash` 但 AList driver 未读取。
+- **mtime**：✅ `f.FileSystemInfo.LastModifiedDateTime`。
+- **created**：❌ `Ctime` 未设 → `CreateTime()` 回退 `ModTime`（`object.go:63-68`）。
+- **rename/move identity**：`Rename`（`driver.go:152-173`）和 `Move`（`driver.go:128-150`）均用 PATCH 请求更新 `parentReference` + `name`，OneDrive item ID 不变。但 AList `op.Rename`/`op.Move` 仅更新 cache，不直接更新搜索索引（见 W-A Q8/Q9）。
+- **pagination**：`getFiles`（`util.go:127-140`）跟随 `@odata.nextLink`，每页 `$top=1000`，聚合全部页后返回。driver-internal pagination — `driver.List` 返回时已全量获取。
+- **error/cache**：同通用机制。`Request`（`util.go:99-125`）在 `InvalidAuthenticationToken` 时自动刷新 token 并重试。
+- **native delta**：❌ 未使用 OneDrive Graph API delta endpoint（`/drive/root/delta`）。`getFiles` 仅调 `/children` 列出。无 `since`/`cursor`。
+- **public API exposure**：AList `/api/fs/list` 暴露 `id`；OpenList 不暴露。
+- **Identity 模型**：id-based（与 GoogleDrive/Aliyundrive/115 同类）。
+
 ---
 
 ## VERIFIED_FACTS
@@ -554,6 +586,10 @@ OpenList `drivers/aliyundrive/types.go:37` 设置 `ID: f.FileId`（与 AList 一
 28. `HashInfo` 支持 MD5/SHA1/SHA256（`pkg/utils/hash.go:80-87`）。
 29. `CreateTime()` 若 Ctime 零值则回退 ModTime（`object.go:63-68`）。
 30. 两者 License 均为 AGPL-3.0（`LICENSE:1`）。
+31. onedrive driver 设置 `ID = f.Id`，不设置 `HashInfo`/`Ctime`（`drivers/onedrive/types.go:50-69`）。
+32. onedrive `getFiles` 跟随 `@odata.nextLink` 每页 `$top=1000` 聚合全部页（`drivers/onedrive/util.go:127-140`）。
+33. onedrive driver 未使用 Graph API delta endpoint（`getFiles` 仅调 `/children`，`util.go:129`）。
+34. onedrive `Rename`/`Move` 用 PATCH 请求，item ID 不变（`drivers/onedrive/driver.go:128-173`）。
 
 ---
 
@@ -573,7 +609,7 @@ OpenList `drivers/aliyundrive/types.go:37` 设置 `ID: f.FileId`（与 AList 一
 
 ## RISKS
 
-1. **遍历完整性静默失败（高）**：`storage.List` 出错时返回部分结果不报错（`fs/list.go:32-38`）。Collector 若不做事后校验，索引会静默缺数据。**缓解**：遍历后对比目录数与 `total`，或对每个 storage 做健康检查。
+1. **遍历完整性静默失败（高）**：`storage.List` 出错时返回部分结果不报错（`fs/list.go:32-38`）。Collector 若不做事后校验，索引会静默缺数据。**注意**：对比 `len(content)` 与 `total`、或对 storage 做 health check 最多只是 **weak sanity check**，不能证明 provider-complete snapshot，更不能单独授权删除。`total` 按已返回列表计算，上游少返回时两者仍可相等。
 2. **无通用 stable resource identity（高）**：path 是 matching key 非 stable identity（rename/move 后变化）。AList `id` driver 依赖（local/webdav 空），OpenList API 不暴露 `id`。IndexCore 需独立解决 stable identity 问题。
 3. **cache 过期（中）**：不传 `refresh=true` 时返回缓存列表，可能过期。`refresh=true` 需写权限（AList）。**缓解**：Collector 用 admin token + `refresh=true`。
 4. **超大目录 OOM/超时（中）**：分页是内存切片，`driver.List` 必须先全量获取。单目录 10万+文件可能 OOM 或 HTTP 超时。**缓解**：限制单 storage 规模，或分拆 mount path。

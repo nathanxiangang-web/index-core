@@ -285,6 +285,7 @@ Assume a SnapshotEntry needs: `id`, `path`, `name`, `size`, `is_dir`, `modified`
 | **GoogleDrive** (`types.go:45`) | Yes (`f.Id`) | No | Yes (md5) | Yes (ThumbnailLink) | No | id-based |
 | **Aliyundrive** (`types.go:37`) | Yes (`f.FileId`) | No | Yes (sha1) | Yes | No | id-based |
 | **115** (`types.go:13`, `driver.go:57`) | Yes (via `driver.File`) | No | Yes (sha1) | Yes (ThumbURL) | No | id-based |
+| **OneDrive** (`types.go:58`) | Yes (`f.Id`) | No | No (hashes not read) | Yes (thumbnails) | No | id-based |
 
 **Key insight**: drivers split into **path-based** (local/webdav/s3) where the provider has no stable file id and AList exposes none, and **id-based** (cloud drives) where the provider has a file_id and AList exposes it via `id` (but OpenList hides it). A collector cannot assume `id` is present.
 

@@ -1,11 +1,11 @@
 # AList / OpenList Collector 可行性调查报告 — Discovery 02
 
 > 阶段：Discovery 02 — AList / OpenList Provider API 与 Collector 可行性调查
-> 状态：READY_FOR_ARCH_REVIEW v2
+> 状态：READY_FOR_ARCH_REVIEW v3
 > 日期：2026-09-23
 > 产出：Foreman 统一整理 W-A / W-B / W-D 报告
 > 约束：本报告只总结调查事实，不做最终架构决定
-> 修订：v2 修正 stable identity 措辞 / snapshot completeness 结论 / W-C 职责 / rclone 越界判断 / license 表述
+> 修订：v3 补 OneDrive driver / 修正 total/health check 为 weak sanity check；v2 修正 stable identity / snapshot completeness / W-C 职责 / rclone / license
 
 ---
 
@@ -27,7 +27,7 @@
 |--------|------|----------|------|
 | W-A | 搜索索引内部机制 | **W-A**（本轮新增） | 16 问全答，含 BuildIndex/Update/rename/move/checkpoint/staging/atomic reconcile |
 | W-B | HTTP API 字段与行为 | **W-B**（独立完成） | 20 问详查，349 行 |
-| W-C | Driver 元数据与能力差异 | **COVERED_BY_W_D** | W-D COUNTEREXAMPLES 覆盖 6 代表性 driver（Local/WebDAV/S3/GoogleDrive/Aliyundrive/115），建立 path-based 与 id-based 两种 identity 模型；能力维度（ID/hash/mtime/cache/error/pagination/rename/move）全覆盖。OneDrive/夸克未逐一调查但遵循 id-based 模式 |
+| W-C | Driver 元数据与能力差异 | **COVERED_BY_W_D** | W-D COUNTEREXAMPLES 覆盖 7 代表性 driver（Local/WebDAV/S3/GoogleDrive/Aliyundrive/115/OneDrive），建立 path-based 与 id-based 两种 identity 模型；能力维度（ID/hash/mtime/cache/error/pagination/rename/move）全覆盖。夸克未逐一调查但遵循 id-based 模式 |
 | W-D | Provider 能力矩阵 / Collector 可行性 | **W-D**（子智能体替代） | 原 Bridge w04 造假已取消，子智能体独立完成 591 行 |
 
 **结论**：4 个任务职责全部覆盖，无遗漏。
@@ -84,6 +84,7 @@ AList 与 OpenList 的 driver 抽象**几乎完全相同**：
 | **GoogleDrive** | ✅ (`f.Id`) | ✅ (MD5/SHA1/SHA256) | id-based |
 | **Aliyundrive** | ✅ (`f.FileId`) | ❌ | id-based |
 | **115** | ✅ | ✅ (SHA1) | id-based |
+| **OneDrive** | ✅ (`f.Id`) | ❌ (hashes not read) | id-based |
 
 ---
 
@@ -217,7 +218,7 @@ AList/OpenList 已发现两个核心硬缺口（stable identity 不统一、snap
 
 | # | 风险 | 等级 | 缓解 |
 |---|------|------|------|
-| 1 | 遍历完整性静默失败 | **高** | 遍历后独立校验；不可仅凭 `len(content)==total` 判定 complete |
+| 1 | 遍历完整性静默失败 | **高** | 对比 `len(content)` 与 `total`、storage health check 最多只是 **weak sanity check**，不能证明 provider-complete snapshot，更不能单独授权删除；`complete=true` 需独立外部校验 |
 | 2 | 无 native delta API | **高** | 全量遍历 + 客户端 path 对比做 delta；或接受全量 |
 | 3 | 无通用 stable resource identity | **高** | path-based matching key 可用但 rename/move 后变化；AList `id` driver 依赖；OpenList 无 `id` |
 | 4 | 搜索索引 provider 故障可致错误删除 | **高** | name diff 删除不保护存储内文件；IndexCore 不应依赖 AList 搜索索引做 Canonical Inventory |
@@ -298,7 +299,7 @@ OpenList: **AGPL-3.0**（`LICENSE:1`）
 2. **(INFERENCE)** 超大目录 OOM/超时行为（源码显示一次性返回，未实测具体 driver）
 3. **(INFERENCE)** `raw_url` 同一路径跨调用变化（presign 代码支持，未穷举所有 driver）
 4. **(INFERENCE)** OpenList 移除 `id`/`path` 是有意设计（可能安全考虑，未查 commit message）
-5. **(INFERENCE)** OneDrive/夸克 driver 遵循 id-based 模式（未逐一调查源码，基于 google_drive/aliyundrive/115 模式推断）
+5. **(INFERENCE)** 夸克 driver 遵循 id-based 模式（未逐一调查源码，基于 google_drive/aliyundrive/115/onedrive 模式推断）
 6. **(UNVERIFIED)** AList `id` 在 rename 后是否稳定（未查各 provider 文档）
 7. **(UNVERIFIED)** OpenList 是否有其他 API 暴露 object_id（仅查了 `fsread.go`，未全面扫描所有 handler）
 
