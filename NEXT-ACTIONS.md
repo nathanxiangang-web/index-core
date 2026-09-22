@@ -1,131 +1,159 @@
 # Index Core — Next Actions
 
 > Operational near-term queue only.
-> Do not use this file as historical archive.
 
 ## Current phase
 
-Discovery 03 — Collector gap comparison
+**Gate 1 — Architecture**
+
+No implementation is authorized yet.
 
 ## Immediate objective
 
-Answer only:
+Freeze the smallest safe IndexCore contracts using D01-D03 evidence.
 
-> Can rclone or fsspec materially improve the two unresolved D02 gaps — stable resource identity and snapshot completeness — or must IndexCore own those properties itself?
+Do not choose a Collector by momentum.
 
-## Scope
+Do not write product code.
 
-In scope:
+## Gate 1 design questions
 
-- rclone
-- fsspec
-- only the two hard gaps above
-- representative backend evidence
-- public/process boundary capabilities
-- failure visibility
+### A. Domain / Identity
 
-Out of scope:
+Define:
 
-- broad provider popularity comparisons
-- performance bake-offs
-- UI
-- CloudSite integration
-- database schema design
-- implementation
-- choosing final architecture before evidence review
+- ResourceRoot
+- Snapshot
+- SnapshotEntry
+- CanonicalResource
+- ChangeRecord
 
-## Execution order
+Specify Stable Identity v1 when:
 
-### 1. Foreman baseline recovery
+- provider_object_id exists
+- provider_object_id is absent
+- path changes
+- hash is absent
+- rename/move is ambiguous
 
-Foreman must:
+### B. Snapshot / Completeness
 
-1. sync `main`
-2. read:
-   - `PROJECT-CONTEXT.md`
-   - `PROJECT-STATE.md`
-   - `ARCHITECTURE-INVARIANTS.md`
-   - this file
-   - D02 consolidated report
-   - Issue #1
-   - Issue #17
-3. verify current accepted main baseline
-4. create only:
-   `research/d03-collector-gap-comparison`
+Define:
 
-### 2. Dispatch four narrow worker tasks
+- snapshot lifecycle
+- completeness evidence
+- failure / skipped-path representation
+- cache/freshness evidence
+- conditions under which destructive reconcile is forbidden
 
-- #18 Worker A — rclone stable identity / metadata
-- #19 Worker B — rclone traversal completeness / RC / failure semantics
-- #20 Worker C — fsspec identity / completeness
-- #21 Worker D — independent gap matrix / counter-evidence
+### C. Collector boundary
 
-Workers do not operate Git/GitHub.
+Define a provider-neutral Collector/Input Contract.
 
-### 3. Required D03 outputs
+Then evaluate:
+
+- AList/OpenList adapter
+- rclone adapter
+- direct provider adapter only where necessary
+
+Selection must be based on contract fit, not feature count.
+
+### D. Store / PostgreSQL
+
+Define:
+
+- Store Interface
+- transaction boundary
+- atomic root reconcile guarantee
+- generation / version semantics
+- previous-truth preservation on failure
+
+PostgreSQL is the first persistence implementation.
+
+Domain types must not depend on PostgreSQL schema.
+
+### E. Reconcile / Safety
+
+Define:
+
+- add
+- update
+- rename
+- move
+- missing
+- removal candidate
+- confirmed removed
+- conflict
+
+Missing must never equal deleted automatically.
+
+### F. Change Journal
+
+Define Canonical Change Journal separately from:
+
+- provider-native delta
+- polling
+- snapshot diff
+- search index updates
+
+### G. Query Contract
+
+Define read-only consumer access for:
+
+- CloudSite
+- Search
+- Catalog
+- future consumers
+
+Consumers must not redefine canonical truth.
+
+## Gate 1 deliverables
+
+At minimum:
 
 ```text
-docs/research/d03/
-  W-A-RCLONE-IDENTITY-METADATA.md
-  W-B-RCLONE-COMPLETENESS-RC.md
-  W-C-FSSPEC-GAP-CHECK.md
-  W-D-COLLECTOR-GAP-MATRIX.md
+docs/architecture/
+  DOMAIN-MODEL.md
+  SNAPSHOT-CONTRACT.md
+  COLLECTOR-CONTRACT.md
+  STORE-CONTRACT.md
+  QUERY-CONTRACT.md
+  FAILURE-MODEL.md
+  IDENTITY-V1.md
+  SAFE-RECONCILE.md
+  CHANGE-JOURNAL.md
 
-docs/research/
-  D03-COLLECTOR-GAP-COMPARISON.md
+docs/decisions/
+  ADR-001-COLLECTOR-BOUNDARY.md
+  ADR-002-POSTGRESQL-STORE.md
 ```
 
-### 4. Foreman cross-check
-
-Before PR:
-
-- do not treat path as stable identity
-- do not treat hash as object identity
-- do not treat recursive success as completeness proof
-- do not generalize one backend to all backends
-- native delta vs polling/list diff must remain distinct
-- every YES in capability matrix must have evidence
-
-### 5. Submit one PR
-
-Branch:
-
-`research/d03-collector-gap-comparison`
-
-Base:
-
-`main`
-
-Only Foreman submits.
-
-### 6. Architect gate
-
-Architect reviews actual files and evidence.
-
-Possible outcome:
-
-- ACCEPT D03 and close Gate 0 Discovery
-- REWORK
-- authorize one additional narrow discovery only if a material unknown remains
-
-## D03 exit questions
-
-1. Does rclone provide a general stable object identity?
-2. Does fsspec provide a general stable object identity?
-3. Can either prove a provider-complete traversal?
-4. Can either reliably surface partial traversal failure?
-5. Can either expose useful provider-specific identity metadata without embedding donor code?
-6. Which properties still must be owned by IndexCore?
-7. Is there any remaining reason to continue Discovery?
+File names may be adjusted by Architect, but responsibilities must remain explicit.
 
 ## Current prohibited actions
 
-Until D03 is accepted:
+Until Gate 1 is accepted:
 
 - no product code
-- no PostgreSQL schema/migrations
+- no migrations
 - no PoC
 - no CloudSite integration
-- no final provider adapter
-- no final architecture
-- no broad new donor search
+- no UI
+- no broad donor research
+- no final Collector implementation
+- no forced content hashing
+- no assumption that rclone/AList is already selected
+
+## Gate 1 exit condition
+
+Architect must be able to answer:
+
+1. What exactly is IndexCore responsible for?
+2. What exactly is a Collector responsible for?
+3. What evidence makes a Snapshot acceptable for destructive reconcile?
+4. How is identity preserved when provider ID is missing?
+5. What PostgreSQL transaction boundary preserves previous truth?
+6. What can consumers read, and what can they never mutate?
+7. Which parts are MVP and which are deferred?
+
+Only then may Gate 2 PoC begin.
