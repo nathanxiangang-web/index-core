@@ -332,7 +332,7 @@ AList 内置的 `search.Update()` (internal/search/build.go:202-268) 是增量�
 
 ## RISKS
 
-1. **AGPLv3 传染性风险**：AList 是 AGPLv3，若 IndexCore 直接链接 AList 源码或修改 AList 并网络提供服务，IndexCore 必须开源。xiaoya-alist-search 通过外部操作 SQLite 文件规避了链接，但若 IndexCore 嵌入 AList 二进制则需注意。
+1. **AGPLv3 许可证事实**：AList 是 AGPLv3。我们的工程隔离策略：不链接 AList 源码、不修改其二进制，通过外部操作 SQLite 文件交互（xiaoya-alist-search 即用此策略）。此隔离是否足够需 Architect 与法律顾问确认，本报告不下法律定论。
 2. **AList 表结构版本耦合**：xiaoya-alist-search 直接写 `x_storages` 的 17 个字段，若 AList 升级增删字段，脚本会失效。当前脚本针对特定 AList 版本。
 3. **SQLite 并发写风险**：更新脚本在容器停止时写 DB，但若用户误操作在容器运行时执行，可能损坏 DB。
 4. **docker cp 非原子**：拷贝期间原小雅 TXT 若在更新，可能得到不一致的索引快照。
@@ -343,33 +343,37 @@ AList 内置的 `search.Update()` (internal/search/build.go:202-268) 是增量�
 
 ## LICENSE
 
-| 组件 | 许可证 | 可复用性 |
-|------|--------|----------|
-| xiaoya-alist-search | Apache-2.0 | 可复用（需保留版权声明） |
-| AList (alist-org/alist) | AGPLv3 | 传染性：若链接/修改/网络服务需开源；若仅外部操作其 DB 不传染 |
+> 本节陈述许可证事实与工程隔离策略，不下法律定论。
+
+| 组件 | 许可证事实 | 工程隔离策略 |
+|------|-----------|--------------|
+| xiaoya-alist-search | Apache-2.0 | 允许复用，需保留版权声明 |
+| AList (alist-org/alist) | AGPLv3 | 不链接源码/不修改二进制，通过外部操作 SQLite 交互 |
 | OpenList | 未检查（任务未要求深入） | 待定 |
 
-**关键判断**：xiaoya-alist-search 的 Apache-2.0 允许复用其 TXT 解析逻辑和 SQLite 操作逻辑。AList 的 AGPLv3 不传染外部操作其 SQLite 文件的项目（xiaoya-alist-search 正是如此规避）。
+**工程策略**：xiaoya-alist-search 通过外部操作 AList 的 SQLite 文件实现交互，不链接 AList 源码。此隔离是否足够需 Architect 与法律顾问确认。
 
-## COPY_CANDIDATE
+## REFERENCE_CANDIDATE
 
-### 1. TXT 解析逻辑（Apache-2.0，可直接复用）
+> Architect 返工要求：xiaoya-alist-search 虽然 Apache-2.0，但那几段 parser/SQLite 逻辑太小、又耦合 AList，先从 COPY 降成 REFERENCE / OPTIONAL_COPY，以后再决定是否真搬。
+
+### 1. TXT 解析逻辑（Apache-2.0，REFERENCE）
 - **来源**：xiaoya-alist-search.sh:268-282 和 395-416
 - **逻辑**：逐行读 TXT → `line.split('#')[0].replace('./','')` → `rfind('/')` 分割 parent/name
-- **复用价值**：简单高效的路径解析，无外部依赖
-- **许可证确认**：Apache-2.0 允许
+- **参考价值**：简单高效的路径解析，无外部依赖
+- **降级原因**：逻辑仅 ~15 行，重写成本极低，不值得引入外部代码依赖
 
-### 2. 批量插入 + 去重模式（Apache-2.0，可复用模式）
+### 2. 批量插入 + 去重模式（Apache-2.0，REFERENCE）
 - **来源**：xiaoya-alist-search.sh:251-259, 302-316
 - **逻辑**：1000 条/批 executemany + `DELETE WHERE rowid NOT IN (MIN(rowid) GROUP BY)` 去重
-- **复用价值**：大批量导入 SQLite 的通用模式
-- **许可证确认**：Apache-2.0 允许
+- **参考价值**：大批量导入 SQLite 的通用模式
+- **降级原因**：耦合 AList 的 x_search_nodes 表结构，非通用方案
 
-### 3. 全量重建流程（Apache-2.0，可复用流程）
+### 3. 全量重建流程（Apache-2.0，REFERENCE）
 - **来源**：xiaoya-alist-search.sh:377-456
 - **逻辑**：stop → copy TXT → DELETE 全表 → 批量插入 → 去重 → start
-- **复用价值**：简单可靠的索引重建流程
-- **许可证确认**：Apache-2.0 允许
+- **参考价值**：简单可靠的索引重建流程
+- **降级原因**：耦合 docker stop/start，非通用方案
 
 ## REWRITE_CANDIDATE
 
@@ -423,7 +427,7 @@ AList 内置的 `search.Update()` (internal/search/build.go:202-268) 是增量�
 - **原因**：`INSERT OR REPLACE INTO sqlite_sequence` 是 SQLite 内部表操作，不应直接操作
 
 ### 4. AList GORM 模型和 DB 操作代码
-- **原因**：AGPLv3 传染性，且与 AList 内部 schema 强绑定
+- **原因**：AGPLv3，且与 AList 内部 schema 强绑定
 
 ### 5. AList 的 BuildIndex/WalkFS 实现
 - **原因**：AGPLv3，且依赖 AList 内部 fs/op 包

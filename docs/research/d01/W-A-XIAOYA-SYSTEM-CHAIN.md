@@ -6,13 +6,13 @@ PASS
 
 ## SUMMARY
 
-小雅是一套"预生成索引 + AList 统一挂载 + Emby 可视化"的家庭影视方案。真实资源来自阿里云盘/115/夸克/PikPak 的公开分享，由小雅官方（xiaoyaliu00）预先整理成四类数据包（index.zip 搜索索引、update.zip AList 挂载配置 SQL、strm.zip strm 文件列表、tvbox.zip TVBox 配置）分发到 GitHub data 仓库。客户端的 AList 容器（基于 xiaoyaliu/alist:hostmode 镜像）启动时从 data 仓库拉取这些数据包，用 update.sql 注册所有网盘分享挂载，用 index 文件提供搜索，对外暴露 HTTP/WebDAV/TVBox 三种访问方式。Emby 容器消费 AList 提供的媒体（通过 strm 或直链），metadata 容器负责下载 Emby 元数据包（config.mp4/all.mp4 等，从 AList 的 /d/元数据/ 路径拉取）并运行 solid.py 爬虫每日刷新。docker-xiaoya 是 Docker Compose 部署壳，xiaoya-alist 是菜单式安装脚本集合（all_in_one.sh），两者都不生成索引，索引完全由服务端预生成并分发。
+小雅是一套"预生成索引分发 + AList 统一挂载 + Emby 可视化"的家庭影视方案。真实资源来自阿里云盘/115/夸克/PikPak 的公开分享，由某套未公开的工具链预先整理成四类数据包（index.zip 搜索索引、update.zip AList 挂载配置 SQL、strm.zip strm 文件列表、tvbox.zip TVBox 配置）分发到 GitHub data 仓库。**已证实**：客户端 AList 容器拉取这些数据包并消费，不自行扫描 Provider。**未证实**：索引生成器的源码和生成位置未找到（推测在 xiaoyaliu/alist 闭源镜像内部或另一未公开仓库中）。客户端的 AList 容器（基于 xiaoyaliu/alist:hostmode 镜像）启动时从 data 仓库拉取这些数据包，用 update.sql 注册所有网盘分享挂载，用 index 文件提供搜索，对外暴露 HTTP/WebDAV/TVBox 三种访问方式。Emby 容器消费 AList 提供的媒体（通过 strm 或直链），metadata 容器负责下载 Emby 元数据包（config.mp4/all.mp4 等，从 AList 的 /d/元数据/ 路径拉取）并运行 solid.py 爬虫每日刷新。docker-xiaoya 是 Docker Compose 部署壳，xiaoya-alist 是菜单式安装脚本集合（all_in_one.sh），两者都不生成索引。
 
 ## SYSTEM_CHAIN
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 服务端（小雅官方，非本仓库）                                                │
+│ 服务端（推测：小雅官方工具链，源码未找到）                                  │
 │                                                                             │
 │  阿里云盘分享 + 115分享 + 夸克分享 + PikPak分享                            │
 │         │                                                                   │
@@ -115,7 +115,7 @@ PASS
 
 9. **AList 镜像来自 xiaoyaliu/alist:hostmode**：Dockerfile FROM `xiaoyaliu/alist:hostmode`（`/tmp/worker-a/docker-xiaoya/alist/Dockerfile:5`）；all_in_one.sh 第1373行同（`/tmp/worker-a/xiaoya-alist/all_in_one.sh:1373`）。
 
-10. **客户端无需自行全量扫描 Provider**：搜索索引由 index.zip 预生成，客户端只需下载解压（`/tmp/worker-a/docker-xiaoya/alist/service.sh:13-18`）。
+10. **客户端无需自行全量扫描 Provider**：搜索索引由 index.zip 预生成，客户端只需下载解压（`/tmp/worker-a/docker-xiaoya/alist/service.sh:13-18`）。注意：index.zip 的**生成器源码未找到**，仅证实客户端消费预生成索引。
 
 11. **Emby 元数据从 AList 的 /d/元数据/ 路径下载**：metadata/entrypoint.sh 中 `aria2c ... ${ALIST_ADDR}/d/元数据/${path}${file}`（`/tmp/worker-a/docker-xiaoya/metadata/entrypoint.sh:69`）。
 

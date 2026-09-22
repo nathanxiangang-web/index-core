@@ -233,18 +233,20 @@ Go (main.go):
 
 ## LICENSE
 
-| 仓库 | LICENSE 文件 | 许可证 | 能否复用代码 |
-|------|-------------|--------|-------------|
-| xiaoyaDev/xiaoya_db (Python) | **无** | 未声明（默认 All Rights Reserved） | **不能**复用代码，只能借思想 |
-| xiaoyaDev/xiaoya_emd_go (Go) | 有 (GPL v3) | GNU General Public License v3 | **不能**直接复制到非 GPL 项目。复制代码会触发 GPL 传染性，要求整个项目以 GPL 开源 |
+> 本节陈述许可证事实与工程隔离策略，不下法律定论。
 
-**结论**：两个仓库的代码都不能直接复制到 Kernel 产品代码中。Python 无许可证意味着保留所有权利；Go 是 GPL v3，传染性太强。只能借鉴思想/算法，独立实现。
+| 仓库 | LICENSE 文件 | 许可证事实 | 工程隔离策略 |
+|------|-------------|-----------|--------------|
+| xiaoyaDev/xiaoya_db (Python) | **无** | 未声明（默认 All Rights Reserved） | 不复制代码，借思想独立实现 |
+| xiaoyaDev/xiaoya_emd_go (Go) | 有 (GPL v3) | GNU General Public License v3 | 不复制代码，借思想独立实现 |
+
+**工程策略**：两个仓库的代码都不复制到 Kernel 产品代码中。只借鉴思想/算法，独立实现。此策略是否足够需 Architect 与法律顾问确认。
 
 ## COPY_CANDIDATE
 
 **无**。两个仓库的许可证都不允许直接复制代码：
 - Python 版无 LICENSE（All Rights Reserved）
-- Go 版 GPL v3（传染性）
+- Go 版 GPL v3
 
 ## REWRITE_CANDIDATE
 

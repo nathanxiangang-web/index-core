@@ -1,10 +1,11 @@
 # 小雅索引架构调查报告 — Discovery 01
 
 > 阶段：Discovery 01 — 小雅索引链路调查
-> 状态：READY_FOR_ARCH_REVIEW
+> 状态：REWORK → READY_FOR_ARCH_REVIEW（v2）
 > 日期：2026-09-22
 > 产出：Foreman 统一整理四份 Worker 报告
 > 约束：本报告只总结调查事实与候选方案，不做最终架构决定
+> 修订：v2 修正 3 处表述（生成器未证实 / 许可证不下法律定论 / COPY 降级）
 
 ---
 
@@ -23,14 +24,17 @@
 
 ## 二、系统链路总结（W-A）
 
-小雅是一套"服务端预生成索引 + 客户端 AList 统一挂载 + Emby 可视化"的家庭影视方案。
+小雅是一套"预生成索引分发 + 客户端 AList 统一挂载 + Emby 可视化"的家庭影视方案。
+
+> **已证实**：客户端下载预生成的 index.zip/update.zip/strm.zip，不自行扫描 Provider。
+> **未证实**：索引生成器源码和生成位置未找到（推测在闭源镜像或未公开仓库中）。
 
 ### 数据流
 
 ```
 真实资源（阿里云盘/115/夸克/PikPak 公开分享）
     │
-    │  小雅官方服务端预整理
+    │  [推测] 服务端预整理 → 3 生成器源码未找到
     ▼
 index.zip（搜索索引）  update.zip（AList 挂载 SQL）  strm.zip（strm 列表）  tvbox.zip（TVBox 配置）
     │
@@ -59,7 +63,8 @@ Emby 容器 → 影视库 UI → 用户访问
 
 ### 关键事实
 
-- 客户端**无需自行扫描 Provider**，索引完全服务端预生成
+- 客户端**无需自行扫描 Provider**，下载预生成的 index.zip（已证实）
+- 索引生成器源码和生成位置**未找到**（推测在闭源镜像或未公开仓库中）
 - 代码引用 `xiaoyaliu00/data` 而非任务指定的 `xiaoyaDev/data`（两者关系未证实）
 - WebDAV 默认凭据 guest/guest_Api789
 
@@ -210,29 +215,33 @@ xiaoya-alist-search 直接操作 AList 内部 SQLite 表（x_search_nodes / x_st
 
 ## 七、许可证综合判断
 
-| 仓库/组件 | 许可证 | 可复用性 |
-|------------|--------|----------|
-| xiaoya-alist-search | **Apache-2.0** | 可复用代码（保留版权声明） |
-| AList (alist-org/alist) | **AGPLv3** | 传染性：链接/修改/网络服务需开源；外部操作 DB 不传染 |
-| docker-xiaoya | **CC BY-NC 4.0** | 禁止商业用途，不可作为代码底座 |
-| xiaoya-alist | **GPL-3.0** | 传染性，需独立重写 |
-| xiaoyaDev/data | **无 LICENSE** | 默认 All Rights Reserved，不可复制 |
-| xiaoya_db (Python) | **无 LICENSE** | All Rights Reserved，只能借思想 |
-| xiaoya_emd_go (Go) | **GPL-3.0** | 传染性，只能借思想 |
+> 本节只陈述许可证事实与我们的工程隔离策略，不下法律定论。具体法律影响需咨询律师。
 
-**关键结论**：唯一可直接复用代码的是 **xiaoya-alist-search（Apache-2.0）** 的 TXT 解析和 SQLite 批量导入逻辑。其余组件只能借思想独立实现。
+| 仓库/组件 | 许可证事实 | 工程隔离策略 |
+|------------|-----------|--------------|
+| xiaoya-alist-search | Apache-2.0 | 允许复用，需保留版权声明 |
+| AList (alist-org/alist) | AGPLv3 | 不链接其源码、不修改其二进制；通过外部操作 SQLite 文件交互（xiaoya-alist-search 即用此策略） |
+| docker-xiaoya | CC BY-NC 4.0 | 不作为代码底座，仅研究部署模式 |
+| xiaoya-alist | GPL-3.0 | 不复制代码，独立重写所需逻辑 |
+| xiaoyaDev/data | 无 LICENSE | 不复制数据到产品仓库，仅研究格式 |
+| xiaoya_db (Python) | 无 LICENSE | 不复制代码，借思想独立实现 |
+| xiaoya_emd_go (Go) | GPL-3.0 | 不复制代码，借思想独立实现 |
+
+**工程策略**：IndexCore 不直接链接 AList/Go 同步器源码，通过外部接口（SQLite 文件 / HTTP API）交互，规避许可证约束。是否足够需 Architect 与法律顾问确认。
 
 ---
 
 ## 八、复用候选分类
 
-### COPY（可直接复用，Apache-2.0）
+### REFERENCE / OPTIONAL_COPY（Apache-2.0，但逻辑小且耦合 AList，以后再决定是否真搬）
 
-| 候选 | 来源 | 价值 |
-|------|------|------|
-| TXT 解析逻辑 | xiaoya-alist-search.sh:268-282 | 逐行读 → `split('#')[0]` → `rfind('/')` → (parent, name) |
-| 批量插入 + 去重模式 | xiaoya-alist-search.sh:251-316 | 1000 条/批 executemany + GROUP BY 去重 |
-| 全量重建流程 | xiaoya-alist-search.sh:377-456 | stop → copy → DELETE → INSERT → dedup → start |
+| 候选 | 来源 | 价值 | 降级原因 |
+|------|------|------|----------|
+| TXT 解析逻辑 | xiaoya-alist-search.sh:268-282 | 逐行读 → `split('#')[0]` → `rfind('/')` → (parent, name) | 逻辑仅 15 行，重写成本极低 |
+| 批量插入 + 去重模式 | xiaoya-alist-search.sh:251-316 | 1000 条/批 executemany + GROUP BY 去重 | 模式通用，但耦合 AList 的 x_search_nodes 表结构 |
+| 全量重建流程 | xiaoya-alist-search.sh:377-456 | stop → copy → DELETE → INSERT → dedup → start | 耦合 docker stop/start，非通用方案 |
+
+> Architect 决定：先从 COPY 降为 REFERENCE / OPTIONAL_COPY，以后再决定是否真搬。
 
 ### REWRITE（值得重写，不复制代码）
 
@@ -270,7 +279,7 @@ xiaoya-alist-search 直接操作 AList 内部 SQLite 表（x_search_nodes / x_st
 | docker-compose 容器编排 | IndexCore 是独立服务，不应 Docker 套娃 |
 | docker cp 文件拷贝 | 依赖容器内部路径，非通用方案 |
 | sqlite_sequence 手动操作 | SQLite 内部表，不应直接操作 |
-| AList GORM 模型和 DB 操作 | AGPLv3 传染性 + schema 强绑定 |
+| AList GORM 模型和 DB 操作 | AGPLv3 + schema 强绑定 |
 | AList BuildIndex/WalkFS | AGPLv3 + 依赖 AList 内部包 |
 | 硬编码 19 个分类目录名 | 小雅生态特有，不可通用 |
 | Python HTML 目录爬取 | 不应爬取 HTML，应用结构化 API |
@@ -298,7 +307,7 @@ xiaoya-alist-search 直接操作 AList 内部 SQLite 表（x_search_nodes / x_st
 ### 许可证层面
 
 9. **data 仓库无 LICENSE**：使用该数据资产存在法律风险
-10. **AList AGPLv3**：直接链接源码有传染性
+10. **AList AGPLv3**：不链接源码，通过外部操作 SQLite 交互（工程隔离策略，是否足够需法律顾问确认）
 11. **xiaoya_db 无 LICENSE**：默认 All Rights Reserved
 
 ### 运维层面
@@ -330,9 +339,9 @@ xiaoya-alist-search 直接操作 AList 内部 SQLite 表（x_search_nodes / x_st
 
 > 以下为候选方案，不做最终架构决定。
 
-### 候选 A：复用 xiaoya-alist-search 的 TXT 解析 + 自建 Snapshot 生成
+### 候选 A：参考 xiaoya-alist-search 的 TXT 解析 + 自建 Snapshot 生成
 
-- 复用 Apache-2.0 的 TXT 路径解析逻辑
+- 参考 Apache-2.0 的 TXT 路径解析逻辑（REFERENCE/OPTIONAL_COPY，以后再决定是否真搬）
 - 自行解析被丢弃的元数据字段（title/douban_id/rating/poster）
 - 生成含完整字段的 Snapshot（补充 is_dir/size/mtime 需从其他来源获取）
 - 风险：缺 provider_object_id，稳定身份需自行设计
