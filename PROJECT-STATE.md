@@ -45,11 +45,21 @@ authorized to merge to `main`, and Issue #40 closes on that merge.
 
 Status:
 
-**READY TO START (Gate 2 PoC)**
+**IN PROGRESS (Gate 2 PoC)**
 
 Active execution issue:
 
-**a new Gate 2 issue to be opened by the Architect**
+**#44 — [CODEX][GATE-2] Index Core PoC**
+
+Branch:
+
+**`poc/gate2-indexcore`** (from `main` @ `1a420df`)
+
+Technology stack (Architect-locked via PR #45 / Issue #44):
+
+**Go 1.27.x + PostgreSQL 18 + pgx/v5** — Go Modules, SQL-first migrations,
+real-PostgreSQL integration tests, `log/slog`, env/flag config; no ORM, no
+Gin/Fiber/Echo, no Redis/Kafka, no DI framework.
 
 No CloudSite integration or UI is authorized yet.
 

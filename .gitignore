@@ -7,4 +7,5 @@ bridge-probe-w02.txt
 bridge-probe-w02-v2.txt
 worker_test_w02.py
 *.tmp
-__pycache__/
+__pycache__/.env
+/bin/

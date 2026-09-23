@@ -8,8 +8,11 @@ Architecture / acceptance owner: **ChatGPT Architect**
 
 Execution owner: **Codex**
 
-Active task: **a new Gate 2 issue to be opened by the Architect** (replaces
-Issue #40, which closes on the PR #43 merge).
+Active task: **#44 — [CODEX][GATE-2] Index Core PoC** (replaces Issue #40).
+
+Branch: **`poc/gate2-indexcore`**. Stack (Architect-locked, PR #45 / #44):
+**Go 1.27.x + PostgreSQL 18 + pgx/v5** — SQL-first migrations, no ORM,
+real-PostgreSQL integration tests.
 
 ## Gate 1C — CLOSED
 
@@ -33,7 +36,7 @@ for additive-safe validation only**.
 
 ## Codex work package (Gate 2 PoC)
 
-Preconditions: Gate 1C CLOSED (met); a Gate 2 execution issue from the Architect.
+Preconditions: Gate 1C CLOSED (met); execution issue #44 (received).
 
 Planned scope (to be confirmed by the Gate 2 issue):
 
