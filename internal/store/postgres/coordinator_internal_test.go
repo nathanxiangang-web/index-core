@@ -43,6 +43,87 @@ func newInternalStore(t *testing.T) (*Store, context.Context) {
 	return New(pool), context.Background()
 }
 
+func insertSubmittedInternal(t *testing.T, st *Store, ctx context.Context, rootID, snapID string) {
+	t.Helper()
+	fresh := domain.FreshDirect
+	strong := domain.StrongFailureVisibility
+	snap := domain.Snapshot{
+		SnapshotID: snapID, RootID: rootID, Provenance: []byte(`{}`), ObservedAt: time.Now().UTC(),
+		TraversalStatus: domain.TraversalSuccess, SkippedScopesKnownEmpty: true,
+		FreshnessEvidence: &fresh, CollectorCompletenessAssurance: &strong,
+		CompletenessFlag: domain.CompletenessFlagComplete, LifecycleState: domain.SnapshotDraft,
+	}
+	if err := st.InsertSnapshotStub(ctx, st.Pool(), snap); err != nil {
+		t.Fatalf("snap: %v", err)
+	}
+	if err := st.MarkSnapshotSubmitted(ctx, st.Pool(), snapID); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+}
+
+// R4-1: retrying the same Snapshot must reuse its existing PENDING seq.
+func TestAdmitOrResumeReusesSameSeq(t *testing.T) {
+	st, ctx := newInternalStore(t)
+	const rootID = "ac000000-0000-0000-0000-000000000001"
+	const snapID = "ac000000-0000-0000-0000-0000000000a1"
+	seedInternal(t, st, ctx, rootID, snapID)
+
+	seq1, resumed1, err := st.AdmitOrResumeSnapshot(ctx, rootID, snapID)
+	if err != nil || resumed1 {
+		t.Fatalf("first admit must allocate a new seq, got seq=%d resumed=%v err=%v", seq1, resumed1, err)
+	}
+	seq2, resumed2, err := st.AdmitOrResumeSnapshot(ctx, rootID, snapID)
+	if err != nil || seq2 != seq1 || !resumed2 {
+		t.Fatalf("retry must reuse seq %d, got seq=%d resumed=%v err=%v", seq1, seq2, resumed2, err)
+	}
+	var n int
+	if err := st.Pool().QueryRow(ctx, `SELECT count(*) FROM index_admission WHERE root_id=$1::uuid`, rootID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("retry must not duplicate PENDING rows, got %d", n)
+	}
+}
+
+// R4-1: a stranded later input must progress via the head path without a new seq.
+func TestStrandedInputProgressesWithoutNewAdmission(t *testing.T) {
+	st, ctx := newInternalStore(t)
+	const rootID = "ae000000-0000-0000-0000-000000000001"
+	const s1 = "ae000000-0000-0000-0000-0000000000a1"
+	const s2 = "ae000000-0000-0000-0000-0000000000a2"
+	seedInternal(t, st, ctx, rootID, s1)
+	insertSubmittedInternal(t, st, ctx, rootID, s2)
+
+	if _, _, err := st.AdmitOrResumeSnapshot(ctx, rootID, s1); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.AdmitOrResumeSnapshot(ctx, rootID, s2); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewCoordinator(st, reconcile.Config{MinConsecutiveCompleteMissing: 1, MinIndependentConfirmations: 1})
+	if _, err := c.ProcessSnapshot(ctx, rootID, s2); err != ErrNotHead {
+		t.Fatalf("s2 must be ErrNotHead while s1 is head, got %v", err)
+	}
+	if out, err := c.ProcessSnapshot(ctx, rootID, s1); err != nil || out.Status != domain.AdmissionApplied {
+		t.Fatalf("s1 must apply, got %+v err=%v", out, err)
+	}
+	out, done, err := c.ProcessHead(ctx, rootID)
+	if err != nil || !done {
+		t.Fatalf("stranded s2 must be processed by the head path, got done=%v err=%v", done, err)
+	}
+	if out.Status != domain.AdmissionApplied && out.Status != domain.AdmissionNoop {
+		t.Fatalf("stranded s2 must reach a terminal status, got %s", out.Status)
+	}
+	var n int
+	if err := st.Pool().QueryRow(ctx, `SELECT count(*) FROM index_admission WHERE root_id=$1::uuid`, rootID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("recovery must not allocate extra admissions, got %d", n)
+	}
+}
+
 // R3-5: a superseded input is classified STALE_INPUT, distinct from REJECTED.
 func TestStaleInputClassification(t *testing.T) {
 	st, ctx := newInternalStore(t)

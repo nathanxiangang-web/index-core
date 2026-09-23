@@ -91,6 +91,7 @@ func TestCorroborationRequiresQualifyingIndependentObservation(t *testing.T) {
 	reduced := []domain.SnapshotEntry{entryWithProviderID("k1.txt", "/", "PK-k1.txt", "hk-k1.txt", 10, mt)}
 	insertSubmittedSnapshot(t, st, ctx, "fb100000-0000-0000-0000-000000000002", reduced)
 	processSnapshot(t, st, ctx, "fb100000-0000-0000-0000-000000000002", cfg)
+
 	if snapshotAcceptance(t, st, ctx, "fb100000-0000-0000-0000-000000000002") != domain.AcceptanceSuspicious {
 		t.Fatalf("first significant shrink must be SUSPICIOUS, got %s", snapshotAcceptance(t, st, ctx, "fb100000-0000-0000-0000-000000000002"))
 	}
@@ -128,6 +129,98 @@ func TestCorroborationRejectsUnrelatedObservation(t *testing.T) {
 	processSnapshot(t, st, ctx, "fc100000-0000-0000-0000-000000000003", cfg)
 	if snapshotCorroboration(t, st, ctx, "fc100000-0000-0000-0000-000000000003") != domain.ShrinkNone {
 		t.Fatalf("unrelated earlier observation must not corroborate, got %s", snapshotCorroboration(t, st, ctx, "fc100000-0000-0000-0000-000000000003"))
+	}
+}
+
+// R4-2: corroboration must be anchored to the first uncorroborated shrink of
+// THIS episode, not any historical same-signature Snapshot.
+func TestCorroborationAnchoredToFirstShrink(t *testing.T) {
+	st, ctx := newStore(t)
+	seedPipelineRoot(t, st, ctx)
+	cfg := reconcile.Config{MinConsecutiveCompleteMissing: 1, MinIndependentConfirmations: 1}
+	mt := time.Now().UTC()
+
+	small := []domain.SnapshotEntry{entryWithProviderID("k1.txt", "/", "PK-k1.txt", "hk-k1.txt", 10, mt)}
+	full := append([]domain.SnapshotEntry{}, small...)
+	for i, name := range []string{"k2.txt", "k3.txt", "k4.txt", "k5.txt"} {
+		full = append(full, entryWithProviderID(name, "/", "PK-"+name, "hk-"+name, int64(i+11), mt))
+	}
+
+	insertSubmittedSnapshot(t, st, ctx, "f6000000-0000-0000-0000-000000000001", small)
+	processSnapshot(t, st, ctx, "f6000000-0000-0000-0000-000000000001", cfg)
+	insertSubmittedSnapshot(t, st, ctx, "f6000000-0000-0000-0000-000000000002", full)
+	processSnapshot(t, st, ctx, "f6000000-0000-0000-0000-000000000002", cfg)
+
+	insertSubmittedSnapshot(t, st, ctx, "f6000000-0000-0000-0000-000000000003", small)
+	processSnapshot(t, st, ctx, "f6000000-0000-0000-0000-000000000003", cfg)
+	if c := snapshotCorroboration(t, st, ctx, "f6000000-0000-0000-0000-000000000003"); c != domain.ShrinkNone {
+		t.Fatalf("pre-growth same-signature snapshot must not corroborate, got %s", c)
+	}
+	if a := snapshotAcceptance(t, st, ctx, "f6000000-0000-0000-0000-000000000003"); a != domain.AcceptanceSuspicious {
+		t.Fatalf("first new shrink must be SUSPICIOUS, got %s", a)
+	}
+
+	insertSubmittedSnapshot(t, st, ctx, "f6000000-0000-0000-0000-000000000004", small)
+	processSnapshot(t, st, ctx, "f6000000-0000-0000-0000-000000000004", cfg)
+	if c := snapshotCorroboration(t, st, ctx, "f6000000-0000-0000-0000-000000000004"); c != domain.ShrinkCorroborated {
+		t.Fatalf("next independent same-scope shrink must corroborate, got %s", c)
+	}
+}
+
+// R4-3: Q6/Q7 are whole-root reads, not root-level-only; Q4 keeps the parent filter.
+func TestQueryQ6Q7WholeRootReads(t *testing.T) {
+	st, ctx := newStore(t)
+	seedPipelineRoot(t, st, ctx)
+	cfg := reconcile.Config{MinConsecutiveCompleteMissing: 1, MinIndependentConfirmations: 1}
+	mt := time.Now().UTC()
+	qr := newQueryReader(st)
+
+	dir := domain.SnapshotEntry{EntryLocalID: "d", Name: "d", ParentRef: "/", IsDir: true,
+		ProviderObjectID: sp("PD"), ProviderObjectIDScope: sp("root"), ProviderIdentityAssurance: stablePtr()}
+	child := entryWithProviderID("c.txt", "/d", "PC", "hc", 3, mt)
+
+	names := []string{"k1.txt", "k2.txt", "k3.txt", "k4.txt", "k5.txt"}
+	v1 := []domain.SnapshotEntry{dir, child}
+	keeper := []domain.SnapshotEntry{dir}
+	for i, name := range names {
+		e := entryWithProviderID(name, "/", "PK-"+name, "hk-"+name, int64(i+11), mt)
+		v1 = append(v1, e)
+		keeper = append(keeper, e)
+	}
+	insertSubmittedSnapshot(t, st, ctx, "f7000000-0000-0000-0000-000000000001", v1)
+	processSnapshot(t, st, ctx, "f7000000-0000-0000-0000-000000000001", cfg)
+
+	page, err := qr.ListActivePage(ctx, pipeRoot, nil, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundNested := false
+	for _, it := range page.Items {
+		if it.CanonicalPath != nil && *it.CanonicalPath == "/d/c.txt" {
+			foundNested = true
+		}
+	}
+	if !foundNested || len(page.Items) < 7 {
+		t.Fatalf("Q6 must read the whole root incl. nested resources, got %d items nested=%v", len(page.Items), foundNested)
+	}
+
+	insertSubmittedSnapshot(t, st, ctx, "f7000000-0000-0000-0000-000000000002", keeper)
+	processSnapshot(t, st, ctx, "f7000000-0000-0000-0000-000000000002", cfg)
+	insertSubmittedSnapshot(t, st, ctx, "f7000000-0000-0000-0000-000000000003", keeper)
+	processSnapshot(t, st, ctx, "f7000000-0000-0000-0000-000000000003", cfg)
+
+	removed, err := qr.ListRemovedPage(ctx, pipeRoot, nil, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundTomb := false
+	for _, it := range removed.Items {
+		if it.CanonicalPath != nil && *it.CanonicalPath == "/d/c.txt" {
+			foundTomb = true
+		}
+	}
+	if !foundTomb {
+		t.Fatalf("Q7 must return the nested removed tombstone, got %d items", len(removed.Items))
 	}
 }
 

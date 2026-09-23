@@ -40,11 +40,105 @@ func (c *Coordinator) ProcessSnapshot(ctx context.Context, rootID, snapshotID st
 	if err := c.cfg.Validate(); err != nil {
 		return ReconcileOutcome{}, err
 	}
-	seq, err := c.store.AdmitSnapshot(ctx, rootID, snapshotID)
+	seq, _, err := c.store.AdmitOrResumeSnapshot(ctx, rootID, snapshotID)
 	if err != nil {
 		return ReconcileOutcome{}, err
 	}
 	return c.store.reconcileHeadSafe(ctx, rootID, seq, snapshotID, c.cfg)
+}
+
+// ProcessHead processes the existing absolute head PENDING admission for a root,
+// reusing its exact admission_seq (frozen G10 / RC1-RC7). done=false means there
+// is no pending work. This is the worker-loop entry point that lets a stranded
+// later input progress after an earlier head becomes terminal (R4-1).
+func (c *Coordinator) ProcessHead(ctx context.Context, rootID string) (ReconcileOutcome, bool, error) {
+	if err := c.cfg.Validate(); err != nil {
+		return ReconcileOutcome{}, false, err
+	}
+	var (
+		seq  int64
+		snap string
+	)
+	err := c.store.pool.QueryRow(ctx,
+		`SELECT admission_seq, snapshot_id::text FROM index_admission
+		  WHERE root_id = $1::uuid AND status = 'PENDING' ORDER BY admission_seq LIMIT 1`, rootID).Scan(&seq, &snap)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ReconcileOutcome{}, false, nil
+		}
+		return ReconcileOutcome{}, false, err
+	}
+	out, err := c.store.reconcileHeadSafe(ctx, rootID, seq, snap, c.cfg)
+	return out, true, err
+}
+
+// AdmitOrResumeSnapshot is the recovery-safe Stage 1. If a non-terminal PENDING
+// admission already exists for this Snapshot it is reused (same admission_seq);
+// otherwise a new seq is allocated. Retrying a stranded input must never allocate
+// another sequence for the same input (R4-1, frozen G10 / RC1-RC7).
+func (s *Store) AdmitOrResumeSnapshot(ctx context.Context, rootID, snapshotID string) (int64, bool, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return 0, false, err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := tx.QueryRow(ctx,
+		`SELECT 1 FROM index_root WHERE root_id = $1::uuid FOR UPDATE`, rootID).Scan(new(int)); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, false, ErrNotFound
+		}
+		return 0, false, err
+	}
+	var (
+		snapRoot string
+		snapLc   string
+	)
+	if err := tx.QueryRow(ctx,
+		`SELECT root_id::text, lifecycle_state FROM index_snapshot WHERE snapshot_id = $1::uuid`,
+		snapshotID).Scan(&snapRoot, &snapLc); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, false, ErrNotFound
+		}
+		return 0, false, err
+	}
+	if snapRoot != rootID {
+		return 0, false, ErrBindingMismatch
+	}
+	if snapLc != string(domain.SnapshotSubmitted) {
+		return 0, false, ErrNotSubmitted
+	}
+
+	var existing *int64
+	err = tx.QueryRow(ctx,
+		`SELECT admission_seq FROM index_admission
+		  WHERE root_id = $1::uuid AND snapshot_id = $2::uuid AND status = 'PENDING'
+		  ORDER BY admission_seq LIMIT 1`, rootID, snapshotID).Scan(&existing)
+	switch {
+	case err == nil && existing != nil:
+		if err := tx.Commit(ctx); err != nil {
+			return 0, false, err
+		}
+		return *existing, true, nil
+	case err != nil && !errors.Is(err, pgx.ErrNoRows):
+		return 0, false, err
+	}
+
+	var seq int64
+	if err := tx.QueryRow(ctx,
+		`UPDATE index_root SET latest_admission_seq = latest_admission_seq + 1, updated_at = now()
+		  WHERE root_id = $1::uuid RETURNING latest_admission_seq`, rootID).Scan(&seq); err != nil {
+		return 0, false, err
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO index_admission(root_id, admission_seq, snapshot_id, status)
+		 VALUES ($1::uuid, $2, $3::uuid, 'PENDING')`, rootID, seq, snapshotID); err != nil {
+		return 0, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, false, err
+	}
+	return seq, false, nil
 }
 
 // AdmitSnapshot is Stage 1 as one short per-root serialized transaction:
@@ -348,45 +442,98 @@ func significantShrink(priorPresent int64, entryCount int) bool {
 }
 
 // deriveQualifiedCorroboration returns CORROBORATED only when a qualifying,
-// independently admitted EARLIER observation (admission_seq < current) with
-// all-positive completeness evidence independently observed the same reduced
-// scope signature (R3-2). Otherwise NONE.
+// independently admitted EARLIER observation was itself evaluated as the FIRST
+// uncorroborated shrink (acceptance_state=SUSPICIOUS, scope_shrink_corroboration=
+// NONE), has the same reduced scope signature, and no intervening admitted
+// observation had a different signature (no growth after the anchor). An
+// arbitrary old pre-growth Snapshot with the same signature must NOT corroborate
+// (R4-2).
 func (s *Store) deriveQualifiedCorroboration(ctx context.Context, q Querier, rootID string, currentSeq int64, snapshotID string, entries []domain.SnapshotEntry) domain.ScopeShrinkCorroboration {
 	target := pipeline.RawScopeSignature(entries)
 	if target == "" {
 		return domain.ShrinkNone
 	}
+
+	type anchor struct {
+		id  string
+		seq int64
+	}
+	var anchors []anchor
 	rows, err := q.Query(ctx,
-		`SELECT s.snapshot_id::text
+		`SELECT s.snapshot_id::text, a.admission_seq
 		   FROM index_snapshot s
 		   JOIN index_admission a ON a.snapshot_id = s.snapshot_id AND a.root_id = s.root_id
 		  WHERE s.root_id = $1::uuid AND s.snapshot_id <> $2::uuid AND a.admission_seq < $3
 		    AND s.lifecycle_state IN ('EVALUATED','RECONCILED')
+		    AND s.acceptance_state = 'SUSPICIOUS' AND s.scope_shrink_corroboration = 'NONE'
 		    AND s.traversal_status = 'SUCCESS' AND s.error_summary IS NULL
 		    AND s.skipped_scopes_known_empty = true
 		    AND s.freshness_evidence IN ('FRESH_DIRECT','FRESH_REFRESHED','CACHED_FRESH')
-		    AND s.collector_completeness_assurance = 'STRONG_FAILURE_VISIBILITY'`,
-		rootID, snapshotID, currentSeq)
+		    AND s.collector_completeness_assurance = 'STRONG_FAILURE_VISIBILITY'
+		  ORDER BY a.admission_seq DESC`, rootID, snapshotID, currentSeq)
 	if err != nil {
 		return domain.ShrinkNone
 	}
 	defer rows.Close()
-	var candidateIDs []string
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var a anchor
+		if err := rows.Scan(&a.id, &a.seq); err != nil {
 			return domain.ShrinkNone
 		}
-		candidateIDs = append(candidateIDs, id)
+		anchors = append(anchors, a)
 	}
-	for _, id := range candidateIDs {
-		priorEntries, err := s.ListSnapshotEntries(ctx, q, id)
+
+	for _, a := range anchors {
+		anchorSig, err := s.scopeSignature(ctx, q, a.id)
+		if err != nil || anchorSig != target {
+			continue
+		}
+		ok, err := s.noInterveningGrowth(ctx, q, rootID, snapshotID, a.id, a.seq, currentSeq, target)
 		if err != nil {
 			continue
 		}
-		if pipeline.RawScopeSignature(priorEntries) == target {
+		if ok {
 			return domain.ShrinkCorroborated
 		}
 	}
 	return domain.ShrinkNone
+}
+
+func (s *Store) scopeSignature(ctx context.Context, q Querier, snapshotID string) (string, error) {
+	es, err := s.ListSnapshotEntries(ctx, q, snapshotID)
+	if err != nil {
+		return "", err
+	}
+	return pipeline.RawScopeSignature(es), nil
+}
+
+// noInterveningGrowth reports whether every admitted observation between the
+// anchor and the current Snapshot has the same scope signature (R4-2).
+func (s *Store) noInterveningGrowth(ctx context.Context, q Querier, rootID, currentSnapshotID, anchorSnapshotID string, anchorSeq, currentSeq int64, target string) (bool, error) {
+	rows, err := q.Query(ctx,
+		`SELECT s.snapshot_id::text
+		   FROM index_snapshot s
+		   JOIN index_admission a ON a.snapshot_id = s.snapshot_id AND a.root_id = s.root_id
+		  WHERE s.root_id = $1::uuid AND s.snapshot_id <> $2::uuid AND s.snapshot_id <> $3::uuid
+		    AND a.admission_seq > $4 AND a.admission_seq < $5
+		    AND s.lifecycle_state IN ('EVALUATED','RECONCILED')`,
+		rootID, currentSnapshotID, anchorSnapshotID, anchorSeq, currentSeq)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return false, err
+		}
+		sig, err := s.scopeSignature(ctx, q, id)
+		if err != nil {
+			return false, err
+		}
+		if sig != target {
+			return false, nil
+		}
+	}
+	return true, nil
 }

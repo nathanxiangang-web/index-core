@@ -121,7 +121,7 @@ func (qr *QueryReader) ListResources(ctx context.Context, rootID string, parentR
 	if opts.IncludeRemoved {
 		presence = `c.resource_presence IN ('PRESENT','REMOVED')`
 	}
-	return qr.listPageInternal(ctx, rootID, parentResourceID, presence, rootVisibilityClause(opts), cur, limit)
+	return qr.listPageInternal(ctx, rootID, parentResourceID, parentResourceID == nil, presence, rootVisibilityClause(opts), cur, limit)
 }
 
 // ResolvePath returns ALL live resources at a path with explicit ambiguity
@@ -166,18 +166,18 @@ func (qr *QueryReader) ResolvePath(ctx context.Context, rootID, path string, opt
 
 // ListActivePage returns PRESENT resources with generation-bound pagination.
 func (qr *QueryReader) ListActivePage(ctx context.Context, rootID string, cur *query.Cursor, limit int) (query.ResourcePage, error) {
-	return qr.listPageInternal(ctx, rootID, nil, `c.resource_presence = 'PRESENT'`, rootVisibilityClause(query.ReadOptions{}), cur, limit)
+	return qr.listPageInternal(ctx, rootID, nil, false, `c.resource_presence = 'PRESENT'`, rootVisibilityClause(query.ReadOptions{}), cur, limit)
 }
 
 // ListRemovedPage returns REMOVED tombstones (explicit history).
 func (qr *QueryReader) ListRemovedPage(ctx context.Context, rootID string, cur *query.Cursor, limit int) (query.ResourcePage, error) {
 	opts := query.ReadOptions{IncludeRemoved: true, IncludeDeprecatedRoot: true, IncludeDeletedRoot: true}
-	return qr.listPageInternal(ctx, rootID, nil, `c.resource_presence = 'REMOVED'`, rootVisibilityClause(opts), cur, limit)
+	return qr.listPageInternal(ctx, rootID, nil, false, `c.resource_presence = 'REMOVED'`, rootVisibilityClause(opts), cur, limit)
 }
 
 // listPageInternal reads the generation and rows inside ONE read-only REPEATABLE
 // READ transaction; the cursor is generation-bound (CR1/P2/P3, R3-7).
-func (qr *QueryReader) listPageInternal(ctx context.Context, rootID string, parentID *string, presencePredicate, rootVisibility string, cur *query.Cursor, limit int) (query.ResourcePage, error) {
+func (qr *QueryReader) listPageInternal(ctx context.Context, rootID string, parentID *string, rootLevelOnly bool, presencePredicate, rootVisibility string, cur *query.Cursor, limit int) (query.ResourcePage, error) {
 	if limit <= 0 {
 		limit = defaultPageSize
 	}
@@ -201,9 +201,12 @@ func (qr *QueryReader) listPageInternal(ctx context.Context, rootID string, pare
 
 	args := []any{rootID}
 	where := `c.root_id = $1::uuid AND ` + presencePredicate + ` AND ` + rootVisibility
-	if parentID == nil {
+	// Q4 root-level listing filters on parent IS NULL; Q6/Q7 (whole-root reads)
+	// apply no parent filter (R4-3).
+	switch {
+	case rootLevelOnly:
 		where += ` AND c.parent_resource_id IS NULL`
-	} else {
+	case parentID != nil:
 		args = append(args, *parentID)
 		where += fmt.Sprintf(` AND c.parent_resource_id = $%d::uuid`, len(args))
 	}
