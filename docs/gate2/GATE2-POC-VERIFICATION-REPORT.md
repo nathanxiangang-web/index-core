@@ -1,0 +1,294 @@
+# Gate 2 — Index Core PoC Verification Report
+
+> Execution: Issue #44. Stack (Architect-locked, PR #45): **Go 1.27.x + PostgreSQL 18
+> + pgx/v5**. Branch: **`poc/gate2-indexcore`**. Status: **ARCHITECT_ACCEPTED**
+> (ARCHITECT FINAL ACCEPTANCE — Gate 2 PoC, final verification head `846a270`).
+> Rule: PASS is claimed only where tests actually exercise the behavior.
+
+## 1. Branch and commits
+
+Branch `poc/gate2-indexcore` (from `main` @ `1a420df`):
+
+| Commit | Stage |
+|--------|-------|
+| `1ba7694` | P0 scaffold: module, layered packages, SQL-first migrations, real-PG harness |
+| `023e911` | P0 package skeletons (kernel/collector/query) |
+| `a343b05` | P1 PostgreSQL Store repos |
+| `85acfb6` | P3 Kernel evaluation + Kernel-owned IO3 digest |
+| `3444825` | P2 per-root serialized reconcile transaction |
+| `27fa377` | P4 Safe Reconcile core + Store Plan wiring |
+| `495d70e` | P5 Canonical Change Journal + J6 repair |
+| `5bb06f7` | P6 read-only Query Contract |
+| `213e32b` | P7 V1/V2 fixture matrix |
+| `34cc299` | P8 rclone adapter |
+
+## 2. Migration / schema
+
+- SQL-first migrations embedded in the binary: `internal/store/postgres/migrations/*.sql`.
+- Runner: `postgres.Migrate(ctx, pool)` — applies pending files in lexical order,
+  each in its own transaction, tracked in `schema_migrations`; idempotent and
+  reproducible from an empty database.
+- `0001_init.sql` implements FROZEN doc A tables T1..T11 plus the
+  `index_identity_evidence_current` projection, and append-only triggers on
+  `index_journal_event` and `index_identity_evidence_observation`.
+- No fake `UNIQUE(root_id, canonical_path)` (C-C3 REJECTED); `C-C3a` overlap is real.
+
+## 3. Exact test commands
+
+```bash
+# PostgreSQL 18 container (docker available):
+make pg-up                       # postgres:18 on localhost:55432
+
+# Real-PostgreSQL + unit tests:
+make test                        # INDEXCORE_TEST_DATABASE_URL=... go test ./...
+
+# or explicitly:
+INDEXCORE_TEST_DATABASE_URL='postgres://indexcore:indexcore@localhost:55432/indexcore?sslmode=disable' go test ./...
+go vet ./...
+gofmt -l .
+```
+
+## 4. Test summary (including failure paths)
+
+All tests run against **real PostgreSQL 18.6** except the pure Kernel/unit tests
+(no in-memory fake substitutes PostgreSQL anywhere).
+
+| Area | Tests |
+|------|-------|
+| Migration | reproducible from empty DB; idempotent; journal/evidence append-only triggers reject UPDATE/DELETE; no fake path uniqueness |
+| Transaction (P2) | zero-mutation keeps generation + records application; mutation advances + ordered journal; non-head rejected; CAS conflict leaves no partial state; rollback leaves no partial state then FAILED in a later tx; same-generation NOOP; DELETED root rejected |
+| Kernel eval (P3) | C-1..C-10/C-9a cascade; UNKNOWN skips never COMPLETE; corroboration NONE/CORROBORATED/CONTRADICTED; digest distinguishes corroboration/assurance/skip-evidence; order-independent; timing-free |
+| Reconcile (P4) | ADD/UPDATE/RENAME/MOVE; move+update ordered pair; PARTIAL does not advance removal; first missing; confirmed removal; R8 imposter; ambiguous content-hash conflict |
+| Journal (P5) | cursor vector; rebuild=0 vs checkpoint resume; non-zero floor without checkpoint rejected; apply order |
+| J6 repair | corrective append on DELETED root without canonical/generation change; event_seq=next; intra=MAX+1; external reconcile still rejected |
+| Query (P6) | visibility defaults; REMOVED hidden by default; resolve_path ambiguity; generation-bound pagination STALE_CURSOR; journal cursor |
+| Fixtures (P7) | 15 scenario subtests (see Sec 6) |
+| rclone (P8) | lsjson normalization; hashes with algorithm; provider id preserved as evidence only; UNKNOWN skip evidence cannot be COMPLETE; failure/parse errors |
+
+## 5. Changed-file summary by module
+
+```
+internal/domain/            enums, entities, SnapshotIdentity
+internal/kernel/completeness/  acceptance_state cascade + shrink corroboration
+internal/kernel/identity/      Kernel-owned evaluated-Snapshot DETERMINISTIC_DIGEST
+internal/kernel/reconcile/     identity matching subset + transitions (pure)
+internal/kernel/journal/       cursor vector + rebuild/checkpoint floor rules
+internal/store/postgres/       pgxpool store, repos, migrations, Stage-1/2 tx, Plan, query
+internal/query/                read-only view types + STALE_CURSOR
+internal/collector/rclone/     external-process adapter (lsjson normalize)
+testutil/                      real-PostgreSQL test harness
+Makefile, go.mod, .env.example, PROJECT-STATE.md, NEXT-ACTIONS.md
+```
+
+## 6. Fixture matrix -> frozen contract mapping
+
+| # | Fixture | Frozen source | Where |
+|---|---------|---------------|-------|
+| 1 | initial complete Snapshot -> population | doc A G1; Safe Reconcile Sec 1.1 | `TestFixtureMatrix/1_initial_population` |
+| 2 | V1 -> V2 add | doc A G1; Safe Reconcile ADD | `.../2_v1_v2_add` |
+| 3 | rename | Safe Reconcile RENAME (J8) | `.../3_rename` |
+| 4 | move | Safe Reconcile MOVE | `.../4_move` |
+| 5 | move/rename + update ordered pair | doc A G8; doc D Sec 6 | `.../5_move_rename_plus_update` |
+| 6 | incomplete Snapshot missing prior -> no removal | Gate 1B INV-022; doc A G3 | `.../6_partial_missing_no_removal` |
+| 7 | confirmed removal tombstone + event | doc A G4 | `.../7_confirmed_removal` |
+| 8 | significant shrink NONE -> SUSPICIOUS/non-destructive | Gate 1B C-7 | `.../8_shrink_none_is_suspicious_non_destructive` |
+| 9 | later corroboration -> distinct identity + eligible | doc A G13; Gate 1B Sec 3.1.3; EC13 | `.../9_corroborated_shrink_...` |
+| 10 | duplicate same-generation replay -> NOOP | doc A G5; C-AS3 | `.../10_duplicate_same_generation_is_noop` |
+| 11 | same identity after generation advanced -> re-reconcile | doc A G14/G16; T12 | `.../11_same_identity_after_generation_reconciles` |
+| 12 | rollback/fault injection preserves truth | doc B T-AT2..T-AT5 | `TestReconcileRollbackLeavesNoPartialStateThenFailed` |
+| 13 | same-root absolute FIFO | doc B C-A5/RC1/RC4 | `.../13_same_root_absolute_fifo` |
+| 14 | different-root concurrency independence | doc B T9 | `.../14_different_root_concurrency_independence` |
+| 15 | path reuse / imposter | doc A G7/G12; R8 | `.../15_path_reuse_imposter` |
+| 16 | root DELETED behavior | doc A G17; C-R4 | `TestReconcileDELETEDRootRejectsWithoutMutation` |
+| 17 | J6 corrective repair incl. DELETED root | doc D Sec 8.2; JD16 | `TestRepairJournalOnDeletedRoot...` |
+
+## 7. Unresolved implementation choices (CANDIDATE freedom)
+
+**chosen for PoC  ≠  newly frozen architecture.** None of the following changes a
+frozen contract; each is an implementation/CANDIDATE selection to be reviewed.
+
+- **`content_hash`/`hash_algorithm` required in pairs (C-C4)** — tests supply
+  `hash_algorithm` alongside every hash; no behavior change to the contract.
+- **PoC identity-matching subset**: implemented R1 (stable provider id),
+  R3 (content hash), R4 (path+size+mtime), R5/R8 (move vs imposter), R11
+  (unresolved->CONFLICT); full R0–R11 (R6/R7/R9/R10 nuances) not exhaustively
+  exercised. Ambiguity is never weakened.
+- **PoC assumption**: an entry's `ParentRef` is treated as the parent's canonical
+  path so `canonical_path = join(ParentRef, Name)`; the adapter normalizes refs.
+- **Enum storage** = constrained `text` (doc A CANDIDATE).
+- **T8 primary key** = the six C-AS1 columns (doc A leaves PK implicit).
+- **`event_id`** = `bigint GENERATED ALWAYS AS IDENTITY`, opaque only.
+- **Append-only enforcement** = BEFORE UPDATE/DELETE triggers (doc D secondary;
+  role revocation is the production primary).
+- **Migration runner** = embedded ordered SQL files + `schema_migrations`.
+- **Concurrency** = per-root `SELECT ... FOR UPDATE` + conditional CAS
+  (doc B recommended READ COMMITTED option).
+- **Shrink threshold** = Gate 1C runtime config default 0.5 (D-DEFER-7).
+- **rclone mode** = external CLI `lsjson --recursive`; live remote not exercised.
+
+## 8. Architecture contradictions
+
+**NONE.** No frozen Gate 1B/1C semantic was changed. No contract conflict was found.
+---
+
+# Round 2 rework (PR #46 Architect review, B1–B7)
+
+Head: **`74c3585`**. Green tests do not override the frozen contracts; the
+following were semantic violations / end-to-end gaps, now fixed.
+
+| Item | Fix | Where |
+|------|-----|-------|
+| B1 Stable Identity | R3 now requires continuity context: same-path hash = MATCHED; cross-path hash to a MISSING candidate inside the horizon = MATCHED; cross-path hash to a still-PRESENT resource = CONFLICT; MISSING outside horizon = UNRESOLVED; R11 insufficient evidence = UNRESOLVED (never guessed); R10 provider-id change = UNRESOLVED; R8 imposter = NEW_RESOURCE; a REMOVED tombstone is never re-matched (reappearance = fresh ADD); move horizon enforced; `MoveRecognitionHorizon` now used | `internal/kernel/reconcile/identity.go` |
+| B2 removal independence | first qualifying COMPLETE absence only records MISSING evidence; confirmation requires a later, independently admitted COMPLETE snapshot (V2c); same-snapshot re-admission does not count; reappearance resets evidence; PARTIAL/STALE/SUSPICIOUS never advance | `reconcile.go`, migration `0002`, `missing_first_snapshot_id` |
+| B3 identity evidence in tx | reconcile loads rich prior and appends versioned `index_identity_evidence_observation` rows inside the Stage-2 transaction; `tagProvider()` removed | `LoadPriorResources`, `AppendObservation`, `tx.go` |
+| B4 full P3 pipeline | Kernel coordinator evaluates Snapshot → acceptance → final `DETERMINISTIC_DIGEST` → IO3; digest now covers `hash_algorithm`, `content_type`, provider assurance; integration flow injects neither identity nor acceptance | `internal/kernel/pipeline`, `EvaluateSnapshot` |
+| B5 query separation | consumer-facing read-only `QueryReader` / `query.Reader` facade (no `*postgres.Store`, no `Pool()`); pagination reads generation + rows in ONE read-only REPEATABLE READ transaction | `internal/query/reader.go`, `postgres/query.go` |
+| B6 snapshot lifecycle | terminal outcomes map to RECONCILED/REJECTED atomically inside the reconcile tx; retryable failures leave the Snapshot EVALUATED | `tx.go`, `SetSnapshotLifecycleState` |
+| B7 rclone | failure visibility WEAK by default (STRONG only via an explicit mode/backend-qualified opt-in); the real rclone binary is exercised against a local backend across the process boundary | `internal/collector/rclone` |
+
+Additional tests added: cross-path hash vs PRESENT, MISSING inside/outside horizon,
+weak-evidence UNRESOLVED, provider-id change, REMOVED reappearance, removal
+independence (first-only / same-snapshot replay / independent confirmation),
+reappearance reset, move+update ordered pair, digest decision-field coverage,
+snapshot lifecycle, rclone real process boundary.
+
+## Round 2 status template
+
+```
+STATUS: READY_FOR_ARCH_REVIEW — GATE 2 POC (Round 2)
+
+POSTGRESQL_STORE: PASS
+TRANSACTION_BOUNDARY: PASS
+KERNEL_EVALUATION: PASS
+SAFE_RECONCILE: PARTIAL   # implemented paths obey frozen R1/R3/R4/R5/R8/R10/R11; R6/R7 nuance still not exhaustive
+CHANGE_JOURNAL: PASS
+QUERY_CONTRACT: PASS
+FIXTURE_POC: PASS
+RCLONE_ADAPTER_ADDITIVE: PASS (additive only; destructive-safe COMPLETE explicitly unsupported)
+
+FROZEN_CONTRACT_CHANGES: NONE
+```
+
+CANDIDATE implementation choices (chosen for PoC ≠ newly frozen architecture):
+`missing_first_snapshot_id` (Store-internal independence proof), snapshot-entry
+provider assurance hint, entry `ParentRef` = parent canonical path, enum storage
+as constrained text, T8 primary key = six C-AS1 columns, migration runner, lock/CAS
+mechanism, shrink threshold 0.5 (D-DEFER-7).
+---
+
+# Round 3 rework (PR #46 Round-2 review, R2-1..R2-12)
+
+Head: **`a01104c`**.
+
+| Item | Fix |
+|------|-----|
+| R2-1 | R1 now requires the CURRENT entry's own `provider_identity_assurance = STABLE_WITHIN_SCOPE`; nil/UNVERIFIED/UNSTABLE never qualifies as STRONG. |
+| R2-2 | A present hash contradiction never falls through to the size+mtime move fallback; hash-present entries match only by hash. |
+| R2-3 | `MISSING_EVIDENCE` / `REMOVAL_CANDIDATE` / `RESET_REMOVAL_EVIDENCE` are evidence-only and do NOT advance `current_generation`; they persist in the zero-mutation Stage-2 path. |
+| R2-4 | A Kernel-derived removal-decision context (first absence vs independent confirmation vs reappearance reset, no snapshot_id/timing) is included in the final IO3 digest, so identical later independent COMPLETE observations confirm removal. |
+| R2-5 | Orchestration is `SUBMITTED -> Stage-1 admission_seq -> evaluation -> final identity -> Stage-2 reconcile`; admission precedes evaluation. |
+| R2-6 | `scope_shrink_corroboration` is derived from persisted admitted snapshots; the caller-injected verdict is removed. |
+| R2-7 | `MinIndependentConfirmations > 1` is rejected; `missing_last_snapshot_id` prevents double-counting one observation. |
+| R2-8 | `RemovalGracePeriod >= MoveRecognitionHorizon` enforced via `Config.Validate` and an effective grace never shorter than the horizon. |
+| R2-9 | IdentityEvidence `observed_at` = the Snapshot observation time, not DB processing time. |
+| R2-10 | `entry_count` derived from normalized entries; digest entry sort is a total canonical order. |
+| R2-11 | Query gains Q1 `get_root` and Q4 `list_resources`; root visibility enforced on resource reads (DELETED/DEPRECATED children do not leak by default); multi-statement reads (RootStatus, ResolvePath) use one read-only consistent transaction. |
+| R2-12 | FAILED (and non-EVALUATED) snapshots are REJECTED, never APPLIED/RECONCILED. |
+
+Migration `0003` adds `missing_last_snapshot_id`.
+
+## Round 3 status template
+
+```
+STATUS: READY_FOR_ARCH_REVIEW — GATE 2 POC (Round 3)
+
+POSTGRESQL_STORE: PASS
+TRANSACTION_BOUNDARY: PASS
+KERNEL_EVALUATION: PASS
+SAFE_RECONCILE: PASS      # implemented paths obey frozen R1/R3/R4/R5/R8/R10/R11; R6/R7 nuance still not exhaustive
+CHANGE_JOURNAL: PASS
+QUERY_CONTRACT: PASS
+FIXTURE_POC: PASS
+RCLONE_ADAPTER_ADDITIVE: PASS (additive only; destructive-safe COMPLETE explicitly unsupported)
+
+FROZEN_CONTRACT_CHANGES: NONE
+```
+
+Tests: real PostgreSQL 18.6 integration + real rclone v1.75.1 process-boundary run;
+62 test functions; `go vet` and `gofmt` clean.
+
+---
+
+# Round 4 rework (PR #46 Round-3 review, R3-1..R3-8)
+
+Head: **`aac9b0e`**. The safe sequence is now the production path via
+`Coordinator.ProcessSnapshot`:
+`SUBMITTED -> atomic Stage-1 admission -> generation-consistent evaluation/final
+identity (under the per-root lock) -> Stage-2 reconcile`.
+
+| Item | Fix |
+|------|-----|
+| R3-1 | Removal-decision context is derived from the SAME identity resolution as reconcile (reappearance-reset + imposter/old-still-missing outcomes), not path membership. A reappearance after MISSING is no longer an IO3 NOOP and resets evidence. |
+| R3-2 | Corroboration requires a qualifying earlier **admitted** observation (admission_seq < current; SUCCESS, no error, confirmed no skips, positive freshness, STRONG) that independently observed the same reduced **scope signature** (from actual entries, not metadata); insignificant shrink never corroborates; unrelated earlier observations do not. |
+| R3-3 | Evaluation/final IO3 identity runs UNDER the per-root lock in Stage 2, bound to the canonical generation being reconciled. |
+| R3-4 | Stage-1 `AdmitSnapshot` is one atomic short transaction (lock root -> validate Snapshot exists + SUBMITTED + same root -> allocate seq -> INSERT PENDING); Stage 2 loads the head admission and verifies the root/snapshot binding. |
+| R3-5 | Stale/out-of-order restored to distinct **STALE_INPUT** (admission + reconcile result), Snapshot REJECTED, no canonical mutation. |
+| R3-6 | `Config.Validate()` runs fail-closed in the coordinator before any mutation. |
+| R3-7 | `query.ReadOptions` separates removed / deprecated-root / deleted-root dimensions; Q4 real hierarchy (parent_resource_id maintained on ADD and MOVE) with a generation-bound cursor; `RootStatus` honors root visibility. |
+| R3-8 | `Coordinator.ProcessSnapshot` makes the safe sequence the normal path; end-to-end fixtures exercise it. |
+
+## Round 4 status template
+
+```
+STATUS: READY_FOR_ARCH_REVIEW — GATE 2 POC (Round 4)
+
+POSTGRESQL_STORE: PASS
+TRANSACTION_BOUNDARY: PASS
+KERNEL_EVALUATION: PASS
+SAFE_RECONCILE: PASS
+CHANGE_JOURNAL: PASS
+QUERY_CONTRACT: PASS
+FIXTURE_POC: PASS
+RCLONE_ADAPTER_ADDITIVE: PASS (additive only; destructive-safe COMPLETE explicitly unsupported)
+
+FROZEN_CONTRACT_CHANGES: NONE
+```
+
+Tests: real PostgreSQL 18.6 + real rclone v1.75.1 process-boundary run; 65 test
+functions; `go vet` / `gofmt` clean.
+
+---
+
+# Round 5 rework (PR #46 Round-4 review, R4-1..R4-4)
+
+Head: **`548404e`**.
+
+| Item | Fix |
+|------|-----|
+| R4-1 | `AdmitOrResumeSnapshot` reuses an existing PENDING `admission_seq` for the same Snapshot (never renumbers); `Coordinator.ProcessHead` processes the existing absolute head so a stranded later input progresses after the earlier head terminalises. Tests: same-seq resume, no duplicate PENDING rows, stranded input progresses without a new admission. |
+| R4-2 | Corroboration is anchored to the **first uncorroborated shrink** of the episode: the candidate must itself have `acceptance_state=SUSPICIOUS` + `scope_shrink_corroboration=NONE`, match the reduced scope signature, and have **no intervening admitted observation with a different signature**. An old pre-growth same-signature Snapshot no longer corroborates. |
+| R4-3 | Q6 `ListActivePage` / Q7 `ListRemovedPage` are **whole-root reads** (no parent filter); only Q4 root-level `ListResources` applies `parent IS NULL`. Tests cover a nested directory + child and a nested removed tombstone. |
+| R4-4 | `.gitignore` split `__pycache__/.env` into `__pycache__/`, `.env`, `/bin/`. |
+
+## Round 5 status template
+
+```
+STATUS: ARCHITECT_ACCEPTED — GATE 2 POC (ARCHITECT FINAL ACCEPTANCE, head 846a270)
+
+POSTGRESQL_STORE: PASS
+TRANSACTION_BOUNDARY: PASS
+KERNEL_EVALUATION: PASS
+SAFE_RECONCILE: PASS
+CHANGE_JOURNAL: PASS
+QUERY_CONTRACT: PASS
+FIXTURE_POC: PASS
+RCLONE_ADAPTER_ADDITIVE: PASS (additive only; destructive-safe COMPLETE explicitly unsupported)
+
+FROZEN_CONTRACT_CHANGES: NONE
+```
+
+Tests: real PostgreSQL 18.6 + real rclone v1.75.1 process-boundary run; 69 test
+functions; `go vet` / `gofmt` clean.
+
+
+
