@@ -101,7 +101,7 @@ side of the boundary.
 |----------|-----------|-----------|
 | Scope identifier (root) | REQUIRED | Which root/partition this batch covers |
 | Resource entries | REQUIRED | Observed resources with identity/metadata hints |
-| Completeness flag | REQUIRED | Gates Safe Reconcile (principle 4) |
+| Completeness / traversal evidence | REQUIRED | Collector provides traversal_status, errors, skipped/freshness/count evidence; Kernel internally produces completeness acceptance decision. Final complete=true is NOT a Collector input field. |
 | Source provenance | REQUIRED | Audit, conflict detection, debugging |
 | Optional generation / cursor | OPTIONAL | Principles 6, 10 |
 | Content hash | OPTIONAL | Principle 7 |
@@ -248,10 +248,13 @@ ambiguities. See `GATE1A-BOUNDARY-ATTACK-REPORT.md` for full detail.
 
 ---
 
-## 8. Gate 1B Pre-conditions
+## 8. WARNING Disposition
 
-These 4 clarifications, if adopted in Gate 1B, eliminate all 6 WARNINGs
-without re-opening any ACCEPTED_BOUNDARY:
+The 6 WARNINGs from the adversarial attack are split by responsibility
+into the appropriate future phase. None require re-opening an
+ACCEPTED_BOUNDARY.
+
+### To Gate 1B (core semantics)
 
 1. **(D1)** Pin "expected entry count range" to "derived from prior
    committed canonical state only; no independent statistical model".
@@ -261,34 +264,49 @@ without re-opening any ACCEPTED_BOUNDARY:
 2. **(D2/D5)** Freeze `parent_ref` to "Collector-local reference (entry
    index within the snapshot, or observed parent path), never canonical
    resource_id".
-3. **(D6)** Rename `adapter_generation` to `provider_cursor` or
-   `adapter_delta_token`. Rename `CollectorMode = delta_hint` to
-   `incremental_hint` or `adapter_delta_opt`.
-4. **(D7)** Add invariant "Root partitions are disjoint; a resource
+3. **(D7)** Add invariant "Root partitions are disjoint; a resource
    belongs to exactly one Root" or define the merge rule for overlapping
    Roots. Extend "Canonical wins on disagreement" to cover Change
    Journal vs Canonical Inventory repair precedence.
+
+### To Post-MVP Scanner Resume
+
+4. **(D1 partial)** Scanner checkpoint/resume is not a Gate 1B concern.
+   Blueprint section 18 defers it to post-MVP.
+
+### To Post-MVP Incremental
+
+5. **(D6 partial)** Native delta / incremental mode naming. Rename
+   `adapter_generation` to `provider_cursor` or `adapter_delta_token`.
+   Rename `CollectorMode = delta_hint` to `incremental_hint` or
+   `adapter_delta_opt`. Blueprint section 19 defers incremental to
+   phase 3.
+
+### To Gate 1C (persistence / query shape)
+
+6. **(D6 partial)** DB/query/journal persistence event schema shape is a
+   Gate 1C concern, not Gate 1B.
 
 ---
 
 ## 9. Deferred Items
 
-### DEFERRED_TO_GATE1B
+### DEFERRED_TO_GATE1B (core semantics only)
 
 - Stable identity algorithm (constraint: respect principles 5, 6, 7)
 - Rename/move matching algorithm (constraint: no mandatory hash/ID)
 - Safe Reconcile state machine (constraint: enforce principles 3, 4)
 - Detailed snapshot acceptance criteria
-- Canonical Change Journal format
+- Canonical Change Journal **semantics** (not storage/event schema)
 - Conflict resolution policy for concurrent batches
 - Final SnapshotEntry schema (field names, types, parent_ref representation)
 - Completeness acceptance algorithm (complete=true decision)
+
+### DEFERRED_TO_GATE1C (persistence / query shape)
+
 - PostgreSQL schema, SQL, migration, ORM mapping
 - Query Contract exact read API, snapshot/cursor protocol, authz
 - Journal event schema and projection rebuild protocol
-
-### DEFERRED_TO_GATE1C
-
 - Store adapter mapping (canonical state to schema)
 - Query projection strategies
 - Collector contract details (transport, batching)
@@ -296,6 +314,16 @@ without re-opening any ACCEPTED_BOUNDARY:
 - Search engine choice (PostgreSQL FTS vs. external index)
 - Cross-Consumer fan-out / event bus transport
 - Final Collector selection (AList vs rclone vs direct vs combination)
+
+### DEFERRED_POST_MVP_SCANNER_RESUME
+
+- Scan checkpoint / resume design (blueprint section 18: post-MVP)
+
+### DEFERRED_POST_MVP_INCREMENTAL
+
+- Delta / incremental input mode (blueprint section 10: phase 1 full
+  snapshot only; section 19: phase 3 incremental)
+- Provider cursor / native delta token detailed semantics
 
 ---
 
@@ -305,7 +333,7 @@ without re-opening any ACCEPTED_BOUNDARY:
 |------------|--------|
 | Did not design stable identity algorithm | Honored -- deferred to Gate 1B |
 | Did not design rename/move matching algorithm | Honored -- deferred to Gate 1B |
-| Did not design PostgreSQL table structure | Honored -- deferred to Gate 1B |
+| Did not design PostgreSQL table structure | Honored -- deferred to Gate 1C |
 | Did not design Safe Reconcile state machine | Honored -- deferred to Gate 1B |
 | Did not write product code | Honored -- design document only |
 | Did not choose final Collector | Honored -- deferred to Gate 1C |

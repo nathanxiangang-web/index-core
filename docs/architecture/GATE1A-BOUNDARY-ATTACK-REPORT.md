@@ -308,9 +308,9 @@ channels, and deferred semantics.
   truth path."
 - W-B B3.1: "`adapter_generation` | Optional adapter-reported
   generation/cursor if the provider exposes one (e.g. rclone
-  ChangeNotify token). Absent for most providers | DEFERRED_TO_GATE1B".
+   ChangeNotify token). Absent for most providers | DEFERRED_POST_MVP_INCREMENTAL".
 - W-B D-DEFER-5: "`adapter_generation` / native delta token semantics |
-  DEFERRED_TO_GATE1B | Native delta != Change Journal (INV-012)."
+   DEFERRED_POST_MVP_INCREMENTAL | Native delta != Change Journal (INV-012)."
 
 ### Verdict: WARNING
 
@@ -329,18 +329,18 @@ However, two naming ambiguities risk conflation in implementation:
    Kernel `Generation` is canonical epoch), but an implementer could
    pass `adapter_generation` as `expected_generation` to
    `begin_reconcile`, silently treating a provider cursor as canonical
-   epoch. Gate 1B should rename `adapter_generation` to
+   epoch. Post-MVP Incremental should rename `adapter_generation` to
    `provider_cursor` or `adapter_delta_token` to eliminate the lexical
    overlap.
 2. W-B B1 `CollectorMode = delta_hint` uses "delta" in its name. D-DEFER-1
-   defers it to Gate 1B. If an implementer reads "delta hint" as
+   defers it to Post-MVP Incremental. If an implementer reads "delta hint" as
    "Change Journal input", they would bypass A3's "NOT INPUT to Kernel"
    rule. B1's clarifying sentence ("The Kernel treats all input as
    snapshot evidence") mitigates this, but the name itself is a risk.
-   Gate 1B should rename to `incremental_hint` or `adapter_delta_opt`.
+   Post-MVP Incremental should rename to `incremental_hint` or `adapter_delta_opt`.
 
 No current accepted boundary conflates the three concepts. The risk is
-naming drift in Gate 1B. WARNING.
+naming drift in Post-MVP Incremental. WARNING.
 
 ---
 
@@ -497,11 +497,13 @@ Summary: 0 VIOLATION, 6 WARNING, 2 PASS.
 
 ---
 
-## Required Gate 1B clarifications (derived from WARNINGs)
+## WARNING Disposition (derived from WARNINGs)
 
-These are the smallest follow-up design constraints that, if adopted in
-Gate 1B, eliminate every WARNING without re-opening any accepted
-boundary:
+The 6 WARNINGs are split by responsibility into the appropriate future
+phase. None require re-opening an ACCEPTED_BOUNDARY. All are
+clarifications of CANDIDATE or DEFERRED items.
+
+### To Gate 1B (core semantics)
 
 1. (D1) Pin "expected entry count range" to "derived from prior
    committed canonical state only; no independent statistical model".
@@ -511,16 +513,21 @@ boundary:
 2. (D2/D5) Freeze `parent_ref` to "Collector-local reference (entry
    index within the snapshot, or observed parent path), never canonical
    resource_id".
-3. (D6) Rename `adapter_generation` to `provider_cursor` or
-   `adapter_delta_token`. Rename `CollectorMode = delta_hint` to
-   `incremental_hint` or `adapter_delta_opt`.
-4. (D7) Add invariant "Root partitions are disjoint; a resource belongs
+3. (D7) Add invariant "Root partitions are disjoint; a resource belongs
    to exactly one Root" or define the merge rule for overlapping Roots.
    Extend "Canonical wins on disagreement" to cover Change Journal vs
    Canonical Inventory repair precedence.
 
-None of these require re-opening an ACCEPTED_BOUNDARY. All are
-clarifications of CANDIDATE or DEFERRED items.
+### To Post-MVP Incremental
+
+4. (D6) Rename `adapter_generation` to `provider_cursor` or
+   `adapter_delta_token`. Rename `CollectorMode = delta_hint` to
+   `incremental_hint` or `adapter_delta_opt`.
+
+### To Post-MVP Scanner Resume
+
+5. (D1 partial) Scanner checkpoint/resume is not a Gate 1B concern.
+   Blueprint section 18 defers it to post-MVP.
 
 ---
 
@@ -554,6 +561,7 @@ Store-leakage stress test (D3 PASS), and the Consumer-bypass stress test
 The six WARNINGs are all of the same form: a CANDIDATE or DEFERRED item
 whose current wording is ambiguous enough that a future gate or
 implementation could resolve it into a violation. None require re-opening
-an ACCEPTED_BOUNDARY today. All six are eliminable in Gate 1B by adopting
-the four clarifications listed above. The boundary freeze can proceed
-with these clarifications registered as Gate 1B pre-conditions.
+an ACCEPTED_BOUNDARY today. All six are eliminable by adopting the
+clarifications listed above, split across Gate 1B (core semantics),
+Post-MVP Scanner Resume, and Post-MVP Incremental. The boundary freeze
+can proceed with these clarifications registered as pre-conditions.

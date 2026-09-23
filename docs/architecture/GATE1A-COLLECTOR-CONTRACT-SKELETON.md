@@ -54,7 +54,7 @@ surface:
 | `ScanScope` | Which subtree(s) of the root to traverse. Default = entire root. May be a set of path prefixes. Does NOT imply completeness of the un-scanned portion. | ACCEPTED_BOUNDARY |
 | `RefreshPolicy` | Cache / freshness directive: `force_refresh` (bypass provider cache), `allow_cached` (use cache, record staleness), `max_age`. Maps to AList `refresh=true` / rclone VFS cache options. | CANDIDATE |
 | `TraversalOptions` | Adapter-level hints: max depth, concurrency, pagination size, timeout. These are **hints**, not Kernel domain. The Kernel does not depend on them. | CANDIDATE |
-| `CollectorMode` | `full_snapshot` (default for Gate 1) vs `delta_hint` (deferred, see D-DEFER-1). The Kernel treats all input as snapshot evidence; a delta hint is an optimization, not a separate truth path. | ACCEPTED_BOUNDARY (full_snapshot) / DEFERRED_TO_GATE1B (delta_hint) |
+| `CollectorMode` | `full_snapshot` (default for Gate 1) vs `delta_hint` (deferred, see D-DEFER-1). The Kernel treats all input as snapshot evidence; a delta hint is an optimization, not a separate truth path. | ACCEPTED_BOUNDARY (full_snapshot) / DEFERRED_POST_MVP_INCREMENTAL (delta_hint) |
 
 ### B1 boundaries
 
@@ -132,7 +132,7 @@ final acceptance algorithm (D-DEFER-3).
 | `freshness_evidence` | Cache state at scan time: `cache_bypassed` (refresh was forced), `cache_age_seconds` (if cached), `provider_cache_ttl`. Lets the Kernel judge staleness. | CANDIDATE |
 | `entry_count` | Number of entries in the snapshot. Material for weak sanity check only. | CANDIDATE |
 | `byte_count` | Sum of sizes. Material for weak sanity check only. | CANDIDATE |
-| `adapter_generation` | Optional adapter-reported generation/cursor if the provider exposes one (e.g. rclone ChangeNotify token). Absent for most providers. | DEFERRED_TO_GATE1B |
+| `adapter_generation` | Optional adapter-reported generation/cursor if the provider exposes one (e.g. rclone ChangeNotify token). Absent for most providers. | DEFERRED_POST_MVP_INCREMENTAL |
 
 ### B3.2 What `traversal_status` means (ACCEPTED_BOUNDARY)
 
@@ -300,7 +300,7 @@ Evidence: D03 report (sections 4, 5), D03 W-D matrix (section 2).
 | Provider error capture (to the extent the adapter can observe) | ACCEPTED_BOUNDARY |
 | Refresh / cache-bypass policy execution | ACCEPTED_BOUNDARY |
 | Adapter-level timeout / concurrency / depth hints | CANDIDATE |
-| Scan checkpoint / resume (blueprint section 18: deferred to Scanner Resume phase, NOT Kernel) | DEFERRED_TO_GATE1B |
+| Scan checkpoint / resume (blueprint section 18: deferred to Scanner Resume phase, NOT Kernel) | DEFERRED_POST_MVP_SCANNER_RESUME |
 
 ### Collector / Scanner does NOT own (REJECTED)
 
@@ -320,11 +320,11 @@ boundary.)
 
 | ID | Item | Deferred to | Reason |
 |----|------|-------------|--------|
-| D-DEFER-1 | Delta / incremental input mode (`CollectorMode = delta_hint`) | DEFERRED_TO_GATE1B | Blueprint section 10: full snapshot first, incremental later. |
+| D-DEFER-1 | Delta / incremental input mode (`CollectorMode = delta_hint`) | DEFERRED_POST_MVP_INCREMENTAL | Blueprint section 10: full snapshot first; section 19: phase 3 incremental. |
 | D-DEFER-2 | Final SnapshotEntry schema (field names, types, `parent_ref` representation) | DEFERRED_TO_GATE1B | Gate 1A freezes boundary, not final schema. |
 | D-DEFER-3 | Completeness acceptance algorithm (`complete=true` decision) | DEFERRED_TO_GATE1B | NEXT-ACTIONS B + blueprint section 8: Safe Reconcile semantics. Collector provides evidence; Kernel decides. |
-| D-DEFER-4 | Scan checkpoint / resume design | DEFERRED_TO_GATE1B | Blueprint section 18: Scanner Resume phase, after MVP stable. |
-| D-DEFER-5 | `adapter_generation` / native delta token semantics | DEFERRED_TO_GATE1B | Native delta != Change Journal (INV-012); delta mode itself is deferred (D-DEFER-1). |
+| D-DEFER-4 | Scan checkpoint / resume design | DEFERRED_POST_MVP_SCANNER_RESUME | Blueprint section 18: Scanner Resume phase, after MVP stable. |
+| D-DEFER-5 | `adapter_generation` / native delta token semantics | DEFERRED_POST_MVP_INCREMENTAL | Native delta != Change Journal (INV-012); delta mode itself is deferred (D-DEFER-1). |
 | D-DEFER-6 | Final Collector selection (AList vs rclone vs direct vs combination) | DEFERRED_TO_GATE1C | Architect decision after contract fit analysis; not a Worker conclusion. |
 
 ---

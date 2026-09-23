@@ -120,14 +120,14 @@ Write (inside a reconcile transaction):
 - **Journal is append-only and gap-free within committed
   transactions.** Projections resume from a generation cursor without
   missing or double-counting. `ACCEPTED_BOUNDARY` (semantic); physical
-  sequence strategy is `DEFERRED_TO_GATE1B`.
+  sequence strategy is `DEFERRED_TO_GATE1C`.
 
 ### C1.4 Explicitly out of scope here
 
 - Exact method signatures and Domain type definitions:
   `DEFERRED_TO_GATE1B` (needs the concrete Domain model).
 - PostgreSQL schema, SQL, migration, ORM mapping:
-  `DEFERRED_TO_GATE1B` (forbidden by DO NOT; schema is a Gate1B concern
+  `DEFERRED_TO_GATE1C` (forbidden by DO NOT; schema is a Gate1C concern
   once the Store Interface is fixed).
 - Multi-writer Kernel, Store sharding, replica routing:
   `DEFERRED_TO_GATE1C` (phase 1 is single-writer).
@@ -194,7 +194,7 @@ synthesize them or the engine is not a valid substitute.
 ### C2.4 Out of scope here
 
 - Schema, SQL, indexes, migration, ORM mapping:
-  `DEFERRED_TO_GATE1B` (DO NOT forbids it in this gate).
+  `DEFERRED_TO_GATE1C` (DO NOT forbids it in this gate).
 - Read-replica topology, connection pooling, failover:
   `DEFERRED_TO_GATE1C` (operational, phase >1).
 
@@ -243,9 +243,9 @@ Consumer. `ACCEPTED_BOUNDARY`.
 ### C3.4 Out of scope here
 
 - Exact Query Contract read API (method signatures, pagination,
-  snapshot/cursor protocol, authz): `DEFERRED_TO_GATE1B`.
+  snapshot/cursor protocol, authz): `DEFERRED_TO_GATE1C`.
 - Journal event schema and projection rebuild protocol:
-  `DEFERRED_TO_GATE1B`.
+  `DEFERRED_TO_GATE1C`.
 - Cross-Consumer fan-out / event bus transport:
   `DEFERRED_TO_GATE1C` (transport is an implementation concern, not a
   boundary concern).
@@ -296,9 +296,9 @@ Consumer. `ACCEPTED_BOUNDARY`.
 | Consumer reads canonical via Query Contract, owns its projections, never writes canonical, never bypasses Query Contract (INV-008) | `ACCEPTED_BOUNDARY` |
 | Search is a projection, not canonical (INV-002); eventually consistent; canonical wins | `ACCEPTED_BOUNDARY` |
 | Exact Store Interface signatures and Domain types | `CANDIDATE` -> `DEFERRED_TO_GATE1B` |
-| PostgreSQL schema / SQL / migration / ORM mapping | `DEFERRED_TO_GATE1B` (forbidden in this gate by DO NOT) |
-| Query Contract exact read API, snapshot/cursor protocol, authz | `DEFERRED_TO_GATE1B` |
-| Journal event schema and projection rebuild protocol | `DEFERRED_TO_GATE1B` |
+| PostgreSQL schema / SQL / migration / ORM mapping | `DEFERRED_TO_GATE1C` (forbidden in this gate by DO NOT) |
+| Query Contract exact read API, snapshot/cursor protocol, authz | `DEFERRED_TO_GATE1C` |
+| Journal event schema and projection rebuild protocol | `DEFERRED_TO_GATE1C` |
 | Multi-writer Kernel, Store sharding, replica routing, failover | `DEFERRED_TO_GATE1C` |
 | Search engine choice, index mapping, analyzer config | `DEFERRED_TO_GATE1C` |
 | Cross-Consumer fan-out / event bus transport | `DEFERRED_TO_GATE1C` |
@@ -307,11 +307,14 @@ No conclusion is tagged `REJECTED`. No `REJECTED` line is needed.
 
 ---
 
-## DEFERRED_TO_GATE1B
+## DEFERRED_TO_GATE1B (core semantics only)
 
 - Concrete Domain types (`RootState`, `CanonicalInventory`,
   `ResourceEntry`, `JournalEvent`, `Generation`) and exact Store
   Interface method signatures.
+
+## DEFERRED_TO_GATE1C (persistence / query shape)
+
 - PostgreSQL schema, SQL, indexes, migration, ORM mapping (forbidden in
   Gate1A by DO NOT; belongs to the gate that fixes the Store Interface).
 - Query Contract exact read API: method signatures, pagination,
@@ -319,9 +322,6 @@ No conclusion is tagged `REJECTED`. No `REJECTED` line is needed.
 - Journal event schema and projection rebuild / catch-up protocol.
 - Physical journal sequence strategy (sequence vs. identity vs.
   generation-bucketed) -- semantic gap-freeness is accepted here.
-
-## DEFERRED_TO_GATE1C
-
 - Multi-writer / sharded Kernel, Store failover, read-replica topology,
   connection pooling.
 - Search engine choice (PostgreSQL FTS vs. external index), index
