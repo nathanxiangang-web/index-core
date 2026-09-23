@@ -1,24 +1,22 @@
 # Index Core — Next Actions
 
-> Operational near-term queue only.
-
 ## Current phase
 
-**Gate 1 — Architecture**
+**Gate 1B — Core Semantics**
 
-No implementation is authorized yet.
+No product code.
 
 ## Immediate objective
 
-Freeze the smallest safe IndexCore contracts using D01-D03 evidence.
+Turn the Gate 1A boundaries into deterministic Domain and safety semantics.
 
-Do not choose a Collector by momentum.
+Gate 1B must answer:
 
-Do not write product code.
+> When is an observed object the same canonical resource, when is a Snapshot safe enough to reconcile, and how does canonical truth change without accidental deletion or identity corruption?
 
-## Gate 1 design questions
+## Workstreams
 
-### A. Domain / Identity
+### Worker A — Domain + Stable Identity v1
 
 Define:
 
@@ -26,53 +24,40 @@ Define:
 - Snapshot
 - SnapshotEntry
 - CanonicalResource
-- ChangeRecord
+- canonical Generation
+- identity evidence model
+- Stable Identity v1 rules
+- ambiguous identity -> conflict/unresolved
 
-Specify Stable Identity v1 when:
+Must handle:
 
-- provider_object_id exists
-- provider_object_id is absent
-- path changes
-- hash is absent
-- rename/move is ambiguous
+- provider_object_id present / absent
+- path change
+- rename / move
+- hash absent
+- same-name/same-size collisions
+- directory identity
+- root scoping
 
-### B. Snapshot / Completeness
+Do not require hash or provider ID.
 
-Define:
-
-- snapshot lifecycle
-- completeness evidence
-- failure / skipped-path representation
-- cache/freshness evidence
-- conditions under which destructive reconcile is forbidden
-
-### C. Collector boundary
-
-Define a provider-neutral Collector/Input Contract.
-
-Then evaluate:
-
-- AList/OpenList adapter
-- rclone adapter
-- direct provider adapter only where necessary
-
-Selection must be based on contract fit, not feature count.
-
-### D. Store / PostgreSQL
+### Worker B — Snapshot + Completeness Acceptance
 
 Define:
 
-- Store Interface
-- transaction boundary
-- atomic root reconcile guarantee
-- generation / version semantics
-- previous-truth preservation on failure
+- Snapshot lifecycle
+- traversal evidence
+- error / skipped-scope / freshness evidence
+- completeness acceptance states
+- destructive-reconcile eligibility
 
-PostgreSQL is the first persistence implementation.
+Hard rule:
 
-Domain types must not depend on PostgreSQL schema.
+`traversal_status=success` is evidence, not proof of provider completeness.
 
-### E. Reconcile / Safety
+Completeness heuristics may inspect only submitted evidence + prior committed canonical state.
+
+### Worker C — Safe Reconcile + Failure Model + Change Journal semantics
 
 Define:
 
@@ -84,76 +69,91 @@ Define:
 - removal candidate
 - confirmed removed
 - conflict
+- rejected/incomplete input
+- canonical Change Journal semantic events
 
-Missing must never equal deleted automatically.
+Must guarantee:
 
-### F. Change Journal
+- missing != deleted
+- incomplete Snapshot cannot authorize destructive removal
+- failed reconcile leaves previous canonical truth intact
 
-Define Canonical Change Journal separately from:
+Do not design PostgreSQL transaction implementation yet.
 
-- provider-native delta
-- polling
-- snapshot diff
-- search index updates
+### Worker D — Adversarial state-machine review
 
-### G. Query Contract
+Attack A/B/C with scenarios:
 
-Define read-only consumer access for:
+- file rename
+- file move
+- directory rename/move
+- same path reused by a different object
+- provider ID disappears
+- provider ID changes unexpectedly
+- duplicate name/size/mtime
+- partial scan
+- silent truncation suspicion
+- permission-denied subtree
+- stale cache
+- concurrent snapshots for same root
+- overlapping roots
+- retry of same Snapshot
+- crash before commit / after decision but before persistence
+- Journal disagreement with Canonical Inventory
 
-- CloudSite
-- Search
-- Catalog
-- future consumers
+D does not design the primary solution.
 
-Consumers must not redefine canonical truth.
+## Gate 1B deliverables
 
-## Gate 1 deliverables
-
-At minimum:
+Suggested:
 
 ```text
 docs/architecture/
-  DOMAIN-MODEL.md
-  SNAPSHOT-CONTRACT.md
-  COLLECTOR-CONTRACT.md
-  STORE-CONTRACT.md
-  QUERY-CONTRACT.md
-  FAILURE-MODEL.md
-  IDENTITY-V1.md
-  SAFE-RECONCILE.md
-  CHANGE-JOURNAL.md
-
-docs/decisions/
-  ADR-001-COLLECTOR-BOUNDARY.md
-  ADR-002-POSTGRESQL-STORE.md
+  GATE1B-DOMAIN-MODEL.md
+  GATE1B-IDENTITY-V1.md
+  GATE1B-SNAPSHOT-COMPLETENESS.md
+  GATE1B-SAFE-RECONCILE.md
+  GATE1B-FAILURE-MODEL.md
+  GATE1B-CHANGE-JOURNAL-SEMANTICS.md
+  GATE1B-ADVERSARIAL-CASES.md
 ```
 
-File names may be adjusted by Architect, but responsibilities must remain explicit.
+Foreman may consolidate files, but semantic responsibilities must remain separable.
 
-## Current prohibited actions
+## Explicitly deferred to Gate 1C
 
-Until Gate 1 is accepted:
+- PostgreSQL tables/indexes/constraints/migrations
+- exact transaction implementation
+- exact Query API shape
+- journal persistence/event schema
+- projection rebuild implementation
+- final Collector ADR / selection
 
-- no product code
-- no migrations
-- no PoC
-- no CloudSite integration
-- no UI
-- no broad donor research
-- no final Collector implementation
-- no forced content hashing
-- no assumption that rclone/AList is already selected
+## Explicitly deferred post-MVP
 
-## Gate 1 exit condition
+### Scanner Resume phase
+- durable scanner
+- checkpoint
+- resume
+- bounded concurrency
+
+### Incremental phase
+- native delta
+- provider cursor
+- dirty scope
+- incremental hints
+
+## Gate 1B exit condition
 
 Architect must be able to answer:
 
-1. What exactly is IndexCore responsible for?
-2. What exactly is a Collector responsible for?
-3. What evidence makes a Snapshot acceptable for destructive reconcile?
-4. How is identity preserved when provider ID is missing?
-5. What PostgreSQL transaction boundary preserves previous truth?
-6. What can consumers read, and what can they never mutate?
-7. Which parts are MVP and which are deferred?
+1. How is canonical identity chosen when provider ID is missing?
+2. When does rename/move preserve identity?
+3. What produces conflict instead of forced matching?
+4. What exact evidence states allow or forbid destructive reconcile?
+5. What lifecycle separates Missing from Confirmed Removed?
+6. What failures preserve previous canonical truth?
+7. What canonical semantic events enter Change Journal?
+8. How are concurrent/duplicate inputs made deterministic?
 
-Only then may Gate 2 PoC begin.
+Only then may Gate 1C start.
