@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/nathanxiangang-web/index-core/internal/collector/adapter"
+	"github.com/nathanxiangang-web/index-core/internal/collector/alist"
 	"github.com/nathanxiangang-web/index-core/internal/collector/rclone"
 	"github.com/nathanxiangang-web/index-core/internal/domain"
 	"github.com/nathanxiangang-web/index-core/internal/kernel/reconcile"
@@ -20,21 +22,38 @@ import (
 
 // Service runs scans for roots.
 type Service struct {
-	store      *postgres.Store
-	rclonePath string
-	timeout    time.Duration
-	logger     *slog.Logger
+	store        *postgres.Store
+	rclonePath   string
+	rcloneConfig string
+	timeout      time.Duration
+	logger       *slog.Logger
 }
 
 // New builds a scan service.
-func New(store *postgres.Store, rclonePath string, timeout time.Duration, logger *slog.Logger) *Service {
-	return &Service{store: store, rclonePath: rclonePath, timeout: timeout, logger: logger}
+func New(store *postgres.Store, rclonePath, rcloneConfig string, timeout time.Duration, logger *slog.Logger) *Service {
+	return &Service{store: store, rclonePath: rclonePath, rcloneConfig: rcloneConfig, timeout: timeout, logger: logger}
 }
 
-// rcloneConfig is the provider-specific adapter config (never Domain semantics).
-type rcloneConfig struct {
-	Remote string `json:"remote"`
-	Path   string `json:"path"`
+// adapterConfig is the provider-specific adapter config (never Domain semantics).
+type adapterConfig struct {
+	Remote   string `json:"remote"` // rclone
+	Path     string `json:"path"`   // shared
+	BaseURL  string `json:"base_url"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Token    string `json:"token"`
+}
+
+// collector builds the provider-neutral Collector for a root's adapter kind.
+func (s *Service) collector(kind string, ac adapterConfig) (adapter.Collector, error) {
+	switch kind {
+	case "rclone":
+		return rclone.Adapter{Binary: s.rclonePath, Remote: ac.Remote, ConfigPath: s.rcloneConfig, Timeout: s.timeout}, nil
+	case "alist", "openlist":
+		return alist.Adapter{BaseURL: ac.BaseURL, Token: ac.Token, Username: ac.Username, Password: ac.Password, Timeout: s.timeout}, nil
+	default:
+		return nil, fmt.Errorf("unsupported collector kind %q (supported: rclone, alist)", kind)
+	}
 }
 
 // Result reports a completed scan.
@@ -55,26 +74,25 @@ func (s *Service) Scan(ctx context.Context, rootID string) (Result, error) {
 		return Result{}, errors.New("root is DELETED")
 	}
 
-	adapter, err := s.store.GetAdapterConfig(ctx, rootID)
+	acfg, err := s.store.GetAdapterConfig(ctx, rootID)
 	if err != nil {
 		return Result{}, fmt.Errorf("load adapter config: %w", err)
 	}
-	if adapter.CollectorKind != "rclone" {
-		return Result{}, fmt.Errorf("unsupported collector kind %q (Gate 3 P5 implements rclone)", adapter.CollectorKind)
+	var ac adapterConfig
+	if err := json.Unmarshal(acfg.Config, &ac); err != nil {
+		return Result{}, fmt.Errorf("parse adapter config: %w", err)
 	}
-	var ac rcloneConfig
-	if err := json.Unmarshal(adapter.Config, &ac); err != nil {
-		return Result{}, fmt.Errorf("parse rclone adapter config: %w", err)
-	}
-
-	ad := rclone.Adapter{Binary: s.rclonePath, Remote: ac.Remote, Timeout: s.timeout}
-	raw, err := ad.Scan(ctx, ac.Path)
+	col, err := s.collector(acfg.CollectorKind, ac)
 	if err != nil {
-		return Result{}, fmt.Errorf("rclone scan: %w", err)
+		return Result{}, err
+	}
+	raw, err := col.Scan(ctx, ac.Path)
+	if err != nil {
+		return Result{}, fmt.Errorf("collector scan: %w", err)
 	}
 
 	snapID := reconcile.NewUUID()
-	provenance, _ := json.Marshal(map[string]any{"collector_kind": "rclone", "remote": ac.Remote, "path": ac.Path})
+	provenance, _ := json.Marshal(map[string]any{"collector_kind": acfg.CollectorKind, "path": ac.Path})
 	flag := domain.CompletenessFlagComplete
 	if raw.TraversalStatus != domain.TraversalSuccess {
 		flag = domain.CompletenessFlagPartial
@@ -89,16 +107,34 @@ func (s *Service) Scan(ctx context.Context, rootID string) (Result, error) {
 		FreshnessEvidence: &freshness, CollectorCompletenessAssurance: &assurance,
 		CompletenessFlag: flag, LifecycleState: domain.SnapshotDraft, EntryCount: &entryCount,
 	}
+	// Load policy BEFORE persisting, so a missing policy fails early instead of
+	// stranding a SUBMITTED Snapshot (G3-R3 / regression "failure after creation").
+	cfg, err := s.store.RootReconcileConfig(ctx, rootID)
+	if err != nil {
+		return Result{}, fmt.Errorf("load root policy: %w", err)
+	}
+	coord := postgres.NewCoordinator(s.store, cfg)
+
+	// One-shot CLI must not strand/leapfrog older durable work: drain any existing
+	// absolute PENDING head for this root before creating new work (G3-R3).
+	if err := drainHead(ctx, coord, rootID); err != nil {
+		return Result{}, fmt.Errorf("drain existing pending head: %w", err)
+	}
+
 	entries := toEntries(raw)
 	if err := s.store.CreateSubmittedSnapshot(ctx, snap, entries); err != nil {
 		return Result{}, fmt.Errorf("persist submitted snapshot: %w", err)
 	}
 
-	cfg, err := s.store.RootReconcileConfig(ctx, rootID)
-	if err != nil {
-		return Result{}, fmt.Errorf("load root policy: %w", err)
+	out, err := coord.ProcessSnapshot(ctx, rootID, snapID)
+	if errors.Is(err, postgres.ErrNotHead) {
+		// Another durable head exists (e.g. admitted concurrently); drain it and
+		// retry our own snapshot once rather than leaving it stranded.
+		if derr := drainHead(ctx, coord, rootID); derr != nil {
+			return Result{SnapshotID: snapID, Outcome: out}, fmt.Errorf("drain head: %w", derr)
+		}
+		out, err = coord.ProcessSnapshot(ctx, rootID, snapID)
 	}
-	out, err := postgres.NewCoordinator(s.store, cfg).ProcessSnapshot(ctx, rootID, snapID)
 
 	acceptance := ""
 	if row, gerr := s.store.GetSnapshot(ctx, s.store.Pool(), snapID); gerr == nil && row.AcceptanceState != nil {
@@ -121,7 +157,21 @@ func (s *Service) Scan(ctx context.Context, rootID string) (Result, error) {
 	return Result{SnapshotID: snapID, Outcome: out}, nil
 }
 
-func toEntries(raw rclone.RawScan) []domain.SnapshotEntry {
+// drainHead processes the existing absolute PENDING head(s) for a root until none
+// remain, so a one-shot CLI does not strand or leapfrog older durable work.
+func drainHead(ctx context.Context, coord *postgres.Coordinator, rootID string) error {
+	for {
+		_, done, err := coord.ProcessHead(ctx, rootID)
+		if err != nil {
+			return err
+		}
+		if !done {
+			return nil
+		}
+	}
+}
+
+func toEntries(raw adapter.RawScan) []domain.SnapshotEntry {
 	out := make([]domain.SnapshotEntry, 0, len(raw.Entries))
 	assurance := raw.ProviderIdentityAssurance
 	for _, e := range raw.Entries {

@@ -57,7 +57,7 @@ func TestScanEndToEndWithRealRclone(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := scan.New(st, rcloneBin, 30*time.Second, logger)
+	svc := scan.New(st, rcloneBin, "", 30*time.Second, logger)
 
 	res, err := svc.Scan(ctx, rootID)
 	if err != nil {
@@ -114,7 +114,7 @@ func TestScanRejectsDeletedRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	if _, err := scan.New(st, "rclone", 5*time.Second, logger).Scan(ctx, rootID); err == nil {
+	if _, err := scan.New(st, "rclone", "", 5*time.Second, logger).Scan(ctx, rootID); err == nil {
 		t.Fatal("scan of a DELETED root must be rejected")
 	}
 }

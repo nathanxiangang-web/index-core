@@ -78,13 +78,13 @@ func (qr *QueryReader) RootStatus(ctx context.Context, rootID string, opts query
 		`SELECT root_id::text, lifecycle_state, current_generation FROM index_root WHERE root_id = $1::uuid`,
 		rootID).Scan(&st.RootID, &lifecycle, &st.CurrentGeneration); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return query.RootStatus{}, ErrNotFound
+			return query.RootStatus{}, query.ErrNotFound
 		}
 		return query.RootStatus{}, err
 	}
 	st.LifecycleState = domain.RootLifecycleState(lifecycle)
 	if !rootVisible(st.LifecycleState, opts) {
-		return query.RootStatus{}, ErrNotFound
+		return query.RootStatus{}, query.ErrNotFound
 	}
 	var applied *int64
 	if err := tx.QueryRow(ctx,
@@ -191,7 +191,7 @@ func (qr *QueryReader) listPageInternal(ctx context.Context, rootID string, pare
 	if err := tx.QueryRow(ctx,
 		`SELECT current_generation FROM index_root WHERE root_id = $1::uuid`, rootID).Scan(&currentGeneration); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return query.ResourcePage{}, ErrNotFound
+			return query.ResourcePage{}, query.ErrNotFound
 		}
 		return query.ResourcePage{}, err
 	}

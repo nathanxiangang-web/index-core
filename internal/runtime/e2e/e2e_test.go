@@ -55,7 +55,7 @@ func TestAlphaEndToEnd(t *testing.T) {
 	if err := st.UpsertAdapterConfig(ctx, rootID, postgres.AdapterConfig{CollectorKind: "rclone", Config: acfg}); err != nil {
 		t.Fatalf("2 adapter: %v", err)
 	}
-	svc := scan.New(st, rcloneBin, 30*time.Second, logger)
+	svc := scan.New(st, rcloneBin, "", 30*time.Second, logger)
 
 	// 3-4. scan drives DRAFT -> SUBMITTED -> Coordinator -> canonical inventory.
 	res1, err := svc.Scan(ctx, rootID)

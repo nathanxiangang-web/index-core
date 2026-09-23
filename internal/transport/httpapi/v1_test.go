@@ -25,7 +25,7 @@ func TestQueryTransportEndpoints(t *testing.T) {
 		t.Fatalf("create root: %v", err)
 	}
 
-	srv := httpapi.New(httpapi.Deps{Pool: pool, Query: postgres.NewQueryReader(pool), Version: "test"})
+	srv := httpapi.New(httpapi.Deps{Query: postgres.NewQueryReader(pool), Readiness: postgres.NewReadiness(pool), Version: "test"})
 
 	// GET /v1/roots returns the active root.
 	code, body := do(t, srv, http.MethodGet, "/v1/roots", nil)

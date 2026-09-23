@@ -11,19 +11,19 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
+	"github.com/nathanxiangang-web/index-core/internal/health"
 	"github.com/nathanxiangang-web/index-core/internal/query"
-	"github.com/nathanxiangang-web/index-core/internal/store/postgres"
 )
 
-// Deps are the read-only dependencies the transport may hold.
+// Deps are the read-only dependencies the transport may hold. There is
+// deliberately no *pgxpool.Pool, *postgres.Store, or generic exec capability:
+// only the read-only Query interface and a narrow readiness probe (G3-R2).
 type Deps struct {
-	Pool    *pgxpool.Pool
-	Query   query.Reader
-	Logger  *slog.Logger
-	Ready   func() bool
-	Version string
+	Query     query.Reader
+	Readiness health.Probe
+	Logger    *slog.Logger
+	Ready     func() bool
+	Version   string
 }
 
 // New builds the read-only HTTP transport.
@@ -55,25 +55,27 @@ func (h *handler) healthz(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) readyz(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if err := h.deps.Pool.Ping(ctx); err != nil {
+	if err := h.deps.Readiness.Ping(ctx); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "not_ready", "database_unreachable")
 		return
 	}
-	applied, required, missing, err := postgres.SchemaStatus(ctx, h.deps.Pool)
+	info, err := h.deps.Readiness.SchemaStatus(ctx)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "not_ready", "schema_check_failed")
 		return
 	}
-	if len(missing) > 0 {
+	if !info.Compatible() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-			"status": "not_ready", "reason": "schema_incompatible", "applied": applied, "required": required, "missing": missing})
+			"status": "not_ready", "reason": "schema_incompatible",
+			"applied": info.Applied, "required": info.Required,
+			"missing": info.Missing, "unexpected": info.Unexpected})
 		return
 	}
 	if h.deps.Ready != nil && !h.deps.Ready() {
 		writeError(w, http.StatusServiceUnavailable, "not_ready", "runtime_not_initialized")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "schema_applied": applied})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "schema_applied": info.Applied})
 }
 
 func (h *handler) listRoots(w http.ResponseWriter, r *http.Request) {
@@ -222,7 +224,7 @@ func (h *handler) fail(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, query.ErrStaleCursor):
 		writeError(w, http.StatusConflict, "stale_cursor", "cursor generation is no longer current")
-	case errors.Is(err, postgres.ErrNotFound):
+	case errors.Is(err, query.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "not found")
 	default:
 		if h.deps.Logger != nil {

@@ -7,13 +7,14 @@
 ## Status template (Issue #47)
 
 ```
-STATUS: READY_FOR_ARCH_REVIEW — GATE 3 STANDALONE ALPHA
+STATUS: READY_FOR_ARCH_REVIEW — GATE 3 STANDALONE ALPHA (Round 2)
 
 RUNTIME: PASS
 CONFIG_STARTUP: PASS
 ROOT_ADMIN: PASS
 WORKER_RECOVERY: PASS
 RCLONE_SCAN_PATH: PASS
+ALIST_OPENLIST_REAL_SOURCE: PASS
 QUERY_HTTP_V1: PASS
 OBSERVABILITY: PASS
 SCALE_20K: PASS
@@ -99,3 +100,42 @@ CloudSite integration, UI/auth, Scanner Resume, provider-native delta / true
 incremental, destructive-safe provider COMPLETE, multi-daemon HA, Redis/Kafka/MQ,
 Search/Catalog/media/AI, downloader/115, Kubernetes. **No frozen Gate 1B/1C
 semantics were changed.**
+---
+
+# Round 2 rework (PR #49 Round-1 review, G3-R1..G3-R11)
+
+| Item | Fix | Where |
+|------|-----|-------|
+| **G3-R1** | Real AList/OpenList Collector adapter over the AList HTTP API (BFS, login, hash normalization, additive-safe). Verified against a **real `xhofe/alist` instance** and end-to-end to HTTP /v1. | `internal/collector/alist`, `internal/runtime/scan`, `internal/runtime/e2e/alist_http_test.go` |
+| **G3-R2** | HTTP transport no longer receives `*pgxpool.Pool`; `Deps` now holds only the read-only `query.Reader` and a narrow `health.Probe` (`Ping`/`SchemaStatus`). API-level test fails if a pool/store field returns. | `internal/health`, `internal/transport/httpapi`, `boundary_test.go` |
+| **G3-R3** | Crash window closed: worker recovery sweep admits SUBMITTED-but-unadmitted Snapshots; `scan` drains an existing durable PENDING head before creating new work and retries after `ErrNotHead`. | `postgres/recovery.go`, `worker.go`, `scan.go` |
+| **G3-R4** | Worker keeps an in-flight root set; a root already active is skipped and the loop continues (never `break`s), so a slow root cannot starve other roots. | `worker.go` |
+| **G3-R5** | `serve` acquires a PostgreSQL advisory lock held for the process lifetime; a second daemon fails closed (`ErrWriterLockHeld`). | `postgres/writer_lock.go`, `app.go` |
+| **G3-R6** | `INDEXCORE_RCLONE_CONFIG` / `--rclone-config` is passed to rclone as `--config <path>`; proven by a named-remote process-boundary test. | `rclone/adapter.go`, `config_test.go` |
+| **G3-R7** | Readiness/`doctor`/`serve` reject **unexpected/future** migrations as well as missing ones. | `postgres/schema.go`, `httpapi`, `app.go` |
+| **G3-R8** | Compose uses a one-shot `migrate` service with `service_completed_successfully` before `serve`; `serve` still never auto-migrates. | `docker-compose.yml`, `ALPHA-DEPLOYMENT.md` |
+| **G3-R9** | End-to-end Alpha scenario exercised through the **real HTTP transport** (not direct Store/QueryReader calls) plus restart. | `internal/runtime/e2e/alpha_http_test.go` |
+| **G3-R10** | Added the required regressions: scan interruption before SUBMITTED, failure after Snapshot creation, and **HTTP** stale-cursor mapping (409). | `scan/recovery_test.go`, `httpapi/stale_cursor_test.go` |
+| **G3-R11** | This report/PR status updated honestly. | this file / PR body |
+
+## Real AList/OpenList evidence (G3-R1)
+
+A real AList instance was run locally (`xhofe/alist`, a `Local` storage mounted at
+`/loc`), and both the adapter and the full runtime path were exercised against it:
+
+```
+INDEXCORE_ALIST_URL=http://127.0.0.1:5245 INDEXCORE_ALIST_USER=admin \
+INDEXCORE_ALIST_PASS=... INDEXCORE_ALIST_PATH=/loc \
+  go test ./internal/collector/alist -run TestRealAListInstance -v        # 3 entries, SUCCESS
+INDEXCORE_ALIST_URL=... go test ./internal/runtime/e2e -run TestAlphaRuntimeWithRealAListSource -v
+  # real AList source produced 3 HTTP-visible resources; repeat scan NOOP (additive-safe)
+```
+
+AList/OpenList are Collector Adapters only: the Kernel is never coupled to AList
+DB internals, no upstream source is copied, and skip evidence stays UNKNOWN
+(additive-safe) until a positive no-skip mode is separately evidenced.
+
+## Round 2 test totals
+
+Real PostgreSQL 18.6 + real rclone v1.75.1 + real AList instance; `go vet` /
+`gofmt` clean; full Gate-2 regression green.

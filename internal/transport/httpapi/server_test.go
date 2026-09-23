@@ -16,7 +16,7 @@ func TestHealthAndReadiness(t *testing.T) {
 	pool := testutil.Pool(t)
 	testutil.ResetSchema(t, pool)
 
-	srv := httpapi.New(httpapi.Deps{Pool: pool, Query: postgres.NewQueryReader(pool), Version: "test"})
+	srv := httpapi.New(httpapi.Deps{Query: postgres.NewQueryReader(pool), Readiness: postgres.NewReadiness(pool), Version: "test"})
 
 	// /healthz is process-alive only.
 	if code, _ := get(t, srv, "/healthz"); code != http.StatusOK {

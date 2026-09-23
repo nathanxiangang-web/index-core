@@ -36,11 +36,11 @@ func Migrate(ctx context.Context, cfg config.Config, logger *slog.Logger) error 
 	if err := postgres.Migrate(ctx, pool); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
-	applied, required, _, err := postgres.SchemaStatus(ctx, pool)
+	state, err := postgres.SchemaStatus(ctx, pool)
 	if err != nil {
 		return fmt.Errorf("schema status: %w", err)
 	}
-	logger.Info("migration complete", "applied", applied, "required", required)
+	logger.Info("migration complete", "applied", state.Applied, "required", state.Required)
 	return nil
 }
 
@@ -54,16 +54,16 @@ func Doctor(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err := pool.Ping(ctx); err != nil {
 		return fmt.Errorf("ping database: %w", err)
 	}
-	applied, required, missing, err := postgres.SchemaStatus(ctx, pool)
+	state, err := postgres.SchemaStatus(ctx, pool)
 	if err != nil {
 		return fmt.Errorf("schema status: %w", err)
 	}
-	if len(missing) > 0 {
-		return fmt.Errorf("schema incompatible: applied %d/%d, missing %v; run `indexcore migrate`", applied, required, missing)
+	if !state.Compatible() {
+		return postgres.SchemaError(state)
 	}
 	rcloneOK := "configured"
 	logger.Info("doctor ok",
-		"schema_applied", applied, "schema_required", required,
+		"schema_applied", state.Applied, "schema_required", state.Required,
 		"http_addr", cfg.HTTPAddr, "loopback_only", cfg.LoopbackOnly(),
 		"rclone_path", cfg.RclonePath, "rclone", rcloneOK)
 	return nil
@@ -81,12 +81,13 @@ func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 
 	// serve verifies schema compatibility but never auto-migrates (Gate 3 P2).
-	applied, required, missing, err := postgres.SchemaStatus(ctx, pool)
+	// It rejects both missing and unexpected/future migrations (G3-R7).
+	state, err := postgres.SchemaStatus(ctx, pool)
 	if err != nil {
 		return fmt.Errorf("schema status: %w", err)
 	}
-	if len(missing) > 0 {
-		return fmt.Errorf("schema incompatible: applied %d/%d, missing %v; run `indexcore migrate`", applied, required, missing)
+	if !state.Compatible() {
+		return postgres.SchemaError(state)
 	}
 
 	if !cfg.LoopbackOnly() {
@@ -96,9 +97,23 @@ func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Enforce the Architect-locked single active write daemon per database with a
+	// PostgreSQL advisory lock held for the process lifetime (G3-R5). A second
+	// daemon fails closed instead of silently starting another writer loop.
+	st := postgres.New(pool)
+	lock, err := st.AcquireWriterLock(ctx)
+	if err != nil {
+		return fmt.Errorf("single-writer ownership: %w", err)
+	}
+	defer func() {
+		rlCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		defer cancel()
+		lock.Release(rlCtx)
+	}()
+	logger.Info("acquired single-writer ownership")
+
 	// Single write-orchestration daemon: bounded per-root concurrency, drains the
 	// durable PENDING heads, and resumes them across restart.
-	st := postgres.New(pool)
 	var ready atomic.Bool
 	wk := worker.New(st, cfg.MaxConcurrentRoots, logger)
 	go func() {
@@ -109,11 +124,11 @@ func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}()
 
 	srv := httpapi.New(httpapi.Deps{
-		Pool:    pool,
-		Query:   postgres.NewQueryReader(pool),
-		Logger:  logger,
-		Version: version.String(),
-		Ready:   ready.Load,
+		Query:     postgres.NewQueryReader(pool),
+		Readiness: postgres.NewReadiness(pool),
+		Logger:    logger,
+		Version:   version.String(),
+		Ready:     ready.Load,
 	})
 	srv.Addr = cfg.HTTPAddr
 
@@ -165,7 +180,7 @@ func Scan(ctx context.Context, base config.Config, logger *slog.Logger, args []s
 	if err := pool.Ping(ctx); err != nil {
 		return fmt.Errorf("ping database: %w", err)
 	}
-	res, err := scan.New(postgres.New(pool), cfg.RclonePath, cfg.ScanTimeout, logger).Scan(ctx, *rootID)
+	res, err := scan.New(postgres.New(pool), cfg.RclonePath, cfg.RcloneConfig, cfg.ScanTimeout, logger).Scan(ctx, *rootID)
 	if err != nil {
 		return err
 	}

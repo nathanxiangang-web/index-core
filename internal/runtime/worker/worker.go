@@ -1,7 +1,8 @@
 // Package worker is the Gate 3 single-daemon write-orchestration loop. It
 // processes each root's absolute FIFO PENDING head through the safe Coordinator,
-// with bounded concurrency across roots and no busy-spin. Multi-daemon HA is
-// explicitly deferred.
+// with bounded concurrency across DIFFERENT roots (an in-flight root set prevents
+// the same root from occupying multiple slots) and no busy-spin. It also recovers
+// SUBMITTED-but-unadmitted Snapshots. Multi-daemon HA is explicitly deferred.
 package worker
 
 import (
@@ -46,7 +47,11 @@ func NewWithIntervals(store *postgres.Store, maxConcurrent int, poll, backoff ti
 // in-flight work to finish (graceful shutdown).
 func (w *Worker) Run(ctx context.Context) error {
 	sem := make(chan struct{}, w.maxConcurrent)
-	var wg sync.WaitGroup
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		inFlight = map[string]bool{}
+	)
 	ticker := time.NewTicker(w.poll)
 	defer ticker.Stop()
 
@@ -58,24 +63,60 @@ func (w *Worker) Run(ctx context.Context) error {
 		case <-ticker.C:
 		}
 
+		// Recover SUBMITTED-but-unadmitted Snapshots (crash window, G3-R3).
+		w.recoverUnadmitted(ctx)
+
 		roots, err := w.store.PendingRoots(ctx)
 		if err != nil {
 			w.logger.Warn("worker: list pending roots failed", "error_class", "db")
 			continue
 		}
-	rootsLoop:
 		for _, rootID := range roots {
+			// At most one active goroutine per root; skip roots already active so
+			// a slow root cannot occupy multiple slots and starve other roots (G3-R4).
+			mu.Lock()
+			active := inFlight[rootID]
+			mu.Unlock()
+			if active {
+				continue
+			}
 			select {
 			case sem <- struct{}{}:
 			default:
-				break rootsLoop // bounded concurrency reached; remaining roots next tick
+				continue // capacity reached; keep considering other roots, never break
 			}
+			mu.Lock()
+			inFlight[rootID] = true
+			mu.Unlock()
 			wg.Add(1)
 			go func(root string) {
 				defer wg.Done()
-				defer func() { <-sem }()
+				defer func() {
+					<-sem
+					mu.Lock()
+					delete(inFlight, root)
+					mu.Unlock()
+				}()
 				w.processRoot(ctx, root)
 			}(rootID)
+		}
+	}
+}
+
+// recoverUnadmitted admits any durable SUBMITTED Snapshot that has no admission
+// row, so a crash between Snapshot commit and Stage-1 admission is recoverable.
+func (w *Worker) recoverUnadmitted(ctx context.Context) {
+	items, err := w.store.SubmittedSnapshotsWithoutAdmission(ctx, 100)
+	if err != nil {
+		w.logger.Warn("worker: recovery sweep failed", "error_class", "db")
+		return
+	}
+	for _, it := range items {
+		if _, resumed, err := w.store.AdmitOrResumeSnapshot(ctx, it.RootID, it.SnapshotID); err != nil {
+			w.logger.Warn("worker: recovery admit failed", "root_id", it.RootID, "snapshot_id", it.SnapshotID, "error_class", "admission")
+			continue
+		} else {
+			w.logger.Info("worker: recovered unadmitted snapshot", "root_id", it.RootID, "snapshot_id", it.SnapshotID, "resumed", resumed)
 		}
 	}
 }

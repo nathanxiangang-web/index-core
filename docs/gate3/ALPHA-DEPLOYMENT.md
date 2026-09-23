@@ -46,12 +46,17 @@ compatible + runtime ready). Read API: `GET /v1/...` (no mutation endpoints).
 
 ## Docker Compose (PostgreSQL 18 + IndexCore)
 
+`compose-up` runs a **one-shot `migrate` service to completion**, then starts
+`indexcore serve` (which never auto-migrates), so a fresh volume bootstraps
+cleanly:
+
 ```bash
-make compose-up      # builds image, starts postgres:18 + indexcore
-docker compose exec indexcore indexcore migrate
-# bind is 0.0.0.0:8080 inside the container for reachability; no auth in Gate 3
+make compose-up          # migrate (one-shot) -> then serve
+curl -s localhost:8080/readyz
 make compose-down
 ```
+
+Manual alternative for a fresh volume: `docker compose run --rm migrate`.
 
 The PostgreSQL data lives in the named volume `pgdata`; stopping the stack does
 not lose canonical data. Restart with `make compose-up` (or `docker compose up -d`).
