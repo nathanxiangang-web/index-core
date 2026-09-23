@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -160,5 +161,33 @@ func TestRootScopedRecoveryDoesNotTouchOtherRoots(t *testing.T) {
 	}
 	if resolved != 1 || ambiguous {
 		t.Fatalf("root B single candidate must resolve, got resolved=%d ambiguous=%v", resolved, ambiguous)
+	}
+}
+
+// G3-R5.1/R5.2: the only way to create Snapshot work is CreateDraftSnapshot
+// (which forces DRAFT). Supplying another lifecycle_state must be rejected so no
+// caller can smuggle a SUBMITTED-but-unadmitted Snapshot past admission, and a
+// rejected create persists nothing.
+func TestCreateDraftSnapshotRejectsNonDraft(t *testing.T) {
+	st, ctx := newStore(t)
+	const rootID = "aa000000-0000-0000-0000-000000000001"
+	seedRootAndPolicy(t, st, ctx, rootID)
+	snapID := "aa000000-0000-0000-0000-0000000000a1"
+	fresh := domain.FreshDirect
+	strong := domain.StrongFailureVisibility
+	err := st.CreateDraftSnapshot(ctx, domain.Snapshot{
+		SnapshotID: snapID, RootID: rootID, Provenance: []byte(`{}`), ObservedAt: time.Now().UTC(),
+		TraversalStatus: domain.TraversalSuccess, SkippedScopesKnownEmpty: true,
+		FreshnessEvidence: &fresh, CollectorCompletenessAssurance: &strong,
+		CompletenessFlag: domain.CompletenessFlagComplete, LifecycleState: domain.SnapshotSubmitted,
+	}, nil)
+	if !errors.Is(err, postgres.ErrNotDraft) {
+		t.Fatalf("non-DRAFT lifecycle_state must be rejected, got %v", err)
+	}
+	var snapshots, admissions int
+	_ = st.Pool().QueryRow(ctx, `SELECT count(*) FROM index_snapshot WHERE root_id=$1::uuid`, rootID).Scan(&snapshots)
+	_ = st.Pool().QueryRow(ctx, `SELECT count(*) FROM index_admission WHERE root_id=$1::uuid`, rootID).Scan(&admissions)
+	if snapshots != 0 || admissions != 0 {
+		t.Fatalf("rejected create must persist nothing, snapshots=%d admissions=%d", snapshots, admissions)
 	}
 }

@@ -10,7 +10,7 @@
 > history is appended below for traceability; it does not supersede this block.
 
 ```
-STATUS: READY_FOR_ARCH_REVIEW — GATE 3 STANDALONE ALPHA (Round 4)
+STATUS: READY_FOR_ARCH_REVIEW — GATE 3 STANDALONE ALPHA (Round 5)
 
 RUNTIME: PASS
 CONFIG_STARTUP: PASS
@@ -46,7 +46,7 @@ MULTI_DAEMON_HA: NONE
 | P5 | rclone scan: persist DRAFT (no root lock) → short SUBMITTED + admission → Coordinator; additive-safe; PARTIAL is not a source failure | IMPLEMENTED + TESTED | `internal/runtime/scan` (scan_test, real rclone), `CreateDraftSnapshot`/`SubmitAndAdmitSnapshot` |
 | P6 | read-only HTTP /v1 (Q1–Q9), generation cursors, stable errors, no mutation | IMPLEMENTED + TESTED | `internal/transport/httpapi` (v1_test) |
 | P7 | `log/slog` structured fields; no secrets | IMPLEMENTED + TESTED | scan/transport logging (CLI smoke output) |
-| P8 | ≥20k resources on real PostgreSQL, reproducible baseline | IMPLEMENTED + TESTED | `internal/runtime/scale` (gated harness) |
+| P8 | ≥20k resources on real PostgreSQL; reproducible baseline timed over the real runtime ingestion path (DRAFT persistence → Stage-1 admission → Coordinator) | IMPLEMENTED + TESTED | `internal/runtime/scale` (gated harness, Round 5) |
 | P9 | Dockerfile + compose (PostgreSQL 18), restart/persistent volume documented | IMPLEMENTED + TESTED (build) | `Dockerfile`, `docker-compose.yml`, `docs/gate3/ALPHA-DEPLOYMENT.md`, `make docker-build` |
 | P10 | end-to-end Alpha scenario (11 steps) | IMPLEMENTED + TESTED | `internal/runtime/e2e` (TestAlphaEndToEnd) |
 | P11 | this report | DONE | this file |
@@ -66,15 +66,26 @@ make compose-up                  # postgres:18 + indexcore
 
 Command: `make scale` (i.e. `INDEXCORE_SCALE_TEST=1 INDEXCORE_SCALE_N=20000 go test ./internal/runtime/scale -v`)
 
+> Round 5: the harness drives the **real runtime ingestion path** —
+> `CreateDraftSnapshot -> SubmitAndAdmitSnapshot -> Coordinator.ProcessHead` —
+> and the timer starts **before the DRAFT is persisted**. Earlier numbers (which
+> started timing only after the Snapshot was already persisted) were
+> reconcile-only and are superseded by this full-ingestion baseline.
+
 ```
-initial population: 12.81 s   (20000 ADD)
-identical repeat  :  9.01 s   (NOOP)
-small delta       : 13.31 s   (1 update + 1 add)
-query pagination  :  0.257 s  (20001 rows, 1000/page)
-canonical PRESENT = 20001     journal_events = 20002   snapshots = 3
-db_size = 64.3 MiB            heap_alloc = 1.6 MiB
+initial population: 16.29 s (draft=3.63s admit=2.6ms reconcile=12.65s)  (20000 ADD)
+identical repeat  : 12.91 s (NOOP;  draft=3.79s admit=1.7ms reconcile=9.12s)
+small delta       : 17.00 s (APPLIED; draft=3.69s admit=1.5ms reconcile=13.31s)
+query pagination  :  0.143 s (20001 rows, 1000/page)
+canonical PRESENT = 20001   journal_events = 20002   snapshots = 3
+db_size = 71.1 MiB          heap_alloc = 47.3 MiB
 ```
 
+- **Stage-1 split has no ingestion cost:** the short `SubmitAndAdmitSnapshot`
+  transaction (lock root -> DRAFT->SUBMITTED -> `admission_seq` -> PENDING) stays
+  **~1.5–2.6 ms at 20k entries** — it is O(1) and never scales with entry count.
+  The DRAFT persistence (writing 20k entries, no root lock) is ~3.6–3.8 s and the
+  reconcile is ~9–13 s.
 - No OOM; correctness held (canonical count and full pagination verified).
 - No arbitrary latency SLO is frozen; this is a reproducible baseline.
 - O(N²) hot paths found and fixed: prior identity resolution was indexed
@@ -187,4 +198,19 @@ Compose file was corrected accordingly during this smoke run.)
 Real PostgreSQL 18.6 + real rclone v1.75.1 + real `xhofe/alist` instance (3 entries,
 3 HTTP-visible resources); full suite green; `go vet` / `gofmt` clean; no frozen
 Gate 1B/1C semantics changed.
+
+# Round 5 rework (PR #49 Round-4 review: final closeout)
+
+| Item | Fix | Where |
+|------|-----|-------|
+| **R5-1 remove backdoor** | Deleted `CreateSubmittedSnapshot`, which could write a SUBMITTED Snapshot with no admission and thereby bypass the safe Stage-1 path. The only Snapshot-creation entry point is now `CreateDraftSnapshot` (+ `SubmitAndAdmitSnapshot`). | `snapshot_create.go` (removed) |
+| **R5-2 force DRAFT** | `CreateDraftSnapshot` now REJECTS any caller-supplied `lifecycle_state` other than DRAFT (returns `ErrNotDraft` and persists nothing), so it can never smuggle a SUBMITTED Snapshot past admission. | `snapshot_create_admit.go`, `recovery_order_test.go` |
+| **R5-3 real 20k ingestion baseline** | The scale harness now drives `CreateDraftSnapshot -> SubmitAndAdmitSnapshot -> Coordinator.ProcessHead` and times from BEFORE the DRAFT is persisted (full runtime ingestion, not reconcile-only). New N=20000 baseline above; the short Stage-1 admission stays **~1.5–2.6 ms (O(1))**, showing the split did not regress ingestion. | `internal/runtime/scale/scale_test.go` |
+| **R5-4 rejection ≠ source failure** | A Kernel policy rejection of a SUCCESSFUL observation now returns the new `ErrReconcileRejected`, kept distinct from `ErrSourceFailed` (only FAILED/INTERRUPTED traversal). The outcome classification is a testable pure function. | `scan.go`, `outcome_internal_test.go` |
+
+## Round 5 test evidence
+
+Real PostgreSQL 18.6 + real rclone v1.75.1 + real `xhofe/alist` instance; full suite
+green; 20k harness re-run over the real runtime ingestion path (`draft/admit/reconcile`
+breakdown); `go vet` / `gofmt` clean; no frozen Gate 1B/1C semantics changed.
 

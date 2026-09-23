@@ -55,12 +55,15 @@ func TestScalePopulationAndDelta(t *testing.T) {
 	coord := postgres.NewCoordinator(st, cfg)
 	base := time.Now().UTC().Truncate(time.Second)
 
+	// Timing starts BEFORE the DRAFT is persisted, so each number reflects the
+	// full runtime ingestion path (CreateDraftSnapshot -> SubmitAndAdmitSnapshot
+	// -> Coordinator), not reconcile only.
+
 	// --- initial population ---
 	entries := synthEntries(n, base)
 	snap1 := "a1000000-0000-0000-0000-0000000000b1"
-	persist(t, st, ctx, rootID, snap1, entries)
 	t0 := time.Now()
-	out1 := process(t, coord, ctx, rootID, snap1)
+	out1, tm1 := ingest(t, st, coord, ctx, rootID, snap1, entries)
 	dPopulation := time.Since(t0)
 	if out1.Status != domain.AdmissionApplied {
 		t.Fatalf("initial population must APPLY, got %s", out1.Status)
@@ -68,9 +71,8 @@ func TestScalePopulationAndDelta(t *testing.T) {
 
 	// --- identical repeat (idempotent, no mutation) ---
 	snap2 := "a1000000-0000-0000-0000-0000000000b2"
-	persist(t, st, ctx, rootID, snap2, entries)
 	t0 = time.Now()
-	out2 := process(t, coord, ctx, rootID, snap2)
+	out2, tm2 := ingest(t, st, coord, ctx, rootID, snap2, entries)
 	dRepeat := time.Since(t0)
 	if out2.Status != domain.AdmissionNoop {
 		t.Fatalf("identical repeat must be NOOP, got %s", out2.Status)
@@ -92,9 +94,8 @@ func TestScalePopulationAndDelta(t *testing.T) {
 		ProviderObjectIDScope: &scope, ProviderIdentityAssurance: &stable,
 	})
 	snap3 := "a1000000-0000-0000-0000-0000000000b3"
-	persist(t, st, ctx, rootID, snap3, delta)
 	t0 = time.Now()
-	out3 := process(t, coord, ctx, rootID, snap3)
+	out3, tm3 := ingest(t, st, coord, ctx, rootID, snap3, delta)
 	dDelta := time.Since(t0)
 	if out3.Status != domain.AdmissionApplied {
 		t.Fatalf("delta must APPLY, got %s", out3.Status)
@@ -128,10 +129,10 @@ func TestScalePopulationAndDelta(t *testing.T) {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 
-	t.Logf("SCALE REPORT (N=%d)", n)
-	t.Logf("initial population: %s", dPopulation)
-	t.Logf("identical repeat  : %s (status=%s)", dRepeat, out2.Status)
-	t.Logf("small delta       : %s (status=%s)", dDelta, out3.Status)
+	t.Logf("SCALE REPORT (N=%d) — full runtime ingestion (DRAFT -> SUBMITTED+admit -> Coordinator)", n)
+	t.Logf("initial population: %s (draft=%s admit=%s reconcile=%s)", dPopulation, tm1.draft, tm1.admit, tm1.reconcile)
+	t.Logf("identical repeat  : %s (status=%s; draft=%s admit=%s reconcile=%s)", dRepeat, out2.Status, tm2.draft, tm2.admit, tm2.reconcile)
+	t.Logf("small delta       : %s (status=%s; draft=%s admit=%s reconcile=%s)", dDelta, out3.Status, tm3.draft, tm3.admit, tm3.reconcile)
 	t.Logf("query pagination  : %s (rows=%d)", dPaging, paged)
 	t.Logf("canonical PRESENT=%d journal_events=%d snapshots=%d", canonical, journal, snapshots)
 	t.Logf("db_size=%.1f MiB heap_alloc=%.1f MiB", float64(dbSize)/1048576, float64(ms.HeapAlloc)/1048576)
@@ -144,7 +145,19 @@ func TestScalePopulationAndDelta(t *testing.T) {
 	}
 }
 
-func persist(t *testing.T, st *postgres.Store, ctx context.Context, rootID, snapID string, entries []domain.SnapshotEntry) {
+// ingestTiming breaks down the runtime ingestion path so the O(1) short Stage-1
+// admission can be shown separately from entry persistence and reconcile.
+type ingestTiming struct {
+	draft     time.Duration
+	admit     time.Duration
+	reconcile time.Duration
+}
+
+// ingest drives the REAL runtime ingestion path for one Snapshot:
+// CreateDraftSnapshot (no root lock) -> SubmitAndAdmitSnapshot (short Stage-1)
+// -> Coordinator.ProcessHead. The caller times around this call from BEFORE the
+// DRAFT is persisted.
+func ingest(t *testing.T, st *postgres.Store, coord *postgres.Coordinator, ctx context.Context, rootID, snapID string, entries []domain.SnapshotEntry) (postgres.ReconcileOutcome, ingestTiming) {
 	t.Helper()
 	fresh := domain.FreshDirect
 	strong := domain.StrongFailureVisibility
@@ -155,18 +168,29 @@ func persist(t *testing.T, st *postgres.Store, ctx context.Context, rootID, snap
 		FreshnessEvidence: &fresh, CollectorCompletenessAssurance: &strong,
 		CompletenessFlag: domain.CompletenessFlagComplete, LifecycleState: domain.SnapshotDraft, EntryCount: &count,
 	}
-	if err := st.CreateSubmittedSnapshot(ctx, snap, entries); err != nil {
-		t.Fatalf("persist snapshot %s: %v", snapID, err)
+	var tm ingestTiming
+	t0 := time.Now()
+	if err := st.CreateDraftSnapshot(ctx, snap, entries); err != nil {
+		t.Fatalf("persist draft snapshot %s: %v", snapID, err)
 	}
-}
+	tm.draft = time.Since(t0)
 
-func process(t *testing.T, coord *postgres.Coordinator, ctx context.Context, rootID, snapID string) postgres.ReconcileOutcome {
-	t.Helper()
-	out, err := coord.ProcessSnapshot(ctx, rootID, snapID)
-	if err != nil {
-		t.Fatalf("process %s: %v", snapID, err)
+	t0 = time.Now()
+	if _, err := st.SubmitAndAdmitSnapshot(ctx, rootID, snapID); err != nil {
+		t.Fatalf("submit+admit snapshot %s: %v", snapID, err)
 	}
-	return out
+	tm.admit = time.Since(t0)
+
+	t0 = time.Now()
+	out, done, err := coord.ProcessHead(ctx, rootID)
+	if err != nil {
+		t.Fatalf("process head %s: %v", snapID, err)
+	}
+	if !done {
+		t.Fatalf("no pending head for %s", snapID)
+	}
+	tm.reconcile = time.Since(t0)
+	return out, tm
 }
 
 func synthEntries(n int, base time.Time) []domain.SnapshotEntry {

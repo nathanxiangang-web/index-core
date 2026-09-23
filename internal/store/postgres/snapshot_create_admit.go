@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 
@@ -16,20 +17,25 @@ var ErrNotDraft = errors.New("snapshot is not DRAFT")
 // the per-root serialization lock. A large Collector scan (20k+ entries) thus
 // never blocks the root's admission lane with a long FOR UPDATE transaction.
 //
-// The DRAFT is inert: it carries no admission_seq, is excluded from the worker's
-// PENDING head, and is never treated as executable input. A crash between this
-// write and the Stage-1 finalize therefore leaves only a non-executable DRAFT; it
-// can never produce a SUBMITTED-but-unadmitted Snapshot.
+// It ONLY ever creates DRAFT work (G3-R5.2): a caller that supplies any other
+// lifecycle_state is rejected, so this path can never smuggle a SUBMITTED
+// Snapshot past admission. The DRAFT is inert: it carries no admission_seq, is
+// excluded from the worker's PENDING head, and is never treated as executable
+// input. A crash between this write and the Stage-1 finalize therefore leaves
+// only a non-executable DRAFT; it can never produce a SUBMITTED-but-unadmitted
+// Snapshot.
 func (s *Store) CreateDraftSnapshot(ctx context.Context, snap domain.Snapshot, entries []domain.SnapshotEntry) error {
+	if snap.LifecycleState != "" && snap.LifecycleState != domain.SnapshotDraft {
+		return fmt.Errorf("%w: CreateDraftSnapshot got lifecycle_state=%s", ErrNotDraft, snap.LifecycleState)
+	}
+
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	if snap.LifecycleState == "" {
-		snap.LifecycleState = domain.SnapshotDraft
-	}
+	snap.LifecycleState = domain.SnapshotDraft
 	if err := s.InsertSnapshotStub(ctx, tx, snap); err != nil {
 		return err
 	}

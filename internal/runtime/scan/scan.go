@@ -184,25 +184,40 @@ func (s *Service) Scan(ctx context.Context, rootID string) (Result, error) {
 	if err != nil {
 		return Result{SnapshotID: snapID, Outcome: out}, fmt.Errorf("reconcile: %w", err)
 	}
-	// The Collector contract represents source/process failure as
-	// TraversalStatus=FAILED/INTERRUPTED with err=nil so the failed observation is
-	// durable and Kernel-evaluated. The failed Snapshot + REJECTED audit trail are
-	// preserved, but the CLI must still report operational failure (G3-R2.3).
-	// PARTIAL is a legal additive-safe input (the Kernel still evaluates it) and is
-	// NOT a source failure.
-	if raw.TraversalStatus.IsSourceFailure() {
-		return Result{SnapshotID: snapID, Outcome: out}, fmt.Errorf("%w: traversal_status=%s", ErrSourceFailed, raw.TraversalStatus)
-	}
-	if out.Status == domain.AdmissionRejected {
-		return Result{SnapshotID: snapID, Outcome: out}, fmt.Errorf("%w: reconcile rejected (%s)", ErrSourceFailed, string(out.SnapshotLifecycle))
+	if serr := scanOutcomeError(raw.TraversalStatus, out); serr != nil {
+		return Result{SnapshotID: snapID, Outcome: out}, serr
 	}
 	return Result{SnapshotID: snapID, Outcome: out}, nil
 }
 
-// ErrSourceFailed reports that the Collector traversal itself failed (or the
-// Snapshot was rejected), so the runtime command exits non-zero while the FAILED
+// scanOutcomeError classifies a terminal scan outcome into an operational error:
+//
+//   - a Collector traversal failure (FAILED / INTERRUPTED) is ErrSourceFailed;
+//   - a Kernel policy rejection of a SUCCESSFUL observation is
+//     ErrReconcileRejected — it must never be misreported as a source failure;
+//   - PARTIAL is a legal additive-safe input and is not an error.
+//
+// The Snapshot and its audit trail stay durable in every case (G3-R2.3, G3-R5.4).
+func scanOutcomeError(traversal domain.TraversalStatus, out postgres.ReconcileOutcome) error {
+	if traversal.IsSourceFailure() {
+		return fmt.Errorf("%w: traversal_status=%s", ErrSourceFailed, traversal)
+	}
+	if out.Status == domain.AdmissionRejected {
+		return fmt.Errorf("%w: reconcile rejected (%s)", ErrReconcileRejected, string(out.SnapshotLifecycle))
+	}
+	return nil
+}
+
+// ErrSourceFailed reports that the Collector traversal itself failed
+// (FAILED / INTERRUPTED), so the runtime command exits non-zero while the FAILED
 // Snapshot and REJECTED audit trail remain durably recorded.
 var ErrSourceFailed = errors.New("collector source traversal failed")
+
+// ErrReconcileRejected reports that the Kernel evaluated a SUCCESSFUL Collector
+// observation and rejected it under policy (e.g. the root became DELETED). The
+// command exits non-zero, but the source is NOT blamed: this is distinct from
+// ErrSourceFailed (G3-R5.4).
+var ErrReconcileRejected = errors.New("snapshot rejected by kernel policy")
 
 // drainHead processes the existing absolute PENDING head(s) for a root until none
 // remain, so a one-shot CLI does not strand or leapfrog older durable work.
