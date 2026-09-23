@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nathanxiangang-web/index-core/internal/domain"
 	"github.com/nathanxiangang-web/index-core/internal/query"
@@ -12,127 +13,176 @@ import (
 
 const defaultPageSize = 100
 
-// QueryListRoots returns roots honoring the frozen visibility defaults (doc C V4..V6).
-func (s *Store) QueryListRoots(ctx context.Context, includeDeprecated, includeDeleted bool) ([]query.RootView, error) {
-	roots, err := s.ListRoots(ctx, s.pool, includeDeprecated, includeDeleted)
+// QueryReader is the consumer-facing read-only facade. It holds only a pool and
+// exposes no mutating Store method or Pool() accessor, so a consumer cannot reach
+// a write bypass around the Kernel (doc C W2/W3, B5). It satisfies query.Reader.
+type QueryReader struct {
+	pool *pgxpool.Pool
+}
+
+// NewQueryReader builds a read-only Query service. Consumers receive the returned
+// query.Reader interface, never the concrete Store.
+func NewQueryReader(pool *pgxpool.Pool) *QueryReader { return &QueryReader{pool: pool} }
+
+var _ query.Reader = (*QueryReader)(nil)
+
+// ListRoots honors the frozen visibility defaults (doc C V4..V6).
+func (qr *QueryReader) ListRoots(ctx context.Context, includeDeprecated, includeDeleted bool) ([]query.RootView, error) {
+	rows, err := qr.pool.Query(ctx,
+		`SELECT root_id::text, scope_descriptor, lifecycle_state, current_generation, created_at
+		   FROM index_root
+		  WHERE lifecycle_state IN ('NEW','ACTIVE')
+		     OR ($1 AND lifecycle_state = 'DEPRECATED')
+		     OR ($2 AND lifecycle_state = 'DELETED')
+		  ORDER BY created_at, root_id`, includeDeprecated, includeDeleted)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]query.RootView, 0, len(roots))
-	for _, r := range roots {
-		out = append(out, query.RootView{
-			RootID: r.RootID, ScopeDescriptor: r.ScopeDescriptor,
-			LifecycleState: r.LifecycleState, CurrentGeneration: r.CurrentGeneration, CreatedAt: r.CreatedAt,
-		})
-	}
-	return out, nil
-}
-
-// QueryRootStatus returns root lifecycle/generation plus the applied high-water mark.
-func (s *Store) QueryRootStatus(ctx context.Context, rootID string) (query.RootStatus, error) {
-	root, err := s.GetRoot(ctx, s.pool, rootID)
-	if err != nil {
-		return query.RootStatus{}, err
-	}
-	appliedMax, err := s.AppliedMax(ctx, s.pool, rootID)
-	if err != nil {
-		return query.RootStatus{}, err
-	}
-	var applied *int64
-	if appliedMax > 0 {
-		applied = &appliedMax
-	}
-	return query.RootStatus{
-		RootID: root.RootID, LifecycleState: root.LifecycleState,
-		CurrentGeneration: root.CurrentGeneration, LastAppliedAdmissionSeq: applied,
-	}, nil
-}
-
-// QueryGetResource returns a resource unless it is a REMOVED tombstone and
-// includeRemoved is false (doc C V1/V2, QC2/QC3).
-func (s *Store) QueryGetResource(ctx context.Context, resourceID string, includeRemoved bool) (*query.ResourceView, error) {
-	r, err := s.GetCanonicalResource(ctx, s.pool, resourceID)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return nil, nil
+	defer rows.Close()
+	var out []query.RootView
+	for rows.Next() {
+		var (
+			v         query.RootView
+			lifecycle string
+		)
+		if err := rows.Scan(&v.RootID, &v.ScopeDescriptor, &lifecycle, &v.CurrentGeneration, &v.CreatedAt); err != nil {
+			return nil, err
 		}
-		return nil, err
+		v.LifecycleState = domain.RootLifecycleState(lifecycle)
+		out = append(out, v)
 	}
-	if r.ResourcePresence == domain.ResourceRemoved && !includeRemoved {
+	return out, rows.Err()
+}
+
+// RootStatus returns root lifecycle/generation plus the applied high-water mark.
+func (qr *QueryReader) RootStatus(ctx context.Context, rootID string) (query.RootStatus, error) {
+	var (
+		st        query.RootStatus
+		lifecycle string
+	)
+	err := qr.pool.QueryRow(ctx,
+		`SELECT root_id::text, lifecycle_state, current_generation FROM index_root WHERE root_id = $1::uuid`,
+		rootID).Scan(&st.RootID, &lifecycle, &st.CurrentGeneration)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return query.RootStatus{}, ErrNotFound
+	}
+	if err != nil {
+		return query.RootStatus{}, err
+	}
+	st.LifecycleState = domain.RootLifecycleState(lifecycle)
+	var applied *int64
+	if err := qr.pool.QueryRow(ctx,
+		`SELECT max(admission_seq) FROM index_admission WHERE root_id = $1::uuid AND status = 'APPLIED'`,
+		rootID).Scan(&applied); err != nil {
+		return query.RootStatus{}, err
+	}
+	st.LastAppliedAdmissionSeq = applied
+	return st, nil
+}
+
+// GetResource returns a resource unless it is a REMOVED tombstone and
+// includeRemoved is false (doc C V1/V2, QC2/QC3).
+func (qr *QueryReader) GetResource(ctx context.Context, resourceID string, includeRemoved bool) (*query.ResourceView, error) {
+	var (
+		v        query.ResourceView
+		presence string
+	)
+	err := qr.pool.QueryRow(ctx,
+		resourceSelect+` WHERE resource_id = $1::uuid`, resourceID).Scan(resourceScanArgs(&v, &presence)...)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
-	v := query.View(r)
+	if err != nil {
+		return nil, err
+	}
+	if domain.ResourcePresence(presence) == domain.ResourceRemoved && !includeRemoved {
+		return nil, nil
+	}
+	v.ResourcePresence = domain.ResourcePresence(presence)
 	return &v, nil
 }
 
-// QueryResolvePath returns ALL live resources at a path with explicit ambiguity
-// (doc C V9, QC12). It never fabricates a single winner.
-func (s *Store) QueryResolvePath(ctx context.Context, rootID, path string, includeRemoved bool) (query.PathResolution, error) {
-	rows, err := s.queryCanonical(ctx, s.pool,
-		`WHERE root_id = $1::uuid AND canonical_path = $2 AND resource_presence = 'PRESENT' ORDER BY resource_id`,
-		rootID, path)
-	if err != nil {
+// ResolvePath returns ALL live resources at a path with explicit ambiguity
+// (doc C V9, QC12); it never fabricates a single winner.
+func (qr *QueryReader) ResolvePath(ctx context.Context, rootID, path string, includeRemoved bool) (query.PathResolution, error) {
+	var res query.PathResolution
+	collect := func(presence domain.ResourcePresence) error {
+		rows, err := qr.pool.Query(ctx,
+			resourceSelect+` WHERE root_id = $1::uuid AND canonical_path = $2 AND resource_presence = $3 ORDER BY resource_id`,
+			rootID, path, string(presence))
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				v  query.ResourceView
+				pr string
+			)
+			if err := rows.Scan(resourceScanArgs(&v, &pr)...); err != nil {
+				return err
+			}
+			v.ResourcePresence = domain.ResourcePresence(pr)
+			res.Matches = append(res.Matches, v)
+		}
+		return rows.Err()
+	}
+	if err := collect(domain.ResourcePresent); err != nil {
 		return query.PathResolution{}, err
 	}
-	res := query.PathResolution{}
-	for _, r := range rows {
-		res.Matches = append(res.Matches, query.View(r))
-	}
 	if includeRemoved {
-		removed, err := s.queryCanonical(ctx, s.pool,
-			`WHERE root_id = $1::uuid AND canonical_path = $2 AND resource_presence = 'REMOVED' ORDER BY resource_id`,
-			rootID, path)
-		if err != nil {
+		if err := collect(domain.ResourceRemoved); err != nil {
 			return query.PathResolution{}, err
-		}
-		for _, r := range removed {
-			res.Matches = append(res.Matches, query.View(r))
 		}
 	}
 	res.Ambiguous = len(res.Matches) > 1
 	return res, nil
 }
 
-// QueryListActivePage returns PRESENT resources ordered by (canonical_path,
-// resource_id) with generation-bound pagination (doc C P1..P3, QC11).
-func (s *Store) QueryListActivePage(ctx context.Context, rootID string, cur *query.Cursor, limit int) (query.ResourcePage, error) {
-	return s.listPage(ctx, rootID, cur, limit, domain.ResourcePresent)
+// ListActivePage returns PRESENT resources with generation-bound pagination.
+func (qr *QueryReader) ListActivePage(ctx context.Context, rootID string, cur *query.Cursor, limit int) (query.ResourcePage, error) {
+	return qr.listPage(ctx, rootID, cur, limit, domain.ResourcePresent)
 }
 
-// QueryListRemovedPage returns REMOVED tombstones (explicit history access, doc C Q7).
-func (s *Store) QueryListRemovedPage(ctx context.Context, rootID string, cur *query.Cursor, limit int) (query.ResourcePage, error) {
-	return s.listPage(ctx, rootID, cur, limit, domain.ResourceRemoved)
+// ListRemovedPage returns REMOVED tombstones (explicit history access, doc C Q7).
+func (qr *QueryReader) ListRemovedPage(ctx context.Context, rootID string, cur *query.Cursor, limit int) (query.ResourcePage, error) {
+	return qr.listPage(ctx, rootID, cur, limit, domain.ResourceRemoved)
 }
 
-func (s *Store) listPage(ctx context.Context, rootID string, cur *query.Cursor, limit int, presence domain.ResourcePresence) (query.ResourcePage, error) {
-	root, err := s.GetRoot(ctx, s.pool, rootID)
-	if err != nil {
-		return query.ResourcePage{}, err
-	}
-	if cur != nil {
-		if cur.RootID != rootID || cur.Generation != root.CurrentGeneration {
-			return query.ResourcePage{}, query.ErrStaleCursor
-		}
-	}
+// listPage reads the generation and rows inside ONE read-only REPEATABLE READ
+// transaction, so a page can never mix generation G metadata with G+1 rows
+// (doc C CR1/P2/P3, B5).
+func (qr *QueryReader) listPage(ctx context.Context, rootID string, cur *query.Cursor, limit int, presence domain.ResourcePresence) (query.ResourcePage, error) {
 	if limit <= 0 {
 		limit = defaultPageSize
 	}
+	tx, err := qr.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return query.ResourcePage{}, err
+	}
+	defer tx.Rollback(ctx)
 
-	var (
-		rows pgx.Rows
-	)
-	base := `SELECT resource_id::text, root_id::text, canonical_path, parent_resource_id::text, name, is_dir,
-	               size, mtime, content_hash, content_type, resource_presence,
-	               introduced_at_generation, last_confirmed_generation
-	          FROM index_canonical_resource
-	         WHERE root_id = $1::uuid AND resource_presence = $2`
+	var currentGeneration int64
+	if err := tx.QueryRow(ctx,
+		`SELECT current_generation FROM index_root WHERE root_id = $1::uuid`, rootID).Scan(&currentGeneration); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return query.ResourcePage{}, ErrNotFound
+		}
+		return query.ResourcePage{}, err
+	}
+	if cur != nil && (cur.RootID != rootID || cur.Generation != currentGeneration) {
+		return query.ResourcePage{}, query.ErrStaleCursor
+	}
+
+	base := resourceSelect + ` WHERE root_id = $1::uuid AND resource_presence = $2`
+	var rows pgx.Rows
 	if cur != nil && cur.HasAfter {
-		rows, err = s.pool.Query(ctx, base+`
+		rows, err = tx.Query(ctx, base+`
 		  AND (COALESCE(canonical_path, ''), resource_id::text) > ($3::text, $4::text)
 		  ORDER BY COALESCE(canonical_path, ''), resource_id::text
 		  LIMIT $5`, rootID, string(presence), cur.AfterPath, cur.AfterResourceID, limit)
 	} else {
-		rows, err = s.pool.Query(ctx, base+`
+		rows, err = tx.Query(ctx, base+`
 		  ORDER BY COALESCE(canonical_path, ''), resource_id::text
 		  LIMIT $3`, rootID, string(presence), limit)
 	}
@@ -143,10 +193,14 @@ func (s *Store) listPage(ctx context.Context, rootID string, cur *query.Cursor, 
 
 	page := query.ResourcePage{}
 	for rows.Next() {
-		v, err := scanResourceView(rows)
-		if err != nil {
+		var (
+			v  query.ResourceView
+			pr string
+		)
+		if err := rows.Scan(resourceScanArgs(&v, &pr)...); err != nil {
 			return query.ResourcePage{}, err
 		}
+		v.ResourcePresence = domain.ResourcePresence(pr)
 		page.Items = append(page.Items, v)
 	}
 	if err := rows.Err(); err != nil {
@@ -159,44 +213,52 @@ func (s *Store) listPage(ctx context.Context, rootID string, cur *query.Cursor, 
 			p = *last.CanonicalPath
 		}
 		page.Next = &query.Cursor{
-			RootID: rootID, Generation: root.CurrentGeneration,
+			RootID: rootID, Generation: currentGeneration,
 			HasAfter: true, AfterPath: p, AfterResourceID: last.ResourceID,
 		}
 	}
 	return page, nil
 }
 
-// QueryReadJournal returns per-root journal events after a per-root cursor
-// (doc C Q8, JC2/JC3).
-func (s *Store) QueryReadJournal(ctx context.Context, rootID string, afterSeq int64, limit int) ([]query.JournalEventView, error) {
+// ReadJournal returns per-root journal events after a per-root cursor (doc C Q8).
+func (qr *QueryReader) ReadJournal(ctx context.Context, rootID string, afterSeq int64, limit int) ([]query.JournalEventView, error) {
 	if limit <= 0 {
 		limit = defaultPageSize
 	}
-	events, err := s.ReadJournal(ctx, s.pool, rootID, afterSeq, limit)
+	rows, err := qr.pool.Query(ctx,
+		`SELECT root_id::text, event_seq, event_id, generation_number, intra_generation_seq,
+		        event_type, resource_id::text, payload, committed_at
+		   FROM index_journal_event
+		  WHERE root_id = $1::uuid AND event_seq > $2
+		  ORDER BY event_seq
+		  LIMIT $3`, rootID, afterSeq, limit)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]query.JournalEventView, 0, len(events))
-	for _, e := range events {
-		out = append(out, query.JournalEventView{
-			EventSeq: e.EventSeq, EventID: e.EventID, RootID: e.RootID,
-			GenerationNumber: e.GenerationNumber, IntraGenerationSeq: e.IntraGenerationSeq,
-			EventType: e.EventType, ResourceID: e.ResourceID, Payload: e.Payload, CommittedAt: e.CommittedAt,
-		})
+	defer rows.Close()
+	var out []query.JournalEventView
+	for rows.Next() {
+		var (
+			v         query.JournalEventView
+			eventType string
+		)
+		if err := rows.Scan(&v.RootID, &v.EventSeq, &v.EventID, &v.GenerationNumber, &v.IntraGenerationSeq,
+			&eventType, &v.ResourceID, &v.Payload, &v.CommittedAt); err != nil {
+			return nil, err
+		}
+		v.EventType = domain.EventType(eventType)
+		out = append(out, v)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
-func scanResourceView(rows pgx.Rows) (query.ResourceView, error) {
-	var (
-		v        query.ResourceView
-		presence string
-	)
-	if err := rows.Scan(&v.ResourceID, &v.RootID, &v.CanonicalPath, &v.ParentResourceID, &v.Name, &v.IsDir,
-		&v.Size, &v.Mtime, &v.ContentHash, &v.ContentType, &presence,
-		&v.IntroducedAtGeneration, &v.LastConfirmedGeneration); err != nil {
-		return query.ResourceView{}, err
-	}
-	v.ResourcePresence = domain.ResourcePresence(presence)
-	return v, nil
+const resourceSelect = `SELECT resource_id::text, root_id::text, canonical_path, parent_resource_id::text, name, is_dir,
+	       size, mtime, content_hash, content_type, resource_presence,
+	       introduced_at_generation, last_confirmed_generation
+	  FROM index_canonical_resource`
+
+func resourceScanArgs(v *query.ResourceView, presence *string) []any {
+	return []any{&v.ResourceID, &v.RootID, &v.CanonicalPath, &v.ParentResourceID, &v.Name, &v.IsDir,
+		&v.Size, &v.Mtime, &v.ContentHash, &v.ContentType, presence,
+		&v.IntroducedAtGeneration, &v.LastConfirmedGeneration}
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/nathanxiangang-web/index-core/internal/domain"
+	"github.com/nathanxiangang-web/index-core/internal/kernel/reconcile"
 )
 
 // ErrNotHead is returned when a reconcile is attempted for a non-head-of-line
@@ -14,7 +15,7 @@ import (
 var ErrNotHead = errors.New("admission seq is not the per-root head-of-line")
 
 // ErrCASConflict is returned when the expected generation no longer matches the
-// persisted generation; the caller must reload and retry or abort (doc B R11 / option C).
+// persisted generation; the caller must reload and retry or abort (doc B R11).
 var ErrCASConflict = errors.New("generation CAS conflict")
 
 // ReconcileInput identifies one admitted input to process.
@@ -30,31 +31,34 @@ type ReconcileInput struct {
 }
 
 // Plan is the Kernel-computed reconcile decision (produced by the Safe Reconcile
-// core, P4). Apply performs canonical mutations inside the transaction; Events
-// are the ordered journal events the Kernel decided to emit.
+// core, P4). Apply performs canonical writes and IdentityEvidence appends inside
+// the transaction; Events are the ordered journal events the Kernel decided to emit.
 type Plan struct {
 	MutatesCanonical bool
 	Apply            func(ctx context.Context, tx pgx.Tx, generation int64) error
 	Events           []domain.JournalEvent
 	Counts           []byte
-	Conflicts        []byte
 }
 
 // ReconcileOutcome reports the terminal result of a Stage-2 transaction.
 type ReconcileOutcome struct {
 	Status            domain.AdmissionStatus
+	SnapshotLifecycle domain.SnapshotLifecycleState
 	Generation        int64
 	AppliedGeneration int64
 	Mutated           bool
 }
 
-// ApplyFunc computes the Plan from the loaded canonical inventory and snapshot.
-type ApplyFunc func(prior []domain.CanonicalResource, snap domain.Snapshot, currentGeneration int64) (*Plan, error)
+// ApplyFunc computes the Plan from the loaded rich prior state and snapshot.
+// The prior state (canonical + latest IdentityEvidence) is loaded by the Store
+// inside the Stage-2 transaction (B3).
+type ApplyFunc func(prior []reconcile.PriorResource, snap domain.Snapshot, currentGeneration int64) (*Plan, error)
 
 // ReconcileHead runs Stage 2 (doc B Sec 1.2) as a single atomic transaction:
-// lock root, enforce absolute per-root FIFO, evaluate IO3/stale, apply the Kernel
-// plan, append journal events, advance generation only on real mutation, record
-// applied/admission state, and commit all-or-nothing.
+// lock root, enforce absolute per-root FIFO, evaluate IO3/stale, load rich prior,
+// apply the Kernel plan, append journal events + identity evidence, advance
+// generation only on real mutation, record applied/admission state and the
+// Snapshot lifecycle, and commit all-or-nothing.
 func (s *Store) ReconcileHead(ctx context.Context, in ReconcileInput, compute ApplyFunc) (ReconcileOutcome, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
@@ -62,7 +66,6 @@ func (s *Store) ReconcileHead(ctx context.Context, in ReconcileInput, compute Ap
 	}
 	defer tx.Rollback(ctx)
 
-	// R1/R3: per-root serialization via row lock, and load root state.
 	var (
 		currentGen int64
 		lifecycle  string
@@ -80,7 +83,7 @@ func (s *Store) ReconcileHead(ctx context.Context, in ReconcileInput, compute Ap
 		expected = *in.ExpectedGeneration
 	}
 
-	// R2: absolute per-root FIFO — only the min PENDING (head_seq) may proceed.
+	// R2: absolute per-root FIFO.
 	var headSeq *int64
 	if err := tx.QueryRow(ctx,
 		`SELECT min(admission_seq) FROM index_admission
@@ -91,9 +94,12 @@ func (s *Store) ReconcileHead(ctx context.Context, in ReconcileInput, compute Ap
 		return ReconcileOutcome{}, ErrNotHead
 	}
 
-	// R4: a DELETED root rejects new external reconciles before any write.
+	// R4: DELETED root rejects new external reconciles before any write.
 	if domain.RootLifecycleState(lifecycle) == domain.RootDeleted {
 		if err := s.SetAdmissionStatus(ctx, tx, in.RootID, in.AdmissionSeq, domain.AdmissionRejected, nil); err != nil {
+			return ReconcileOutcome{}, err
+		}
+		if err := s.SetSnapshotLifecycleState(ctx, tx, in.SnapshotID, domain.SnapshotRejected); err != nil {
 			return ReconcileOutcome{}, err
 		}
 		if err := s.insertResult(ctx, tx, in, currentGen, domain.ReconcileRejected, "root is DELETED"); err != nil {
@@ -102,10 +108,11 @@ func (s *Store) ReconcileHead(ctx context.Context, in ReconcileInput, compute Ap
 		if err := tx.Commit(ctx); err != nil {
 			return ReconcileOutcome{}, err
 		}
-		return ReconcileOutcome{Status: domain.AdmissionRejected, Generation: currentGen, AppliedGeneration: currentGen}, nil
+		return ReconcileOutcome{Status: domain.AdmissionRejected, SnapshotLifecycle: domain.SnapshotRejected,
+			Generation: currentGen, AppliedGeneration: currentGen}, nil
 	}
 
-	// R5: IO3 NO-OP — same identity already applied at the SAME generation.
+	// R5: IO3 NO-OP.
 	noop, err := s.AppliedExistsAtGeneration(ctx, tx, in.RootID, in.Identity, currentGen)
 	if err != nil {
 		return ReconcileOutcome{}, err
@@ -115,16 +122,20 @@ func (s *Store) ReconcileHead(ctx context.Context, in ReconcileInput, compute Ap
 		if err := s.SetAdmissionStatus(ctx, tx, in.RootID, in.AdmissionSeq, domain.AdmissionNoop, &gen); err != nil {
 			return ReconcileOutcome{}, err
 		}
+		if err := s.SetSnapshotLifecycleState(ctx, tx, in.SnapshotID, domain.SnapshotReconciled); err != nil {
+			return ReconcileOutcome{}, err
+		}
 		if err := s.insertResult(ctx, tx, in, currentGen, domain.ReconcileNoop, ""); err != nil {
 			return ReconcileOutcome{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return ReconcileOutcome{}, err
 		}
-		return ReconcileOutcome{Status: domain.AdmissionNoop, Generation: currentGen, AppliedGeneration: currentGen}, nil
+		return ReconcileOutcome{Status: domain.AdmissionNoop, SnapshotLifecycle: domain.SnapshotReconciled,
+			Generation: currentGen, AppliedGeneration: currentGen}, nil
 	}
 
-	// R6: stale/out-of-order — a superseded input cannot overwrite newer truth.
+	// R6: stale/out-of-order.
 	appliedMax, err := s.AppliedMax(ctx, tx, in.RootID)
 	if err != nil {
 		return ReconcileOutcome{}, err
@@ -133,17 +144,21 @@ func (s *Store) ReconcileHead(ctx context.Context, in ReconcileInput, compute Ap
 		if err := s.SetAdmissionStatus(ctx, tx, in.RootID, in.AdmissionSeq, domain.AdmissionStaleInput, nil); err != nil {
 			return ReconcileOutcome{}, err
 		}
+		if err := s.SetSnapshotLifecycleState(ctx, tx, in.SnapshotID, domain.SnapshotRejected); err != nil {
+			return ReconcileOutcome{}, err
+		}
 		if err := s.insertResult(ctx, tx, in, currentGen, domain.ReconcileStaleInput, "superseded input"); err != nil {
 			return ReconcileOutcome{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return ReconcileOutcome{}, err
 		}
-		return ReconcileOutcome{Status: domain.AdmissionStaleInput, Generation: currentGen, AppliedGeneration: currentGen}, nil
+		return ReconcileOutcome{Status: domain.AdmissionStaleInput, SnapshotLifecycle: domain.SnapshotRejected,
+			Generation: currentGen, AppliedGeneration: currentGen}, nil
 	}
 
-	// R7: load canonical inventory at the current generation.
-	prior, err := s.ListCanonicalResources(ctx, tx, in.RootID)
+	// R7: load rich prior (canonical + latest IdentityEvidence) in this transaction.
+	prior, err := s.LoadPriorResources(ctx, tx, in.RootID)
 	if err != nil {
 		return ReconcileOutcome{}, err
 	}
@@ -152,7 +167,7 @@ func (s *Store) ReconcileHead(ctx context.Context, in ReconcileInput, compute Ap
 		return ReconcileOutcome{}, err
 	}
 
-	// R8: Kernel computes the plan (pure, outside Store concerns).
+	// R8: Kernel computes the plan (pure).
 	plan, err := compute(prior, snap, currentGen)
 	if err != nil {
 		return ReconcileOutcome{}, err
@@ -163,7 +178,6 @@ func (s *Store) ReconcileHead(ctx context.Context, in ReconcileInput, compute Ap
 
 	appliedGen := currentGen
 	if plan.MutatesCanonical {
-		// R11 MUTATION path: CAS + advance.
 		tag, err := tx.Exec(ctx,
 			`UPDATE index_root
 			    SET current_generation = current_generation + 1, updated_at = now()
@@ -187,7 +201,6 @@ func (s *Store) ReconcileHead(ctx context.Context, in ReconcileInput, compute Ap
 				return ReconcileOutcome{}, err
 			}
 		}
-		// R10: append ordered journal events within the same generation.
 		seq, err := s.NextEventSeq(ctx, tx, in.RootID)
 		if err != nil {
 			return ReconcileOutcome{}, err
@@ -209,8 +222,8 @@ func (s *Store) ReconcileHead(ctx context.Context, in ReconcileInput, compute Ap
 			seq++
 		}
 	} else {
-		// R11 ZERO-mutation path: no advance, but still concurrency-validate the
-		// expected generation under the held lock (compare-and-check).
+		// R11 ZERO-mutation path: no advance, but still compare-and-check the
+		// expected generation under the held lock.
 		var check int64
 		if err := tx.QueryRow(ctx,
 			`SELECT current_generation FROM index_root
@@ -221,12 +234,20 @@ func (s *Store) ReconcileHead(ctx context.Context, in ReconcileInput, compute Ap
 			}
 			return ReconcileOutcome{}, err
 		}
+		// Observations may still need appending even without canonical mutation.
+		if plan.Apply != nil {
+			if err := plan.Apply(ctx, tx, appliedGen); err != nil {
+				return ReconcileOutcome{}, err
+			}
+		}
 		appliedGen = currentGen
 	}
 
-	// R12: terminal admission state + append-only application-history row, using
-	// the ACTUAL post-application generation (mutation -> new, else unchanged).
+	// R12: terminal admission + application-history row + Snapshot lifecycle.
 	if err := s.SetAdmissionStatus(ctx, tx, in.RootID, in.AdmissionSeq, domain.AdmissionApplied, &appliedGen); err != nil {
+		return ReconcileOutcome{}, err
+	}
+	if err := s.SetSnapshotLifecycleState(ctx, tx, in.SnapshotID, domain.SnapshotReconciled); err != nil {
 		return ReconcileOutcome{}, err
 	}
 	if err := s.InsertAppliedSnapshot(ctx, tx, domain.AppliedSnapshot{
@@ -245,18 +266,18 @@ func (s *Store) ReconcileHead(ctx context.Context, in ReconcileInput, compute Ap
 		return ReconcileOutcome{}, err
 	}
 
-	// R13: atomic commit.
 	if err := tx.Commit(ctx); err != nil {
 		return ReconcileOutcome{}, err
 	}
 	return ReconcileOutcome{
-		Status: domain.AdmissionApplied, Generation: currentGen,
-		AppliedGeneration: appliedGen, Mutated: plan.MutatesCanonical,
+		Status: domain.AdmissionApplied, SnapshotLifecycle: domain.SnapshotReconciled,
+		Generation: currentGen, AppliedGeneration: appliedGen, Mutated: plan.MutatesCanonical,
 	}, nil
 }
 
 // MarkAdmissionFailed records a terminal FAILED status for a rolled-back
-// reconcile, in a separate later transaction (doc B T-AT5).
+// reconcile, in a separate later transaction (doc B T-AT5). The Snapshot is left
+// at EVALUATED so a retry is still possible (B6: do not falsely retire).
 func (s *Store) MarkAdmissionFailed(ctx context.Context, rootID string, seq int64, reason string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

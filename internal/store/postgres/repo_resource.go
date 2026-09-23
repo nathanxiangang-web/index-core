@@ -13,12 +13,12 @@ func (s *Store) InsertCanonicalResource(ctx context.Context, q Querier, r domain
 		`INSERT INTO index_canonical_resource(
 		     resource_id, root_id, introduced_at_generation, last_confirmed_generation,
 		     resource_presence, removal_evidence_state, missing_since, consecutive_complete_missing,
-		     canonical_path, parent_resource_id, name, is_dir, size, mtime,
+		     missing_first_snapshot_id, canonical_path, parent_resource_id, name, is_dir, size, mtime,
 		     content_hash, hash_algorithm, content_type, current_attributes)
-		 VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10::uuid, $11, $12, $13, $14, $15, $16, $17, $18)`,
+		 VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11::uuid, $12, $13, $14, $15, $16, $17, $18, $19)`,
 		r.ResourceID, r.RootID, r.IntroducedAtGeneration, r.LastConfirmedGeneration,
 		string(r.ResourcePresence), string(r.RemovalEvidenceState), r.MissingSince, r.ConsecutiveCompleteMissing,
-		r.CanonicalPath, r.ParentResourceID, r.Name, r.IsDir, r.Size, r.Mtime,
+		r.MissingFirstSnapshotID, r.CanonicalPath, r.ParentResourceID, r.Name, r.IsDir, r.Size, r.Mtime,
 		r.ContentHash, r.HashAlgorithm, r.ContentType, r.CurrentAttributes)
 	return err
 }
@@ -51,7 +51,7 @@ func (s *Store) queryCanonical(ctx context.Context, q Querier, where string, arg
 	rows, err := q.Query(ctx,
 		`SELECT resource_id::text, root_id::text, introduced_at_generation, last_confirmed_generation,
 		        resource_presence, removal_evidence_state, missing_since, consecutive_complete_missing,
-		        canonical_path, parent_resource_id::text, name, is_dir, size, mtime,
+		        missing_first_snapshot_id::text, canonical_path, parent_resource_id::text, name, is_dir, size, mtime,
 		        content_hash, hash_algorithm, content_type, current_attributes, created_at, updated_at
 		   FROM index_canonical_resource `+where, args...)
 	if err != nil {
@@ -66,7 +66,7 @@ func (s *Store) queryCanonical(ctx context.Context, q Querier, where string, arg
 		)
 		if err := rows.Scan(&r.ResourceID, &r.RootID, &r.IntroducedAtGeneration, &r.LastConfirmedGeneration,
 			&presence, &removalState, &r.MissingSince, &r.ConsecutiveCompleteMissing,
-			&r.CanonicalPath, &r.ParentResourceID, &r.Name, &r.IsDir, &r.Size, &r.Mtime,
+			&r.MissingFirstSnapshotID, &r.CanonicalPath, &r.ParentResourceID, &r.Name, &r.IsDir, &r.Size, &r.Mtime,
 			&r.ContentHash, &r.HashAlgorithm, &r.ContentType, &r.CurrentAttributes, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -79,13 +79,27 @@ func (s *Store) queryCanonical(ctx context.Context, q Querier, where string, arg
 
 // SetRemovalEvidence updates only the Kernel-internal removal evidence columns;
 // it never changes resource_presence (MISSING is additive evidence, not deletion).
-func (s *Store) SetRemovalEvidence(ctx context.Context, q Querier, resourceID string, state domain.RemovalEvidenceState, missingSince any, consecutive int32, lastConfirmed int64) error {
+// missingFirstSnapshotID records the accepted Snapshot that first produced MISSING
+// evidence (B2 independence proof).
+func (s *Store) SetRemovalEvidence(ctx context.Context, q Querier, resourceID string, state domain.RemovalEvidenceState, missingSince any, consecutive int32, missingFirstSnapshotID any, lastConfirmed int64) error {
 	_, err := q.Exec(ctx,
 		`UPDATE index_canonical_resource
 		    SET removal_evidence_state = $2, missing_since = $3,
-		        consecutive_complete_missing = $4, last_confirmed_generation = $5, updated_at = now()
+		        consecutive_complete_missing = $4, missing_first_snapshot_id = $5,
+		        last_confirmed_generation = $6, updated_at = now()
 		  WHERE resource_id = $1::uuid`,
-		resourceID, string(state), missingSince, consecutive, lastConfirmed)
+		resourceID, string(state), missingSince, consecutive, missingFirstSnapshotID, lastConfirmed)
+	return err
+}
+
+// ResetRemovalEvidence clears MISSING evidence when a resource reappears (B2).
+func (s *Store) ResetRemovalEvidence(ctx context.Context, q Querier, resourceID string, lastConfirmed int64) error {
+	_, err := q.Exec(ctx,
+		`UPDATE index_canonical_resource
+		    SET removal_evidence_state = 'NONE', missing_since = NULL,
+		        consecutive_complete_missing = 0, missing_first_snapshot_id = NULL,
+		        last_confirmed_generation = $2, updated_at = now()
+		  WHERE resource_id = $1::uuid`, resourceID, lastConfirmed)
 	return err
 }
 

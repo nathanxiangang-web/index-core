@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/nathanxiangang-web/index-core/internal/domain"
+	"github.com/nathanxiangang-web/index-core/internal/kernel/reconcile"
 	"github.com/nathanxiangang-web/index-core/internal/store/postgres"
 )
 
@@ -15,7 +16,7 @@ func TestRepairJournalOnDeletedRootAppendsWithoutCanonicalOrGenerationChange(t *
 	seq, _ := st.AllocateAdmission(ctx, st.Pool(), txRoot, txSnap)
 	if _, err := st.ReconcileHead(ctx, postgres.ReconcileInput{
 		RootID: txRoot, AdmissionSeq: seq, SnapshotID: txSnap, Identity: identity("repair1"),
-	}, func(_ []domain.CanonicalResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
+	}, func(_ []reconcile.PriorResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
 		return &postgres.Plan{
 			MutatesCanonical: true,
 			Events:           []domain.JournalEvent{{EventType: domain.EventResourceAdded, Payload: []byte(`{}`)}},
@@ -62,7 +63,7 @@ func TestRepairJournalOnDeletedRootAppendsWithoutCanonicalOrGenerationChange(t *
 	seq2, _ := st.AllocateAdmission(ctx, st.Pool(), txRoot, txSnap)
 	out, err := st.ReconcileHead(ctx, postgres.ReconcileInput{
 		RootID: txRoot, AdmissionSeq: seq2, SnapshotID: txSnap, Identity: identity("repair2"),
-	}, func(_ []domain.CanonicalResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
+	}, func(_ []reconcile.PriorResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
 		t.Fatal("DELETED root must reject before plan computation")
 		return nil, nil
 	})

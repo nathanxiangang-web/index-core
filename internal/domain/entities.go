@@ -35,18 +35,23 @@ type CanonicalResource struct {
 	RemovalEvidenceState       RemovalEvidenceState
 	MissingSince               *time.Time
 	ConsecutiveCompleteMissing int32
-	CanonicalPath              *string
-	ParentResourceID           *string
-	Name                       *string
-	IsDir                      *bool
-	Size                       *int64
-	Mtime                      *time.Time
-	ContentHash                *string
-	HashAlgorithm              *string
-	ContentType                *string
-	CurrentAttributes          []byte
-	CreatedAt                  time.Time
-	UpdatedAt                  time.Time
+	// MissingFirstSnapshotID records the accepted Snapshot that first produced
+	// MISSING evidence. It is a Store-internal realization used to prove that a
+	// later, independently admitted Snapshot confirmed removal (V2c); it is not
+	// part of the external Domain semantics.
+	MissingFirstSnapshotID *string
+	CanonicalPath          *string
+	ParentResourceID       *string
+	Name                   *string
+	IsDir                  *bool
+	Size                   *int64
+	Mtime                  *time.Time
+	ContentHash            *string
+	HashAlgorithm          *string
+	ContentType            *string
+	CurrentAttributes      []byte
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 }
 
 // IdentityEvidenceObservation is T4 index_identity_evidence_observation (append-only, authoritative).
@@ -108,7 +113,10 @@ type SnapshotEntry struct {
 	ProviderObjectID      *string
 	ProviderObjectIDScope *string
 	ContentType           *string
-	ExtraEvidence         []byte
+	// ProviderIdentityAssurance is an optional adapter-supplied capability hint
+	// for this entry's provider_object_id. Absent means UNVERIFIED. PoC CANDIDATE.
+	ProviderIdentityAssurance *ProviderIdentityAssurance
+	ExtraEvidence             []byte
 }
 
 // Admission is T7 index_admission (doc A Sec 3.7, doc B Sec 1.1/1.2).

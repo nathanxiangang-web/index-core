@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/nathanxiangang-web/index-core/internal/domain"
+	"github.com/nathanxiangang-web/index-core/internal/kernel/reconcile"
 	"github.com/nathanxiangang-web/index-core/internal/store/postgres"
 )
 
@@ -65,7 +66,7 @@ func TestReconcileZeroMutationKeepsGenerationAndRecordsApplication(t *testing.T)
 	}
 	out, err := st.ReconcileHead(ctx, postgres.ReconcileInput{
 		RootID: txRoot, AdmissionSeq: seq, SnapshotID: txSnap, Identity: identity("d1"),
-	}, func(_ []domain.CanonicalResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
+	}, func(_ []reconcile.PriorResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
 		return &postgres.Plan{MutatesCanonical: false}, nil
 	})
 	if err != nil {
@@ -94,7 +95,7 @@ func TestReconcileMutationAdvancesGenerationAndAppendsJournal(t *testing.T) {
 	seq, _ := st.AllocateAdmission(ctx, st.Pool(), txRoot, txSnap)
 	out, err := st.ReconcileHead(ctx, postgres.ReconcileInput{
 		RootID: txRoot, AdmissionSeq: seq, SnapshotID: txSnap, Identity: identity("d2"),
-	}, func(_ []domain.CanonicalResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
+	}, func(_ []reconcile.PriorResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
 		return &postgres.Plan{
 			MutatesCanonical: true,
 			Events: []domain.JournalEvent{
@@ -134,7 +135,7 @@ func TestReconcileRejectsNonHeadAdmission(t *testing.T) {
 	seq2, _ := st.AllocateAdmission(ctx, st.Pool(), txRoot, txSnap)
 	_, err := st.ReconcileHead(ctx, postgres.ReconcileInput{
 		RootID: txRoot, AdmissionSeq: seq2, SnapshotID: txSnap, Identity: identity("d3"),
-	}, func(_ []domain.CanonicalResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
+	}, func(_ []reconcile.PriorResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
 		return &postgres.Plan{}, nil
 	})
 	if !errors.Is(err, postgres.ErrNotHead) {
@@ -150,7 +151,7 @@ func TestReconcileCASConflictLeavesNoPartialState(t *testing.T) {
 	_, err := st.ReconcileHead(ctx, postgres.ReconcileInput{
 		RootID: txRoot, AdmissionSeq: seq, SnapshotID: txSnap, Identity: identity("d4"),
 		ExpectedGeneration: &stale,
-	}, func(_ []domain.CanonicalResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
+	}, func(_ []reconcile.PriorResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
 		return &postgres.Plan{MutatesCanonical: true, Events: []domain.JournalEvent{
 			{EventType: domain.EventResourceAdded, Payload: []byte(`{}`)},
 		}}, nil
@@ -172,7 +173,7 @@ func TestReconcileRollbackLeavesNoPartialStateThenFailed(t *testing.T) {
 	seq, _ := st.AllocateAdmission(ctx, st.Pool(), txRoot, txSnap)
 	_, err := st.ReconcileHead(ctx, postgres.ReconcileInput{
 		RootID: txRoot, AdmissionSeq: seq, SnapshotID: txSnap, Identity: identity("d5"),
-	}, func(_ []domain.CanonicalResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
+	}, func(_ []reconcile.PriorResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
 		return &postgres.Plan{
 			MutatesCanonical: true,
 			Apply: func(context.Context, pgx.Tx, int64) error {
@@ -220,7 +221,7 @@ func TestReconcileNOOPOnSameGenerationReplay(t *testing.T) {
 	seq, _ := st.AllocateAdmission(ctx, st.Pool(), txRoot, txSnap)
 	out, err := st.ReconcileHead(ctx, postgres.ReconcileInput{
 		RootID: txRoot, AdmissionSeq: seq, SnapshotID: txSnap, Identity: id,
-	}, func(_ []domain.CanonicalResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
+	}, func(_ []reconcile.PriorResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
 		t.Fatal("NO-OP must not compute or apply a plan")
 		return nil, nil
 	})
@@ -244,7 +245,7 @@ func TestReconcileDELETEDRootRejectsWithoutMutation(t *testing.T) {
 	seq, _ := st.AllocateAdmission(ctx, st.Pool(), txRoot, txSnap)
 	out, err := st.ReconcileHead(ctx, postgres.ReconcileInput{
 		RootID: txRoot, AdmissionSeq: seq, SnapshotID: txSnap, Identity: identity("d7"),
-	}, func(_ []domain.CanonicalResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
+	}, func(_ []reconcile.PriorResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
 		t.Fatal("a DELETED root must be rejected before plan computation")
 		return nil, nil
 	})

@@ -18,7 +18,9 @@ const (
 )
 
 // Entry is a normalized SnapshotEntry field set that contributes to the digest.
-// Paths/parent refs are Collector-local and are normalized to stable strings.
+// Every field that can alter a reconcile decision is included (B4): hash and
+// hash_algorithm (R3 compares both), provider object id/scope and identity
+// assurance (R1 eligibility), and content_type (UPDATE semantics).
 type Entry struct {
 	ParentRef             string
 	Name                  string
@@ -26,13 +28,15 @@ type Entry struct {
 	Size                  *int64
 	MTimeUnixNano         *int64
 	ContentHash           string
+	HashAlgorithm         string
+	ContentType           string
 	ProviderObjectID      string
 	ProviderObjectIDScope string
+	ProviderAssurance     string
 }
 
 // Evidence is the normalized, reconcile-decision-relevant evidence included in
-// the digest. Wall-clock, admission timing and DB timing MUST NOT appear here
-// (frozen identity contract).
+// the digest. Wall-clock, admission timing and DB timing MUST NOT appear here.
 type Evidence struct {
 	TraversalStatus          string
 	ErrorSummaryCanonical    string
@@ -43,9 +47,8 @@ type Evidence struct {
 }
 
 // FinalDigest computes the Kernel-finalized evaluated-Snapshot IO3 identity as a
-// DETERMINISTIC_DIGEST. It covers the normalized entry set plus all evidence,
-// including the Kernel-derived ScopeShrinkCorroboration, so NONE/CORROBORATED/
-// CONTRADICTED and PARTIAL/COMPLETE produce distinct identities.
+// DETERMINISTIC_DIGEST. Two evaluated snapshots that can drive different
+// reconcile decisions MUST NOT collapse into the same digest (B4).
 func FinalDigest(entries []Entry, ev Evidence) domain.SnapshotIdentity {
 	norm := make([]Entry, len(entries))
 	copy(norm, entries)
@@ -63,8 +66,11 @@ func FinalDigest(entries []Entry, ev Evidence) domain.SnapshotIdentity {
 		writeOptInt(h, e.Size)
 		writeOptInt(h, e.MTimeUnixNano)
 		writeTag(h, e.ContentHash)
+		writeTag(h, e.HashAlgorithm)
+		writeTag(h, e.ContentType)
 		writeTag(h, e.ProviderObjectID)
 		writeTag(h, e.ProviderObjectIDScope)
+		writeTag(h, e.ProviderAssurance)
 	}
 
 	writeTag(h, "evidence")

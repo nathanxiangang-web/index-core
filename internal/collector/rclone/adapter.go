@@ -6,9 +6,11 @@
 // Safety posture (accepted Gate 2 boundary): rclone RC/CLI exposes no structured
 // skipped-set, so skipped_scopes is always UNKNOWN (absent), never confirmed-empty.
 // A successful scan therefore cannot satisfy the frozen completeness gate C-9 and
-// this adapter MUST NOT claim destructive-safe COMPLETE. Per-object rclone IDs are
-// IdentityEvidence only, never the final Snapshot revision token; the final IO3
-// identity stays Kernel-owned after evaluation.
+// this adapter MUST NOT claim destructive-safe COMPLETE. Failure visibility is
+// WEAK by default; a caller may qualify a specific mode/backend as STRONG only
+// with explicit evidence that errors are typed and propagated (doc E E3, B7).
+// Per-object rclone IDs are IdentityEvidence only, never the final Snapshot
+// revision token; the final IO3 identity stays Kernel-owned after evaluation.
 package rclone
 
 import (
@@ -64,10 +66,20 @@ type RawScan struct {
 	ProviderIdentityAssurance domain.ProviderIdentityAssurance
 }
 
-// Normalize converts rclone lsjson output into normalized, provider-neutral
-// evidence. runErr is the process error (nil on success). This is pure and
-// unit-testable without an rclone installation.
+// Normalize converts rclone lsjson output into normalized evidence, using the
+// safe default failure visibility (WEAK). See NormalizeWithAssurance to qualify
+// a specific mode/backend.
 func Normalize(out []byte, runErr error) RawScan {
+	return NormalizeWithAssurance(out, runErr, domain.WeakFailureVisibility)
+}
+
+// NormalizeWithAssurance is Normalize with an explicit, mode/backend-qualified
+// failure-visibility class. STRONG MUST only be passed when the specific mode
+// actually propagates typed errors (B7, doc E E3); it is not a blanket property.
+func NormalizeWithAssurance(out []byte, runErr error, assurance domain.FailureVisibility) RawScan {
+	if assurance == "" {
+		assurance = domain.UnknownFailureVisibility
+	}
 	scan := RawScan{
 		TraversalStatus: domain.TraversalSuccess,
 		// No structured skipped-set: absence of evidence is UNKNOWN, not
@@ -75,7 +87,7 @@ func Normalize(out []byte, runErr error) RawScan {
 		SkippedScopes:             nil,
 		SkippedKnownEmpty:         false,
 		Freshness:                 domain.FreshDirect,
-		Assurance:                 domain.StrongFailureVisibility,
+		Assurance:                 assurance,
 		ProviderIdentityAssurance: domain.IdentityUnverified,
 	}
 	if runErr != nil {
@@ -155,13 +167,20 @@ func jsonError(key, msg string) []byte {
 }
 
 // Adapter runs an external rclone process to produce normalized evidence.
+//
+// Remote == "" selects the implicit local backend and subPath is used as a local
+// filesystem path, which makes the adapter testable across the process boundary
+// against a deterministic local directory (B7).
 type Adapter struct {
-	Binary  string
-	Remote  string
-	Timeout time.Duration
+	Binary string
+	Remote string
+	// Assurance is the mode/backend-qualified failure visibility. Empty defaults
+	// to WEAK (safe). STRONG requires explicit evidence for the mode used.
+	Assurance domain.FailureVisibility
+	Timeout   time.Duration
 }
 
-// Scan runs `rclone lsjson --recursive <remote>:<subPath>` and normalizes output.
+// Scan runs `rclone lsjson --recursive <target>` and normalizes output.
 func (a Adapter) Scan(ctx context.Context, subPath string) (RawScan, error) {
 	bin := a.Binary
 	if bin == "" {
@@ -172,19 +191,24 @@ func (a Adapter) Scan(ctx context.Context, subPath string) (RawScan, error) {
 		ctx, cancel = context.WithTimeout(ctx, a.Timeout)
 		defer cancel()
 	}
-	target := a.Remote + ":" + subPath
+	target := subPath
+	if a.Remote != "" {
+		target = a.Remote + ":" + subPath
+	}
 	cmd := exec.CommandContext(ctx, bin, "lsjson", "--recursive", target)
 	out, err := cmd.Output()
-	if err != nil {
-		return Normalize(nil, err), nil
+
+	assurance := a.Assurance
+	if assurance == "" {
+		assurance = domain.WeakFailureVisibility
 	}
-	return Normalize(out, nil), nil
+	if err != nil {
+		return NormalizeWithAssurance(nil, err, assurance), nil
+	}
+	return NormalizeWithAssurance(out, nil, assurance), nil
 }
 
-// MinIOPageSize is a compile-time documentation anchor for the additive-safe role.
-const MinIOPageSize = 100
-
 func (s RawScan) String() string {
-	return fmt.Sprintf("rclone scan: %d entries, status=%s, skippedKnownEmpty=%v",
-		len(s.Entries), s.TraversalStatus, s.SkippedKnownEmpty)
+	return fmt.Sprintf("rclone scan: %d entries, status=%s, assurance=%s, skippedKnownEmpty=%v",
+		len(s.Entries), s.TraversalStatus, s.Assurance, s.SkippedKnownEmpty)
 }

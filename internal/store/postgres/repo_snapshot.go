@@ -111,11 +111,11 @@ func (s *Store) InsertSnapshotEntry(ctx context.Context, q Querier, e domain.Sna
 		`INSERT INTO index_snapshot_entry(
 		     snapshot_id, entry_local_id, name, parent_ref, is_dir, size, mtime,
 		     content_hash, hash_algorithm, provider_object_id, provider_object_id_scope,
-		     content_type, extra_evidence)
-		 VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		     content_type, provider_identity_assurance, extra_evidence)
+		 VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		e.SnapshotID, e.EntryLocalID, e.Name, e.ParentRef, e.IsDir, e.Size, e.Mtime,
 		e.ContentHash, e.HashAlgorithm, e.ProviderObjectID, e.ProviderObjectIDScope,
-		e.ContentType, e.ExtraEvidence)
+		e.ContentType, nullableString(e.ProviderIdentityAssurance), e.ExtraEvidence)
 	return err
 }
 
@@ -124,7 +124,7 @@ func (s *Store) ListSnapshotEntries(ctx context.Context, q Querier, snapshotID s
 	rows, err := q.Query(ctx,
 		`SELECT snapshot_id::text, entry_local_id, name, parent_ref, is_dir, size, mtime,
 		        content_hash, hash_algorithm, provider_object_id, provider_object_id_scope,
-		        content_type, extra_evidence
+		        content_type, provider_identity_assurance, extra_evidence
 		   FROM index_snapshot_entry WHERE snapshot_id = $1::uuid
 		  ORDER BY parent_ref, name, entry_local_id`, snapshotID)
 	if err != nil {
@@ -133,11 +133,18 @@ func (s *Store) ListSnapshotEntries(ctx context.Context, q Querier, snapshotID s
 	defer rows.Close()
 	var out []domain.SnapshotEntry
 	for rows.Next() {
-		var e domain.SnapshotEntry
+		var (
+			e         domain.SnapshotEntry
+			assurance *string
+		)
 		if err := rows.Scan(&e.SnapshotID, &e.EntryLocalID, &e.Name, &e.ParentRef, &e.IsDir, &e.Size, &e.Mtime,
 			&e.ContentHash, &e.HashAlgorithm, &e.ProviderObjectID, &e.ProviderObjectIDScope,
-			&e.ContentType, &e.ExtraEvidence); err != nil {
+			&e.ContentType, &assurance, &e.ExtraEvidence); err != nil {
 			return nil, err
+		}
+		if assurance != nil {
+			v := domain.ProviderIdentityAssurance(*assurance)
+			e.ProviderIdentityAssurance = &v
 		}
 		out = append(out, e)
 	}
