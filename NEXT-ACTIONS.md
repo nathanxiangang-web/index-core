@@ -10,7 +10,16 @@ Execution owner: **none currently**
 
 Status:
 
-**NO ACTIVE IMPLEMENTATION GATE**
+**DISCOVERY ACTIVE / NO IMPLEMENTATION AUTHORIZED**
+
+Current architecture planning:
+
+- Issue #57 — incremental architecture umbrella
+- Issue #59 — active Change Discovery capability research
+- Blueprint: `docs/architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md`
+- Research report: `docs/research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md`
+
+Research execution is authorized. Production implementation remains **NONE** until Issue #59 is complete and the Architect explicitly selects a strategy.
 
 Accepted Gate-4 merge commits:
 
@@ -70,7 +79,37 @@ successor product.
 
 CloudSite 1.0 remains **Legacy / Frozen Product**.
 
-## Next blueprint phase
+## IndexCore Post-MVP Incremental planning
+
+This is a separate IndexCore infrastructure extension and does **not** consume or authorize Gate 5.
+
+Current task is capability discovery, not solution implementation.
+
+Compare:
+
+```text
+Mutation Hint
+Native Delta / Provider Cursor
+Scoped Refresh through OpenList/AList
+Adaptive Polling
+Hybrid
+Full Scan fallback
+```
+
+Primary question:
+
+> Can IndexCore discover real cloud-drive changes materially earlier than normal
+> AList/OpenList cache refresh, with small controlled provider requests, without
+> rebuilding mature provider drivers?
+
+Research must settle 115/OpenList/AList/rclone capability, request amplification,
+cache behavior, rate-limit/account risk, large-directory behavior, and realistic
+latency targets.
+
+Implementation is **NOT AUTHORIZED**. After Issue #59's report, the Architect may
+choose STOP, one prototype path, a hybrid, or full-scan-only.
+
+## Next product blueprint phase
 
 **Gate 5 — Future Product Architecture**
 
@@ -112,7 +151,8 @@ Do not begin:
 - direct IndexCore write APIs;
 - direct browser-to-IndexCore public exposure;
 - changes to frozen Gate 1B/1C semantics;
-- Scanner Resume / native delta / multi-daemon HA unless separately planned.
+- Scanner Resume / multi-daemon HA unless separately planned.
+- native delta implementation until Issue #57 architecture is accepted and a separate execution contract is opened.
 
 ## Recovery rule
 
