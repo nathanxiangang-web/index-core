@@ -153,7 +153,8 @@ identity continuity (Gate 1A A1.2).
 | root_id | REQUIRED | The ResourceRoot partition this resource belongs to. Immutable (Section 3: disjoint partitions). |
 | introduced_at_generation | REQUIRED | The generation at which this resource first entered canonical state. |
 | last_confirmed_generation | REQUIRED | The generation at which this resource was last confirmed present by an accepted snapshot. |
-| resource_presence | REQUIRED | `PRESENT` or `REMOVED`. `REMOVED` is a logical canonical tombstone, not physical erasure. Active queries normally exclude REMOVED; exact storage/query mechanics are Gate 1C. |\n| removal_evidence_state | REQUIRED | `NONE`, `MISSING_CONFIRMED_BY_COMPLETE_SNAPSHOT`, or `REMOVAL_CANDIDATE`. Kernel safety metadata only; it is not provider state and is not equivalent to consumer-visible absence. |
+| resource_presence | REQUIRED | `PRESENT` or `REMOVED`. `REMOVED` is a logical canonical tombstone, not physical erasure. Active queries normally exclude REMOVED; exact storage/query mechanics are Gate 1C. |
+| removal_evidence_state | REQUIRED | `NONE`, `MISSING_CONFIRMED_BY_COMPLETE_SNAPSHOT`, or `REMOVAL_CANDIDATE`. Kernel safety metadata only; it is not provider state and is not equivalent to consumer-visible absence. |
 | current_attributes | REQUIRED | Current canonical attributes (name, size, mtime, hash, etc.) as last reconciled. |
 | identity_evidence | REQUIRED | The IdentityEvidence supporting this resource's identity claim (see 1.6). |
 | canonical_path | OPTIONAL | The canonical path within the root, if the Kernel maintains one. Derived, NOT identity. |
@@ -340,23 +341,13 @@ contract. When STABLE_WITHIN_SCOPE, it is authoritative.
 
 ---
 
-#### R2 — provider_object_id absent, fallback matching (scenario 2) — CANDIDATE
+#### R2 — provider_object_id absent, fallback routing (scenario 2) — ACCEPTED_SEMANTIC
 
 **Precondition.** The entry has NO provider_object_id (or R1 found zero matches
 and the entry has a provider_object_id not yet seen). R0 has passed.
 
-**Rule.** Evaluate fallback signals in order of strength. This is a CANDIDATE
-rule: the exact signal combination and thresholds are v1 candidates subject to
-review, but the structure is fixed.
+**Rule.** Route fallback matching by available evidence. R2 itself does not invent additional thresholds; it dispatches to the already frozen rules R3/R4/R7:\n\n1. If `content_hash` is present -> evaluate R3.\n2. Otherwise evaluate the same-path `path + size + mtime` rule R4.\n3. If R4 cannot establish MEDIUM continuity, evaluate R7 only as a collision/weak-evidence guard; WEAK evidence remains UNRESOLVED.\n\nNo fallback path may auto-MATCH using evidence weaker than the accepted R3/R4/R7 semantics.
 
-1. If content_hash present -> R3 (content identity).
-2. Else -> path + size + mtime heuristic (R4).
-3. Else -> name + size heuristic (R7, conservative).
-
-**Why CANDIDATE not ACCEPTED.** The principle that fallback is needed is
-ACCEPTED (principle 6: provider capability optional; principle 7: hash optional).
-The specific combination and thresholds are CANDIDATE pending Gate 1B review and
-Completeness contract completeness interaction.
 
 **Evidence.** Principle 6 (provider capability optional). D02 Q7/Q8: real
 systems operate without provider_object_id, so fallback MUST exist.
@@ -811,7 +802,7 @@ All 11 required scenarios mapped to rules and results.
 | # | Scenario | Primary rule(s) | Result | Marker |
 |---|----------|-----------------|--------|--------|
 | 1 | provider_object_id present and stable (STABLE_WITHIN_SCOPE) | R1 | MATCHED | ACCEPTED_SEMANTIC |
-| 2 | provider_object_id absent, fallback | R2 -> R3/R4/R7 | MATCHED / UNRESOLVED per strength | CANDIDATE (structure) / ACCEPTED (principle) |
+| 2 | provider_object_id absent, fallback | R2 -> R3/R4/R7 | MATCHED / NEW_RESOURCE / UNRESOLVED / CONFLICT per frozen downstream rules | ACCEPTED_SEMANTIC |
 | 3 | provider_object_id disappears between snapshots | R9 | MISSING (not deleted); removal respects horizon (2.4) | ACCEPTED_SEMANTIC |
 | 4 | provider_object_id changes unexpectedly | R10 | UNRESOLVED or CONFLICT | ACCEPTED_SEMANTIC |
 | 5 | path rename (same content, different path) | R3, R5 | MATCHED only with continuity context; copy -> NEW_RESOURCE | ACCEPTED_SEMANTIC |
@@ -851,7 +842,6 @@ NO_BATCH_DESCENDANT_PROPAGATION.
 | Marker | Count | Items |
 |--------|-------|-------|
 | ACCEPTED_SEMANTIC | Domain: 6 concepts (1.1-1.6) + Root ownership (Section 3) + Identity Result States (2.1) + Rules R0, R1, R3, R4, R5, R6, R7, R8, R9, R10, R11 + Rule Precedence (2.3) + Move/Removal Horizon Invariant (2.4) + Root Lifecycle (Section 10) | Core model and conservative identity rules |
-| CANDIDATE | R2 (fallback signal combination) | Subject to Gate 1B review / Safe Reconcile contract reconcile design |
 | DEFERRED | Safe Reconcile state machine (Safe Reconcile contract); completeness acceptance (Completeness contract); Change Journal format (Safe Reconcile contract); conflict resolution policy (Gate 1A B3, deferred); Collector selection (Gate 1C); Store adapter (Gate 1C); exact horizon durations (Gate 1C runtime config) | Out of scope per DO NOT |
 | POST_MVP | Identity v2; cross-root dedup; batch descendant propagation for directory move (R6 v2) | Deferred unscheduled; not in Gate 1C scope |
 | REJECTED | Option B (overlapping root partitions) | Section 3 |
@@ -898,7 +888,6 @@ ACCEPTED_SEMANTIC (NO_BATCH_DESCENDANT_PROPAGATION); batch propagation is POST_M
 | Completeness acceptance criteria (beyond the flag) | Completeness contract (Gate 1B) | DO NOT constraint; interacts with R4/R5 move recognition |
 | Canonical Change Journal format | Safe Reconcile contract (Gate 1B) | DO NOT constraint; records the identity-preserving transitions R3/R5/R6 produce |
 | Conflict resolution policy (for CONFLICT results) | Gate 1B (Gate 1A B3 deferred) | CONFLICT is produced by R7/R8/R10; resolution policy is a separate design |
-| R2 fallback signal combination thresholds | Gate 1B review | CANDIDATE; needs Completeness contract completeness interaction |
 | Exact move_recognition_horizon and removal_grace_period durations | Gate 1C runtime config | Section 2.4 freezes the relationship; durations are deployment config |
 | Collector selection per root | Gate 1C | owning_collector_ref OPTIONAL until then |
 | provider_identity_assurance mapping per Collector/Adapter | Gate 1C | Section 1.6 defines the concept; Gate 1C maps AList/rclone/adapters |
