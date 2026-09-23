@@ -1,0 +1,32 @@
+# Gate 3 Alpha local deployment. PostgreSQL 18 with a persistent volume.
+# rclone runs inside the indexcore image as an external process.
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: indexcore
+      POSTGRES_PASSWORD: indexcore
+      POSTGRES_DB: indexcore
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U indexcore"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  indexcore:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Explicit non-loopback bind for container reachability; Gate 3 has no auth.
+      INDEXCORE_DATABASE_URL: postgres://indexcore:indexcore@postgres:5432/indexcore?sslmode=disable
+      INDEXCORE_HTTP_ADDR: 0.0.0.0:8080
+    ports:
+      - "8080:8080"
+    command: ["serve"]
+
+volumes:
+  pgdata:

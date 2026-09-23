@@ -8,7 +8,7 @@ DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 PKG ?= github.com/nathanxiangang-web/index-core/internal/runtime/version
 LDFLAGS ?= -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).Date=$(DATE)
 
-.PHONY: pg-up pg-down build bin test fmt
+.PHONY: pg-up pg-down build bin fmt test scale docker-build compose-up compose-down
 
 pg-up:
 	@docker rm -f $(PG_CONTAINER) >/dev/null 2>&1 || true
@@ -38,3 +38,19 @@ fmt:
 # -p 1 serializes packages so DB-backed packages do not reset the same schema concurrently.
 test:
 	INDEXCORE_TEST_DATABASE_URL="$(TEST_DSN)" $(GO) test -p 1 ./... $(ARGS)
+# Gate 3 P8 scale harness (>=20k resources). Override N with SCALE_N=<n>.
+SCALE_N ?= 20000
+scale:
+	INDEXCORE_TEST_DATABASE_URL="$(TEST_DSN)" INDEXCORE_SCALE_TEST=1 INDEXCORE_SCALE_N=$(SCALE_N) \
+		$(GO) test ./internal/runtime/scale -run TestScalePopulationAndDelta -v -timeout 20m
+
+# Gate 3 P9 packaging.
+docker-build:
+	docker build -t indexcore:alpha \
+		--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg DATE=$(DATE) .
+
+compose-up:
+	docker compose up -d --build
+
+compose-down:
+	docker compose down

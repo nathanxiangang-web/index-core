@@ -1,0 +1,5 @@
+bin/
+.git/
+.codeartsdoer/
+.env
+*.md

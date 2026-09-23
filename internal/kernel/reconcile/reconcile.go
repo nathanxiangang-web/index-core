@@ -19,10 +19,11 @@ func Reconcile(prior []PriorResource, entries []domain.SnapshotEntry, acceptance
 		return res
 	}
 	observed := make(map[string]bool, len(prior))
+	ix := BuildPriorIndex(prior)
 
 	for i := range entries {
 		e := entries[i]
-		status, p, reason := resolveIdentity(e, prior, cfg, now)
+		status, p, reason := ix.resolve(e, cfg, now)
 		switch status {
 		case ResolutionMatched:
 			observed[p.ResourceID] = true
