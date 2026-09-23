@@ -16,7 +16,8 @@ Gate 1B accepted at `9291ac0706af6d584684498d75b714c408b9ffbe`.
 Gate 1C accepted at PR #43 head `7a3b32f` (ARCHITECT FINAL ACCEPTANCE — Gate 1C
 CLOSED).
 Gate 2 PoC accepted at PR #46 head `846a270` (ARCHITECT FINAL ACCEPTANCE —
-Gate 2 PoC); PR #46 is authorized to merge to `main`.
+Gate 2 PoC) and merged to `main` at `410050d0b084d999063cde1a4be8d2051fbcb88f`.
+Gate 3 MVP Alpha authorized by Architect in Issue #47.
 
 ## Execution model
 
@@ -40,32 +41,42 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
-**Gate 2 — PoC — ARCHITECT ACCEPTED**
+**Gate 3 — MVP Alpha / Standalone Runtime & Scale**
 
-Gate 1C is **CLOSED** (ARCHITECT FINAL ACCEPTANCE on PR #43). The Gate 2 PoC is
-**ARCHITECT ACCEPTED** (ARCHITECT FINAL ACCEPTANCE — Gate 2 PoC on PR #46);
-PR #46 is authorized to merge to `main`, and Issue #44 closes on that merge.
+Gate 1C is **CLOSED**. Gate 2 PoC is **CLOSED** and merged to `main` at
+`410050d0b084d999063cde1a4be8d2051fbcb88f`. Issue #44 is completed.
 
 Status:
 
-**AWAITING ARCHITECT NEXT-PHASE PLANNING**
+**AUTHORIZED / IN PROGRESS**
 
 Active execution issue:
 
-**#44 — [CODEX][GATE-2] Index Core PoC** (closes on PR #46 merge)
+**#47 — [CODEX][GATE-3] Standalone Alpha Runtime & Scale**
 
-Branch:
+Executor branch:
 
-**`poc/gate2-indexcore`**
+**`alpha/gate3-runtime`** (must start from current `main`).
 
-Technology stack (Architect-locked via PR #45 / Issue #44):
+Architect-locked Gate-3 runtime shape:
 
-**Go 1.27.x + PostgreSQL 18 + pgx/v5** — Go Modules, SQL-first migrations,
-real-PostgreSQL integration tests, `log/slog`, env/flag config; no ORM, no
-Gin/Fiber/Echo, no Redis/Kafka, no DI framework.
+- one standalone Go binary: `indexcore`;
+- explicit `migrate`, `serve`, root administration, and `scan --root` CLI paths;
+- PostgreSQL 18.x + pgx/v5 remain the Store realization;
+- single active write-orchestration daemon per database for Gate 3;
+- bounded concurrency across different roots inside the daemon;
+- standard-library `net/http` read-only `/v1` Query transport;
+- unauthenticated Alpha HTTP binds to loopback by default;
+- rclone remains external and additive-safe only;
+- Gate-3 final acceptance also requires a real AList/OpenList Collector integration
+  validation, still behind the Collector boundary and initially additive-safe;
+- >=20,000-resource real-PostgreSQL scale validation is mandatory;
+- CloudSite integration remains Gate 4.
 
-Still deferred: CloudSite integration, UI, Scanner Resume, native delta / true
-incremental, and destructive-safe provider COMPLETE.
+Still deferred: product UI, auth/account/tenant system, Scanner Resume/provider
+traversal checkpoints, native delta/true incremental, destructive-safe provider
+COMPLETE without positive evidence, multi-daemon HA/distributed leases, Redis/Kafka,
+Search/Catalog/AI/downloader features.
 
 ## Accepted architecture
 
@@ -222,9 +233,10 @@ All six Gate 1C deliverables are delivered, Architect-accepted, and frozen:
 
 ## Implementation status
 
-**GATE 2 POC ACCEPTED — NO PRODUCT MVP CODE YET**
+**GATE 3 MVP ALPHA AUTHORIZED**
 
-Gate 1C is Architect-accepted (PR #43, Gate 1C CLOSED). The Gate 2 Index Core PoC
-is Architect-accepted (PR #46, ARCHITECT FINAL ACCEPTANCE — Gate 2 PoC). Awaiting
-Architect next-phase planning; no further code changes are authorized in this
-closeout.
+Gate 2 is merged and closed. Gate 3 is the existing blueprint MVP gate, beginning
+with the standalone Alpha runtime and scale work defined in
+`docs/gate3/GATE3-MVP-ALPHA-PLAN.md` / Issue #47.
+
+No CloudSite integration is authorized in Gate 3; that remains Gate 4.
