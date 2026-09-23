@@ -106,18 +106,18 @@ func (w *Worker) Run(ctx context.Context) error {
 // recoverUnadmitted admits any durable SUBMITTED Snapshot that has no admission
 // row, so a crash between Snapshot commit and Stage-1 admission is recoverable.
 func (w *Worker) recoverUnadmitted(ctx context.Context) {
-	items, err := w.store.SubmittedSnapshotsWithoutAdmission(ctx, 100)
+	resolved, ambiguous, err := w.store.ResolveUnadmittedSubmitted(ctx)
 	if err != nil {
 		w.logger.Warn("worker: recovery sweep failed", "error_class", "db")
 		return
 	}
-	for _, it := range items {
-		if _, resumed, err := w.store.AdmitOrResumeSnapshot(ctx, it.RootID, it.SnapshotID); err != nil {
-			w.logger.Warn("worker: recovery admit failed", "root_id", it.RootID, "snapshot_id", it.SnapshotID, "error_class", "admission")
-			continue
-		} else {
-			w.logger.Info("worker: recovered unadmitted snapshot", "root_id", it.RootID, "snapshot_id", it.SnapshotID, "resumed", resumed)
-		}
+	if resolved > 0 {
+		w.logger.Info("worker: recovered unadmitted snapshots", "resolved", resolved)
+	}
+	for _, rootID := range ambiguous {
+		// Multiple ambiguous candidates: never invent order from DB timestamps.
+		w.logger.Error("worker: ambiguous unadmitted SUBMITTED snapshots; failing closed",
+			"root_id", rootID, "error_class", "ambiguous_recovery")
 	}
 }
 

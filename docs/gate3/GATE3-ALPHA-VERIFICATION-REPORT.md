@@ -139,3 +139,56 @@ DB internals, no upstream source is copied, and skip evidence stays UNKNOWN
 
 Real PostgreSQL 18.6 + real rclone v1.75.1 + real AList instance; `go vet` /
 `gofmt` clean; full Gate-2 regression green.
+---
+
+# Round 3 rework (PR #49 Round-2 review, G3-R2.1..G3-R2.8)
+
+| Item | Fix | Where |
+|------|-----|-------|
+| **G3-R2.1** | `CreateSubmittedSnapshotAndAdmit` performs `DRAFT -> SUBMITTED + allocate admission_seq + INSERT PENDING` in ONE short per-root transaction, so admission order is authoritative and no ambiguous unadmitted-SUBMITTED state is created. Recovery of legacy/fault-stranded Snapshots uses `ResolveUnadmittedSubmitted`: exactly one candidate → admit; multiple ambiguous candidates for a root → **fail closed** (never ordered by DB `created_at`). | `snapshot_create_admit.go`, `recovery.go`, `scan.go`, `worker.go` |
+| **G3-R2.2** | One-shot `scan --root` now resolves stranded SUBMITTED work for its root (and fails closed on ambiguity) and drains the existing PENDING head BEFORE collecting new work, so it recovers without a running daemon. | `scan.go` |
+| **G3-R2.3** | Collector source/process failure is persisted and Kernel-REJECTED, and `scan.Service.Scan` now returns `ErrSourceFailed` so the CLI exits non-zero. PARTIAL/SUSPICIOUS additive-safe successes are not treated as failures. | `scan.go` |
+| **G3-R2.4** | `serve` joins the worker goroutine (bounded by `shutdown-timeout`) BEFORE the writer lock is released; forced shutdown is logged clearly. | `app.go` |
+| **G3-R2.5** | Added the exact regressions: interruption **before SUBMITTED** (DRAFT never executable) and failure **after Snapshot creation** (REJECTED audit trail, no canonical). | `scan_failure_test.go` |
+| **G3-R2.6** | Clean-volume Compose smoke is automated and was actually run: `down -v -> up --build -> migrate exit 0 -> /readyz 200 -> restart -> ready again`. | `scripts/compose-smoke.sh`, `docker-compose.yml`, `make compose-smoke` |
+| **G3-R2.7** | AList adapter paginates explicitly (page/per_page) until all `total` entries are collected, and fails the scan if `total != collected` (truncation). Skip evidence remains UNKNOWN. | `internal/collector/alist`, `pagination_test.go` |
+| **G3-R2.8** | AList credentials are persisted only as environment-variable REFERENCES (`username_env` / `password_env` / `token_env`) and resolved at runtime; plaintext secrets are never written into `index_root_adapter_config`. | `scan.go`, `alist_http_test.go` |
+
+## Compose clean-volume evidence (G3-R2.6)
+
+`make compose-smoke` (`scripts/compose-smoke.sh`) output:
+
+```
+migrate exit code: 0
+== GET /readyz -> {"schema_applied":4,"status":"ready"} ==
+== GET /readyz after restart -> {"schema_applied":4,"status":"ready"} ==
+COMPOSE SMOKE OK
+```
+
+(Note: postgres:18 requires the data volume mounted at `/var/lib/postgresql`; the
+Compose file was corrected accordingly during this smoke run.)
+
+## Round 3 status template
+
+```
+STATUS: READY_FOR_ARCH_REVIEW — GATE 3 STANDALONE ALPHA (Round 3)
+
+RUNTIME: PASS
+CONFIG_STARTUP: PASS
+ROOT_ADMIN: PASS
+WORKER_RECOVERY: PASS
+RCLONE_SCAN_PATH: PASS
+ALIST_OPENLIST_REAL_SOURCE: PASS
+QUERY_HTTP_V1: PASS
+OBSERVABILITY: PASS
+SCALE_20K: PASS
+PACKAGING: PASS
+E2E_ALPHA: PASS
+GATE2_REGRESSION: PASS
+
+FROZEN_CONTRACT_CHANGES: NONE
+```
+
+Tests: real PostgreSQL 18.6 + real rclone v1.75.1 + real AList instance; clean-volume
+Compose smoke; `go vet` / `gofmt` clean; full Gate-2 regression green.
+

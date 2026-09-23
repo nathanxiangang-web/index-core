@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/nathanxiangang-web/index-core/internal/collector/adapter"
@@ -35,13 +36,16 @@ func New(store *postgres.Store, rclonePath, rcloneConfig string, timeout time.Du
 }
 
 // adapterConfig is the provider-specific adapter config (never Domain semantics).
+// AList/OpenList credentials are referenced by environment-variable NAME and
+// resolved at runtime; plaintext provider secrets are never persisted into
+// index_root_adapter_config (G3-R2.8).
 type adapterConfig struct {
-	Remote   string `json:"remote"` // rclone
-	Path     string `json:"path"`   // shared
-	BaseURL  string `json:"base_url"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Token    string `json:"token"`
+	Remote      string `json:"remote"` // rclone
+	Path        string `json:"path"`   // shared
+	BaseURL     string `json:"base_url"`
+	UsernameEnv string `json:"username_env"`
+	PasswordEnv string `json:"password_env"`
+	TokenEnv    string `json:"token_env"`
 }
 
 // collector builds the provider-neutral Collector for a root's adapter kind.
@@ -50,7 +54,13 @@ func (s *Service) collector(kind string, ac adapterConfig) (adapter.Collector, e
 	case "rclone":
 		return rclone.Adapter{Binary: s.rclonePath, Remote: ac.Remote, ConfigPath: s.rcloneConfig, Timeout: s.timeout}, nil
 	case "alist", "openlist":
-		return alist.Adapter{BaseURL: ac.BaseURL, Token: ac.Token, Username: ac.Username, Password: ac.Password, Timeout: s.timeout}, nil
+		return alist.Adapter{
+			BaseURL:  ac.BaseURL,
+			Token:    os.Getenv(ac.TokenEnv),
+			Username: os.Getenv(ac.UsernameEnv),
+			Password: os.Getenv(ac.PasswordEnv),
+			Timeout:  s.timeout,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported collector kind %q (supported: rclone, alist)", kind)
 	}
@@ -115,14 +125,30 @@ func (s *Service) Scan(ctx context.Context, rootID string) (Result, error) {
 	}
 	coord := postgres.NewCoordinator(s.store, cfg)
 
-	// One-shot CLI must not strand/leapfrog older durable work: drain any existing
-	// absolute PENDING head for this root before creating new work (G3-R3).
+	// One-shot CLI must also resolve legacy/fault-stranded SUBMITTED work for this
+	// root before collecting later work (G3-R2.2). Multiple ambiguous candidates
+	// fail closed; recovery never orders by DB timestamps (G3-R2.1).
+	resolved, ambiguous, rerr := s.store.ResolveUnadmittedSubmitted(ctx)
+	if rerr != nil {
+		return Result{}, fmt.Errorf("resolve stranded snapshots: %w", rerr)
+	}
+	for _, r := range ambiguous {
+		if r == rootID {
+			return Result{}, fmt.Errorf("ambiguous unadmitted SUBMITTED snapshots for root %s; refusing to guess order", rootID)
+		}
+	}
+	if resolved > 0 {
+		s.logger.Info("scan: recovered stranded submitted snapshots", "root_id", rootID, "resolved", resolved)
+	}
+	// Drain any existing absolute PENDING head before creating new work.
 	if err := drainHead(ctx, coord, rootID); err != nil {
 		return Result{}, fmt.Errorf("drain existing pending head: %w", err)
 	}
 
+	// Atomic DRAFT->SUBMITTED + admission_seq + PENDING (G3-R2.1): admission order
+	// is authoritative and no ambiguous unadmitted-SUBMITTED state is created.
 	entries := toEntries(raw)
-	if err := s.store.CreateSubmittedSnapshot(ctx, snap, entries); err != nil {
+	if _, err := s.store.CreateSubmittedSnapshotAndAdmit(ctx, snap, entries); err != nil {
 		return Result{}, fmt.Errorf("persist submitted snapshot: %w", err)
 	}
 
@@ -154,8 +180,24 @@ func (s *Service) Scan(ctx context.Context, rootID string) (Result, error) {
 	if err != nil {
 		return Result{SnapshotID: snapID, Outcome: out}, fmt.Errorf("reconcile: %w", err)
 	}
+	// The Collector contract represents source/process failure as
+	// TraversalStatus=FAILED with err=nil so the failed observation is durable and
+	// Kernel-evaluated. The FAILED Snapshot + REJECTED audit trail are preserved,
+	// but the CLI must still report operational failure (G3-R2.3). PARTIAL /
+	// SUSPICIOUS additive-safe successes are NOT source failures.
+	if raw.TraversalStatus != domain.TraversalSuccess {
+		return Result{SnapshotID: snapID, Outcome: out}, fmt.Errorf("%w: traversal_status=%s", ErrSourceFailed, raw.TraversalStatus)
+	}
+	if out.Status == domain.AdmissionRejected {
+		return Result{SnapshotID: snapID, Outcome: out}, fmt.Errorf("%w: reconcile rejected (%s)", ErrSourceFailed, string(out.SnapshotLifecycle))
+	}
 	return Result{SnapshotID: snapID, Outcome: out}, nil
 }
+
+// ErrSourceFailed reports that the Collector traversal itself failed (or the
+// Snapshot was rejected), so the runtime command exits non-zero while the FAILED
+// Snapshot and REJECTED audit trail remain durably recorded.
+var ErrSourceFailed = errors.New("collector source traversal failed")
 
 // drainHead processes the existing absolute PENDING head(s) for a root until none
 // remain, so a one-shot CLI does not strand or leapfrog older durable work.

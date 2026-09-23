@@ -14,6 +14,9 @@ import (
 	"os/signal"
 	"sync/atomic"
 	"syscall"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nathanxiangang-web/index-core/internal/runtime/config"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/scan"
@@ -69,6 +72,9 @@ func Doctor(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	return nil
 }
 
+// workerRunner runs the write-orchestration worker until ctx is cancelled.
+type workerRunner func(ctx context.Context) error
+
 // Serve starts the read-only HTTP transport and blocks until shutdown.
 func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	pool, err := postgres.Open(ctx, cfg.DatabaseURL)
@@ -94,13 +100,23 @@ func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		logger.Warn("HTTP is bound to a non-loopback address; Gate 3 has no auth layer", "addr", cfg.HTTPAddr)
 	}
 
+	st := postgres.New(pool)
+	return runServe(ctx, cfg, logger, pool, st, func(wctx context.Context) error {
+		return worker.New(st, cfg.MaxConcurrentRoots, logger).Run(wctx)
+	})
+}
+
+// runServe owns the single-writer lock, the worker, and the HTTP transport. On
+// shutdown it joins the worker goroutine BEFORE the writer lock is released, so
+// the lock is never released while worker orchestration is still running
+// (G3-R2.4).
+func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, st *postgres.Store, runWorker workerRunner) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	// Enforce the Architect-locked single active write daemon per database with a
 	// PostgreSQL advisory lock held for the process lifetime (G3-R5). A second
 	// daemon fails closed instead of silently starting another writer loop.
-	st := postgres.New(pool)
 	lock, err := st.AcquireWriterLock(ctx)
 	if err != nil {
 		return fmt.Errorf("single-writer ownership: %w", err)
@@ -112,15 +128,11 @@ func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}()
 	logger.Info("acquired single-writer ownership")
 
-	// Single write-orchestration daemon: bounded per-root concurrency, drains the
-	// durable PENDING heads, and resumes them across restart.
 	var ready atomic.Bool
-	wk := worker.New(st, cfg.MaxConcurrentRoots, logger)
+	workerDone := make(chan error, 1)
 	go func() {
 		ready.Store(true)
-		if err := wk.Run(ctx); err != nil {
-			logger.Warn("worker stopped", "error_class", "worker")
-		}
+		workerDone <- runWorker(ctx)
 	}()
 
 	srv := httpapi.New(httpapi.Deps{
@@ -143,6 +155,7 @@ func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 
 	select {
 	case err := <-errCh:
+		waitWorker(workerDone, cfg.ShutdownTimeout, logger)
 		if err != nil {
 			return fmt.Errorf("http server: %w", err)
 		}
@@ -151,7 +164,23 @@ func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		logger.Info("shutting down", "timeout", cfg.ShutdownTimeout.String())
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		herr := srv.Shutdown(shutdownCtx)
+		waitWorker(workerDone, cfg.ShutdownTimeout, logger)
+		return herr
+	}
+}
+
+// waitWorker joins the worker goroutine with a bounded wait, so the writer lock
+// (released by the caller's defer, i.e. after this returns) is held until worker
+// orchestration has stopped.
+func waitWorker(done <-chan error, timeout time.Duration, logger *slog.Logger) {
+	select {
+	case err := <-done:
+		if err != nil {
+			logger.Warn("worker exited with error", "error_class", "worker")
+		}
+	case <-time.After(timeout):
+		logger.Error("forced shutdown: worker did not stop within shutdown timeout", "shutdown_timeout", timeout.String())
 	}
 }
 

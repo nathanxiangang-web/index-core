@@ -59,7 +59,7 @@ func (a Adapter) Scan(ctx context.Context, subPath string) (adapter.RawScan, err
 		}
 		seen[dir] = true
 
-		items, err := a.list(ctx, token, dir)
+		items, err := a.listAll(ctx, token, dir)
 		if err != nil {
 			return failScan(err), nil // honest failure; no partial destructive authority
 		}
@@ -119,20 +119,49 @@ func (a Adapter) login(ctx context.Context) (string, error) {
 	return data.Token, nil
 }
 
-func (a Adapter) list(ctx context.Context, token, dir string) ([]item, error) {
-	body, _ := json.Marshal(map[string]any{"path": dir, "password": "", "page": 1, "per_page": 0, "refresh": false})
+// listAll enumerates a directory with explicit pagination and fails closed if the
+// server's declared total does not match what was collected (G3-R2.7). It never
+// silently treats a truncated page as a successful full listing.
+func (a Adapter) listAll(ctx context.Context, token, dir string) ([]item, error) {
+	const pageSize = 1000
+	var all []item
+	total := -1
+	for page := 1; ; page++ {
+		items, t, err := a.listPage(ctx, token, dir, page, pageSize)
+		if err != nil {
+			return nil, err
+		}
+		if total < 0 {
+			total = t
+		}
+		all = append(all, items...)
+		if len(items) == 0 {
+			break
+		}
+		if total >= 0 && len(all) >= total {
+			break
+		}
+	}
+	if total >= 0 && len(all) != total {
+		return nil, fmt.Errorf("alist list %q truncated: collected %d of %d entries", dir, len(all), total)
+	}
+	return all, nil
+}
+
+func (a Adapter) listPage(ctx context.Context, token, dir string, page, perPage int) ([]item, int, error) {
+	body, _ := json.Marshal(map[string]any{"path": dir, "password": "", "page": page, "per_page": perPage, "refresh": false})
 	var resp apiResp
 	if err := a.post(ctx, "/api/fs/list", token, body, &resp); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if resp.Code != http.StatusOK {
-		return nil, fmt.Errorf("alist list %q failed: code=%d message=%s", dir, resp.Code, resp.Message)
+		return nil, 0, fmt.Errorf("alist list %q failed: code=%d message=%s", dir, resp.Code, resp.Message)
 	}
 	var data listData
 	if err := json.Unmarshal(resp.Data, &data); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return data.Content, nil
+	return data.Content, data.Total, nil
 }
 
 func (a Adapter) post(ctx context.Context, path, token string, body []byte, out *apiResp) error {

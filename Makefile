@@ -8,7 +8,7 @@ DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 PKG ?= github.com/nathanxiangang-web/index-core/internal/runtime/version
 LDFLAGS ?= -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).Date=$(DATE)
 
-.PHONY: pg-up pg-down build bin fmt test scale docker-build compose-up compose-down
+.PHONY: pg-up pg-down build bin fmt test scale docker-build compose-up compose-down compose-smoke
 
 pg-up:
 	@docker rm -f $(PG_CONTAINER) >/dev/null 2>&1 || true
@@ -54,3 +54,6 @@ compose-up:
 
 compose-down:
 	docker compose down
+# Gate 3 G3-R2.6 clean-volume Compose smoke (down -v -> up --build -> ready -> restart).
+compose-smoke:
+	bash scripts/compose-smoke.sh

@@ -49,9 +49,11 @@ func TestAlphaRuntimeWithRealAListSource(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("policy: %v", err)
 	}
+	// Credentials are persisted only as environment-variable REFERENCES; the
+	// secret values are resolved at runtime and never stored (G3-R2.8).
 	acfg, _ := json.Marshal(map[string]string{
 		"base_url": base, "path": path,
-		"username": os.Getenv("INDEXCORE_ALIST_USER"), "password": os.Getenv("INDEXCORE_ALIST_PASS"),
+		"username_env": "INDEXCORE_ALIST_USER", "password_env": "INDEXCORE_ALIST_PASS",
 	})
 	if err := st.UpsertAdapterConfig(ctx, rootID, postgres.AdapterConfig{CollectorKind: "alist", Config: acfg}); err != nil {
 		t.Fatalf("adapter: %v", err)

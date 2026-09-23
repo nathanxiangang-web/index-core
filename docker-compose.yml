@@ -11,7 +11,7 @@ services:
       POSTGRES_PASSWORD: indexcore
       POSTGRES_DB: indexcore
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U indexcore"]
       interval: 5s
