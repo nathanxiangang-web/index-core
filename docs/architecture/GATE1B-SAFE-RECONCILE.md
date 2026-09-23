@@ -1,29 +1,8 @@
-# Gate 1B Worker C -- Safe Reconcile + Failure Model + Change Journal Semantics
+# Gate 1B — Safe Reconcile + Failure Model + Change Journal Semantics
 
-> Semantic definition, not implementation. No PostgreSQL table, no SQL,
-> no migration, no ORM model, no product code appears in this document.
-> Every load-bearing rule is tagged
-> `ACCEPTED_SEMANTIC` / `CANDIDATE` / `DEFERRED` / `REJECTED`
-> and cites evidence (accepted principle, invariant, D02/D03 finding,
-> or Gate 1A boundary). `DEFERRED` items are routed to
-> `DEFERRED_TO_GATE1C` at the end of the document.
->
-> This document depends on, and does not redefine, two sibling Gate 1B
-> contracts:
-> - **Worker A -- Identity Matching**: resolves a snapshot entry to a
->   stable identity (`RESOLVED` / `UNRESOLVED`) and defines rename/move
->   identity continuity. Referenced here, not designed here.
-> - **Worker B -- Completeness Acceptance**: classifies a snapshot as
->   `COMPLETE` / `PARTIAL` / `REJECTED` and defines the completeness
->   contract that gates destructive removal. Referenced here, not
->   designed here.
-
-> **Gate roadmap (no Gate 1D):** the formal route is
-> `Gate 1A -> Gate 1B -> Gate 1C -> Gate 2 PoC`. There is no Gate 1D.
-> Any capability not fixed in Gate 1A/1B/1C is `POST_MVP` or
-> `DEFERRED_UNSCHEDULED`, never "Gate 1D". `DEFERRED_TO_GATE1C` items
-> in this document are routed to Gate 1C; everything beyond Gate 1C is
-> `POST_MVP` / `DEFERRED_UNSCHEDULED`. `ACCEPTED_SEMANTIC`.
+> Normative Gate 1B architecture contract.
+> Finalized by ChatGPT Architect from the Gate 1B design/rework evidence.
+> Historical execution-role labels are non-normative.
 
 ## 0. Context and inputs
 
@@ -41,8 +20,8 @@ Reconcile is a **Kernel** operation. Its inputs and outputs:
 | Boundary | Artifact | Owner | This doc's use |
 | --- | --- | --- | --- |
 | Input | `Snapshot` (observed provider state, post-Collector) | Collector | Consumed by Kernel; never writes canonical directly |
-| Input | `IdentityResolution` per snapshot entry | Worker A | `RESOLVED` enables ADD/UPDATE/RENAME/MOVE; `UNRESOLVED` -> CONFLICT, no canonical mutation |
-| Input | `CompletenessClass` for the snapshot | Worker B | `COMPLETE` authorizes destructive removal; `PARTIAL` -> additive-only; `REJECTED` -> reconcile aborts/stays |
+| Input | `IdentityResolution` per snapshot entry | Identity contract | `RESOLVED` enables ADD/UPDATE/RENAME/MOVE; `UNRESOLVED` -> CONFLICT, no canonical mutation |
+| Input | `CompletenessClass` for the snapshot | Completeness contract | `COMPLETE` authorizes destructive removal; `PARTIAL` -> additive-only; `REJECTED` -> reconcile aborts/stays |
 | Input | `CanonicalInventory` at generation G | Store (load) | The current truth the reconcile transitions *from* |
 | Output | `ReconcileTransition[]` | Kernel (this doc) | Classified state transitions |
 | Output | `JournalEvent[]` (subset of transitions) | Kernel (this doc) | Only committed canonical state transitions |
@@ -96,14 +75,14 @@ the contract between Kernel and Store for one reconcile unit.
 | --- | --- | --- | --- | --- | --- |
 | 1 | `ADD` | Snapshot entry `RESOLVED` to an identity NOT present in CanonicalInventory@G. Identity = NEW_RESOURCE. | Insert `ResourceEntry` | `resource-added` | `ACCEPTED_SEMANTIC` |
 | 2 | `UPDATE` | Snapshot entry `RESOLVED` to an identity present in canonical; identity unchanged; comparable attributes changed (size, modtime, hash, metadata). | Update `ResourceEntry` | `resource-updated` | `ACCEPTED_SEMANTIC` |
-| 3 | `RENAME` | Identity preserved (Worker A continuity); path component (name) changed; parent unchanged; within same root. | Update path on `ResourceEntry` | `resource-renamed` | `ACCEPTED_SEMANTIC` |
+| 3 | `RENAME` | Identity preserved (Identity contract continuity); path component (name) changed; parent unchanged; within same root. | Update path on `ResourceEntry` | `resource-renamed` | `ACCEPTED_SEMANTIC` |
 | 4 | `MOVE` | Identity preserved; parent changed; within same root. | Update parent + path on `ResourceEntry` | `resource-moved` | `ACCEPTED_SEMANTIC` |
 | 5 | `MISSING` | Canonical resource not observed in the accepted snapshot. | None (`RemovalEvidenceState` only; `ResourcePresence` unchanged) | None | `ACCEPTED_SEMANTIC` |
 | 6 | `REMOVAL_CANDIDATE` | A `MISSING` resource meets promotion criteria (Sec 1.3). | None (`RemovalEvidenceState` only; `ResourcePresence` unchanged) | None | `ACCEPTED_SEMANTIC` |
-| 7 | `CONFIRMED_REMOVED` | A `REMOVAL_CANDIDATE` passes removal validation AND the governing snapshot is `COMPLETE` (Worker B). | Delete `ResourceEntry` | `resource-removed` | `ACCEPTED_SEMANTIC` |
-| 8 | `CONFLICT` | Identity `UNRESOLVED` (Worker A), or contradictory evidence (duplicate identity, ambiguous rename/move). | None | None (conflict recorded in reconcile result, not journal) | `ACCEPTED_SEMANTIC` |
+| 7 | `CONFIRMED_REMOVED` | A `REMOVAL_CANDIDATE` passes removal validation AND the governing snapshot is `COMPLETE` (Completeness contract). | Transition the canonical resource to logical `ResourcePresence = REMOVED` tombstone; it is excluded from the active inventory but retained for identity/audit history. Physical retention is Gate 1C. | `resource-removed` | `ACCEPTED_SEMANTIC` |
+| 8 | `CONFLICT` | Identity `UNRESOLVED` (Identity contract), or contradictory evidence (duplicate identity, ambiguous rename/move). | None | None (conflict recorded in reconcile result, not journal) | `ACCEPTED_SEMANTIC` |
 | 9 | `UNCHANGED` | Snapshot entry `RESOLVED` to an identity present in canonical; no comparable attribute change. | None | None | `ACCEPTED_SEMANTIC` |
-| 10 | `REJECTED` | Snapshot or entry rejected: `CompletenessClass = REJECTED` (Worker B), or entry fails a hard acceptance rule. | None | None (reason recorded in reconcile result) | `ACCEPTED_SEMANTIC` |
+| 10 | `REJECTED` | Snapshot or entry rejected: `CompletenessClass = REJECTED` (Completeness contract), or entry fails a hard acceptance rule. | None | None (reason recorded in reconcile result) | `ACCEPTED_SEMANTIC` |
 
 > `ACCEPTED_SEMANTIC` The 10 transition types form a partition of the
 > reconcile outcome space for a single (canonical resource, snapshot
@@ -118,12 +97,12 @@ Classification is applied in the following precedence order so each
 candidate pair resolves to exactly one transition:
 
 1. If `CompletenessClass = REJECTED` -> `REJECTED` for the whole
-   reconcile unit. `ACCEPTED_SEMANTIC`. Evidence: principle 4, Worker B
+   reconcile unit. `ACCEPTED_SEMANTIC`. Evidence: principle 4, Completeness contract
    contract.
 2. For a snapshot entry with `IdentityResolution = UNRESOLVED` ->
    `CONFLICT`. No canonical mutation. `ACCEPTED_SEMANTIC`. Evidence:
    principle 5 (path != identity; unresolved identity cannot be
-   matched), Worker A contract.
+   matched), Identity contract contract.
 3. For a `RESOLVED` entry whose identity is NOT in canonical ->
    `ADD`. `ACCEPTED_SEMANTIC`. Evidence: principle 1.
 4. For a `RESOLVED` entry whose identity IS in canonical:
@@ -151,17 +130,15 @@ candidate pair resolves to exactly one transition:
      and fixed here.) `ACCEPTED_SEMANTIC`. Evidence: principle 5
      (path != identity; path change is identity-preserving), principle
      1 (canonical truth; both changes are committed atomically), Gate
-     1A C2.2 (atomic commit), Worker A (identity continuity).
+     1A C2.2 (atomic commit), Identity contract (identity continuity).
 5. For a canonical resource with no `RESOLVED` snapshot entry observed:
-   - if `CompletenessClass = PARTIAL` -> `MISSING` (recorded only; NOT
-     promoted). `ACCEPTED_SEMANTIC`. Evidence: principle 4, INV-004.
-   - if `CompletenessClass = COMPLETE` -> `MISSING`, then apply the
-     Missing -> Removal lifecycle (Sec 1.3). `ACCEPTED_SEMANTIC`.
+   - if `CompletenessClass = PARTIAL` -> record only `UNOBSERVED / UNKNOWN_COVERAGE` in the reconcile/observation result. `ResourcePresence`, `RemovalEvidenceState`, `missing_since`, and consecutive-missing counters remain unchanged. No canonical absence evidence is created. `ACCEPTED_SEMANTIC` (INV-022).
+   - if `CompletenessClass = COMPLETE` -> set `RemovalEvidenceState = MISSING_CONFIRMED_BY_COMPLETE_SNAPSHOT`, then apply the Missing -> Removal lifecycle (Sec 1.3). `ACCEPTED_SEMANTIC`.
 6. Contradictory evidence (two snapshot entries `RESOLVED` to the same
    canonical identity, or rename/move continuity contradicts an
    observed add) -> `CONFLICT` for all involved entries. No canonical
    mutation. `ACCEPTED_SEMANTIC`. Evidence: principle 1 (canonical
-   truth cannot be made inconsistent), Worker A.
+   truth cannot be made inconsistent), Identity contract.
 
 > `ACCEPTED_SEMANTIC` Precedence is total: rules 1-6 cover every input
 > shape and are pairwise exclusive at the pair level. A pair never
@@ -241,8 +218,7 @@ fields, not provider state, and their mutation is not a journal event.
 > `ACCEPTED_SEMANTIC` A `MISSING` resource becomes `REMOVAL_CANDIDATE`
 > when ALL of the following hold:
 > - **C1 (completeness):** at least one governing snapshot since the
->   resource became MISSING was classified `COMPLETE` (Worker B). A
->   `PARTIAL` snapshot extends `missing_since` but does NOT promote.
+>   resource first gained `MISSING_CONFIRMED_BY_COMPLETE_SNAPSHOT` evidence from a `COMPLETE` Snapshot. A `PARTIAL`/STALE/SUSPICIOUS input does not create or extend `missing_since`, does not increment the consecutive-complete-missing counter, and does not promote removal evidence.
 >   Evidence: principle 4, INV-004.
 > - **C2 (time):** `now - missing_since >= removal_grace_period`. The
 >   exact `removal_grace_period` is `CANDIDATE` (configuration, per-root
@@ -264,7 +240,7 @@ journal event.
 > `ACCEPTED_SEMANTIC` A `REMOVAL_CANDIDATE` becomes `CONFIRMED_REMOVED`
 > when ALL of the following hold:
 > - **V1 (completeness gate):** the governing snapshot is `COMPLETE`
->   (Worker B). A `PARTIAL` snapshot CANNOT confirm removal.
+>   (Completeness contract). A `PARTIAL` snapshot CANNOT confirm removal.
 >   `ACCEPTED_SEMANTIC`, hard rule (INV-004). Evidence: principle 4.
 > - **V2 (validation):** removal validation passes. Validation evidence
 >   is `ACCEPTED_SEMANTIC` in boundary and `CANDIDATE` in concrete
@@ -317,13 +293,13 @@ commit).
 > promoted to `REMOVAL_CANDIDATE`) when evidence is ambiguous:
 > - the same stable identity is simultaneously reported by another
 >   snapshot entry (duplicate identity), or
-> - Worker A's identity continuity cannot distinguish rename/move from
+> - Identity contract's identity continuity cannot distinguish rename/move from
 >   delete+add (the entry is `UNRESOLVED`), or
 > - two different identities claim the canonical resource's prior path.
 >
 > No canonical mutation. The conflict is recorded in the reconcile
-> result for operator/Worker A review. Evidence: principle 1, principle
-> 5, Worker A contract.
+> result for operator/Identity contract review. Evidence: principle 1, principle
+> 5, Identity contract contract.
 
 #### 1.3.4 Can CONFIRMED_REMOVED be reversed? (resource reappears)
 
@@ -343,7 +319,7 @@ commit).
 | Rule | Statement | Tag | Evidence |
 | --- | --- | --- | --- |
 | INV-003 | `missing != deleted`: `MISSING` is NOT `CONFIRMED_REMOVED`. A missing observation is a state, not a deletion. | `ACCEPTED_SEMANTIC` | Principle 3, Sec 1.3.1 (promotion requires criteria), Sec 1.3.2 (confirmation requires validation) |
-| INV-004 | Incomplete snapshot CANNOT authorize `CONFIRMED_REMOVED`. Only `COMPLETE` snapshots (Worker B) can authorize destructive removal. | `ACCEPTED_SEMANTIC` | Principle 4, Sec 1.3.1 C1, Sec 1.3.2 V1, Worker B contract |
+| INV-004 | Incomplete snapshot CANNOT authorize `CONFIRMED_REMOVED`. Only `COMPLETE` snapshots (Completeness contract) can authorize destructive removal. | `ACCEPTED_SEMANTIC` | Principle 4, Sec 1.3.1 C1, Sec 1.3.2 V1, Completeness contract contract |
 | INV-013 | Any uncommitted reconcile MUST NOT destroy previous canonical truth. | `ACCEPTED_SEMANTIC` | Gate 1A C2.2 (atomic commit + rollback + zero durable mutation), Sec 2.3, Sec 2.7 |
 
 > `ACCEPTED_SEMANTIC` Destructive removal (`CONFIRMED_REMOVED` ->
@@ -360,7 +336,7 @@ The failure model defines Kernel behavior for seven scenarios. In every
 scenario, the hard guarantee is INV-013: an uncommitted reconcile does
 not destroy previous canonical truth.
 
-### 2.1 Scenario 1 -- Identity unresolved (UNRESOLVED from Worker A)
+### 2.1 Scenario 1 -- Identity unresolved (UNRESOLVED from Identity contract)
 
 > `ACCEPTED_SEMANTIC` For any snapshot entry with
 > `IdentityResolution = UNRESOLVED`: no canonical mutation is performed
@@ -369,20 +345,16 @@ not destroy previous canonical truth.
 > The reconcile continues for other, `RESOLVED` entries. If the entry's
 > ambiguity blocks classification of another pair, that pair is also
 > `CONFLICT`. Evidence: principle 5 (path != identity; unresolved
-> identity cannot be safely matched), Sec 1.2 rule 2/6, Worker A
+> identity cannot be safely matched), Sec 1.2 rule 2/6, Identity contract
 > contract.
 
-### 2.2 Scenario 2 -- Snapshot incomplete (PARTIAL from Worker B)
+### 2.2 Scenario 2 -- Snapshot incomplete (PARTIAL from Completeness contract)
 
 > `ACCEPTED_SEMANTIC` When `CompletenessClass = PARTIAL`: the reconcile
 > is **additive-only**.
-> - `ADD`, `UPDATE`, `RENAME`, `MOVE`, `UNCHANGED` are permitted for
->   `RESOLVED` entries.
-> - Canonical resources not observed are recorded as `MISSING` (state
->   retained, `missing_since` updated) but are NOT promoted to
->   `REMOVAL_CANDIDATE` and NEVER to `CONFIRMED_REMOVED`.
-> - No `resource-removed` journal event is produced in a `PARTIAL`
->   reconcile.
+> - `ADD`, `UPDATE`, `RENAME`, `MOVE`, `UNCHANGED` are permitted for `RESOLVED` entries.
+> - Prior canonical resources not observed remain exactly as they were in the previous committed canonical state. The reconcile may record `UNOBSERVED / UNKNOWN_COVERAGE` as observation metadata only; it MUST NOT create/extend MISSING evidence, timers, counters, or removal candidates.
+> - No `resource-removed` journal event is produced in a `PARTIAL` reconcile.
 > Evidence: principle 4, INV-004, Sec 1.2 rule 5, Sec 1.3.1 C1, Worker
 > B contract.
 
@@ -438,11 +410,7 @@ not destroy previous canonical truth.
 > different snapshots, are ordered by a **per-root Input Ordering**
 > (Blocker I resolution: serializable-only is insufficient; the
 > ordering semantic is fixed here). The ordering is defined as follows:
-> - **IO1 (admission sequence):** every accepted input (`Snapshot` +
->   `IdentityResolution` + `CompletenessClass`) is assigned a
->   Kernel-owned, per-root monotonically increasing admission
->   sequence token at admission time. The token is Kernel-owned, NOT
->   derived from provider wall-clock. `ACCEPTED_SEMANTIC`. Evidence:
+> - **IO1 (serialized admission sequence):** every accepted input (`Snapshot` + `IdentityResolution` + `CompletenessClass`) enters a single serialized per-root admission point *before* reconcile work can run. That ingress assigns a Kernel-owned monotonically increasing admission sequence. Worker/thread scheduling and commit timing cannot change an already assigned order. The token is NOT derived from provider wall-clock. If two submissions arrive with no intrinsic provider order, their serialized ingress order becomes the authoritative system order; Gate 1B does not claim to reconstruct unknowable provider chronology. `ACCEPTED_SEMANTIC`. Evidence:
 >   principle 1 (Kernel decides ordering), Gate 1A C1.1 (Kernel
 >   decides).
 > - **IO2 (no out-of-order overwrite):** an older input (lower
@@ -516,15 +484,12 @@ not destroy previous canonical truth.
 
 ## 3. Canonical Change Journal semantics  [ACCEPTED_SEMANTIC]
 
-### 3.1 Semantic event types (5 defined)
+### 3.1 Semantic event types (7 defined)
 
 The Change Journal records committed, **externally visible** canonical
 state transitions (Blocker F resolution: only transitions that change
 `ResourcePresence` or the externally visible content of a `PRESENT`
-`ResourceEntry` -- path, attributes, identity). `RemovalEvidenceState`
-transitions are NOT journal events. Only five event types exist, mapped
-from the transition types that mutate externally visible canonical
-content:
+`ResourceEntry` -- path, attributes, identity). `RemovalEvidenceState` transitions are NOT journal events. Seven canonical event types are defined: five resource events plus two root-lifecycle events:
 
 | Event | Produced by transition | Payload (semantic, not schema) | Tag |
 | --- | --- | --- | --- |
@@ -532,7 +497,7 @@ content:
 | `resource-updated` | `UPDATE` | stable identity, changed attributes, new generation | `ACCEPTED_SEMANTIC` |
 | `resource-renamed` | `RENAME` | stable identity, old path, new path (same parent), new generation | `ACCEPTED_SEMANTIC` |
 | `resource-moved` | `MOVE` | stable identity, old parent/path, new parent/path, new generation | `ACCEPTED_SEMANTIC` |
-| `resource-removed` | `CONFIRMED_REMOVED` | stable identity, last known path, new generation | `ACCEPTED_SEMANTIC` |
+| `resource-removed` | `CONFIRMED_REMOVED` | stable identity, last known path, new generation | `ACCEPTED_SEMANTIC` |\n| `root-deprecated` | Root `ACTIVE -> DEPRECATED` | root identity and new lifecycle state | `ACCEPTED_SEMANTIC` |\n| `root-deleted` | Root `ACTIVE/DEPRECATED -> DELETED` | root identity and tombstoned lifecycle state | `ACCEPTED_SEMANTIC` |
 
 > `ACCEPTED_SEMANTIC` The transitions `MISSING`, `REMOVAL_CANDIDATE`,
 > `UNCHANGED`, `CONFLICT`, and `REJECTED` produce NO journal event.
@@ -620,7 +585,7 @@ content:
 
 This section is the Worker's own design-level verification matrix --
 scenarios checked, counterexamples considered, and contract-consistency
-closed loop. No subagent is invoked; the Worker performs this analysis
+closed loop. No temporary helper agent is invoked; the Worker performs this analysis
 inline. Runtime test execution against product code is
 `DEFERRED_TO_GATE1C` (no product code exists at this gate per DO NOT).
 
@@ -681,11 +646,11 @@ inline. Runtime test execution against product code is
 | h | RENAME/MOVE + UPDATE composite has frozen semantic (ordered pair) | covered | Sec 1.2 rule 4 (Blocker H) |
 | i | Per-root Input Ordering defined (IO1-IO7) | covered | Sec 2.6 (Blocker I) |
 | j | Removal validation boundary defined (V2a-V2d); Kernel does not touch Provider | covered | Sec 1.3.2 (Blocker E) |
-| k | No DO NOT scope crossed (identity -> Worker A; completeness -> Worker B; schema/SQL/Query API/journal persistence -> Gate 1C; product code/collector/scanner -> out of scope) | covered | Self-check against DO NOT |
+| k | No DO NOT scope crossed (identity -> Identity contract; completeness -> Completeness contract; schema/SQL/Query API/journal persistence -> Gate 1C; product code/collector/scanner -> out of scope) | covered | Self-check against DO NOT |
 
 > `ACCEPTED_SEMANTIC` Closed loop verified: the four contracts
 > (Identity, Completeness, Reconcile, Journal) compose with no gap and
-> no overlap. The Worker performs this analysis inline; no subagent is
+> no overlap. The Worker performs this analysis inline; no temporary helper agent is
 > invoked.
 
 ---
@@ -702,10 +667,10 @@ inline. Runtime test execution against product code is
 | Hard rules INV-003 (missing != deleted), INV-004 (incomplete blocks destructive), INV-013 (uncommitted reconcile preserves truth) | `ACCEPTED_SEMANTIC` |
 | Failure Model covers all 7 scenarios; every path preserves previous canonical truth | `ACCEPTED_SEMANTIC` |
 | Idempotency: same snapshot replay against same generation = NO CHANGE, no event, no generation bump | `ACCEPTED_SEMANTIC` |
-| Change Journal: 5 event types, only committed canonical transitions, append-only, canonical-wins on repair | `ACCEPTED_SEMANTIC` |
+| Change Journal: 7 event types, only committed canonical transitions, append-only, canonical-wins on repair | `ACCEPTED_SEMANTIC` |
 | Journal != provider native delta != snapshot diff (three distinct concepts, principle 8) | `ACCEPTED_SEMANTIC` |
 | Provider delta must not directly write the Journal (J7) | `ACCEPTED_SEMANTIC` |
-| Worker Scenario Matrix present (scenarios, counterexamples, contract-consistency closed loop); no subagent invoked | `ACCEPTED_SEMANTIC` |
+| Worker Scenario Matrix present (scenarios, counterexamples, contract-consistency closed loop); no temporary helper agent invoked | `ACCEPTED_SEMANTIC` |
 | Composite RENAME/MOVE + UPDATE split when both path and attributes change | `ACCEPTED_SEMANTIC` (ordered pair: path-change then UPDATE, same generation; Blocker H) |
 | Exact `removal_grace_period`, `min_consecutive_complete_missing` thresholds | `CANDIDATE` (configuration / per-root policy) |
 | Stale-generation retry vs abort policy | `CANDIDATE` (configuration) |
@@ -749,7 +714,7 @@ No conclusion is tagged `REJECTED`. No `REJECTED` line is needed.
 
 ## POST_MVP / DEFERRED_UNSCHEDULED
 
-There is no Gate 1D. Anything not fixed in Gate 1A/1B/1C is routed
+There is no an extra gate. Anything not fixed in Gate 1A/1B/1C is routed
 here. Examples (non-exhaustive): cross-root global ordering,
 multi-cluster replication semantics, online schema evolution, and
 other production-scale concerns are `POST_MVP` / `DEFERRED_UNSCHEDULED`
@@ -761,8 +726,8 @@ and out of scope for this document.
 
 | Constraint | Status |
 | --- | --- |
-| Do NOT design identity matching (Worker A) | Met -- identity resolution is consumed as an input; only `RESOLVED`/`UNRESOLVED` branching is defined. |
-| Do NOT design completeness acceptance (Worker B) | Met -- completeness is consumed as an input; only `COMPLETE`/`PARTIAL`/`REJECTED` gating is defined. |
+| Do NOT design identity matching (Identity contract) | Met -- identity resolution is consumed as an input; only `RESOLVED`/`UNRESOLVED` branching is defined. |
+| Do NOT design completeness acceptance (Completeness contract) | Met -- completeness is consumed as an input; only `COMPLETE`/`PARTIAL`/`REJECTED` gating is defined. |
 | Do NOT design PostgreSQL schema/SQL/migration/transaction implementation | Met -- no schema, SQL, migration, or ORM appears; Store atomicity is cited as a Gate 1A boundary. |
 | Do NOT design exact Query API | Met -- Query Contract is not designed here (Gate 1A C3 deferred it to Gate 1B read API; this doc is reconcile/journal semantics only). |
 | Do NOT design journal persistence/event schema (Gate 1C) | Met -- journal *semantics* (5 events, rules) are defined; payload schema and persistence are deferred to Gate 1C. |
@@ -778,9 +743,9 @@ and out of scope for this document.
 | All 10 transition types defined | Sec 1.1 |
 | Missing -> Removal lifecycle with criteria | Sec 1.3 (1.3.1, 1.3.2, 1.3.3, 1.3.4) |
 | Failure Model covers all 7 scenarios | Sec 2.1-2.7 (consolidated 2.8) |
-| Change Journal semantics (5 event types) | Sec 3.1 |
+| Change Journal semantics (7 event types) | Sec 3.1 |
 | Hard rules enforced (missing != deleted, incomplete blocks destructive) | Sec 1.4 (INV-003, INV-004, INV-013) |
-| Worker Scenario Matrix present (no subagent) | Sec 4 |
+| Worker Scenario Matrix present (no temporary helper agent) | Sec 4 |
 | Every rule tagged and evidence-cited | Sec 5 + inline tags throughout |
 | Idempotency | Sec 2.4 |
 | All failure paths preserve previous canonical truth | Sec 2.8 |
@@ -792,27 +757,27 @@ and out of scope for this document.
 | All 10 transition types defined | Done (Sec 1.1) |
 | Missing -> Removal lifecycle defined with criteria | Done (Sec 1.3) |
 | Failure Model covers all 7 failure scenarios | Done (Sec 2.1-2.7) |
-| Change Journal semantics defined (5 event types) | Done (Sec 3.1) |
+| Change Journal semantics defined (7 event types) | Done (Sec 3.1) |
 | Hard rules enforced (missing != deleted, incomplete blocks destructive) | Done (Sec 1.4) |
-| Worker Scenario Matrix present (no subagent) | Done (Sec 4) |
+| Worker Scenario Matrix present (no temporary helper agent) | Done (Sec 4) |
 | No DO NOT violations | Done (Self-check against DO NOT) |
 ---
 
-## 6. Cross-Worker Contract Mapping (Foreman consolidation — resolves CWA-5, CWA-6)
+## 6. Cross-Safe Reconcile contractontract Mapping (Architect consolidation — resolves CWA-5, CWA-6)
 
-> This section is added by the Foreman to resolve cross-worker consistency
-> issues: CWA-5 (STALE/SUSPICIOUS not in Worker C input contract) and
-> CWA-6 (FAILED vs REJECTED naming mismatch). Updated for rework: Worker B
-> added freshness and assurance dimensions; Worker C added STALE_INPUT and
+> This section is added by the Architect to resolve cross-worker consistency
+> issues: CWA-5 (STALE/SUSPICIOUS not in Safe Reconcile contract input contract) and
+> CWA-6 (FAILED vs REJECTED naming mismatch). Updated for rework: Completeness contract
+> added freshness and assurance dimensions; Safe Reconcile contract added STALE_INPUT and
 > split canonical state into ResourcePresence + RemovalEvidenceState.
 
 ### 6.1 Completeness acceptance state mapping — ACCEPTED_SEMANTIC
 
-Worker B defines 5 acceptance states: COMPLETE, PARTIAL, FAILED, STALE,
-SUSPICIOUS. Worker C's reconcile state machine branches on 3 input values:
+Completeness contract defines 5 acceptance states: COMPLETE, PARTIAL, FAILED, STALE,
+SUSPICIOUS. Safe Reconcile contract's reconcile state machine branches on 3 input values:
 COMPLETE, PARTIAL, REJECTED. The canonical mapping is:
 
-| Worker B acceptance state | Worker C input (CompletenessClass) | Reconcile mode |
+| Completeness contract acceptance state | Safe Reconcile contract input (CompletenessClass) | Reconcile mode |
 |---|---|---|
 | COMPLETE | COMPLETE | destructive (add + update + remove) |
 | PARTIAL | PARTIAL | additive-only (add + update, NO remove) |
@@ -822,11 +787,11 @@ COMPLETE, PARTIAL, REJECTED. The canonical mapping is:
 
 ### 6.2 Identity result mapping — ACCEPTED_SEMANTIC
 
-Worker A defines 4 identity result states: MATCHED, NEW_RESOURCE,
-UNRESOLVED, CONFLICT. Worker C's reconcile state machine consumes these
+Identity contract defines 4 identity result states: MATCHED, NEW_RESOURCE,
+UNRESOLVED, CONFLICT. Safe Reconcile contract's reconcile state machine consumes these
 directly:
 
-| Worker A identity result | Worker C transition |
+| Identity contract identity result | Safe Reconcile contract transition |
 |---|---|
 | MATCHED | UPDATE / RENAME / MOVE / UNCHANGED (Sec 1.2 rule 4) |
 | NEW_RESOURCE | ADD (Sec 1.2 rule 3) |
@@ -835,11 +800,11 @@ directly:
 
 ### 6.3 Canonical state model alignment — ACCEPTED_SEMANTIC
 
-Worker C rework (Blocker F) split the canonical record into:
+Safe Reconcile contract rework (Blocker F) split the canonical record into:
 - ResourcePresence (PRESENT / REMOVED) — Consumer-visible canonical state
 - RemovalEvidenceState (NONE / MISSING_CONFIRMED_BY_COMPLETE_SNAPSHOT / REMOVAL_CANDIDATE) — Kernel-internal lifecycle evidence
 
-Worker A's CanonicalResource.status (Sec 1.4) aligns: PRESENT maps to
+Identity contract's CanonicalResource.status (Sec 1.4) aligns: PRESENT maps to
 ResourcePresence=PRESENT; MISSING/REMOVAL_CANDIDATE are
 RemovalEvidenceState, not ResourcePresence. The Journal records only
 ResourcePresence transitions and content mutations, not
@@ -847,11 +812,11 @@ RemovalEvidenceState changes.
 
 ### 6.4 Move/Removal horizon alignment — ACCEPTED_SEMANTIC
 
-Worker A rework (Blocker A4, Sec 2.4) defines:
+Identity contract rework (Blocker A4, Sec 2.4) defines:
 removal_grace_period >= move_recognition_horizon.
 
-Worker C's Missing→Removal lifecycle (Sec 1.3) must respect this: a
+Safe Reconcile contract's Missing→Removal lifecycle (Sec 1.3) must respect this: a
 resource within the move_recognition_horizon MUST NOT reach
-CONFIRMED_REMOVED. Worker C's V1 (completeness gate) and C2 (time:
+CONFIRMED_REMOVED. Safe Reconcile contract's V1 (completeness gate) and C2 (time:
 now - missing_since >= removal_grace_period) together enforce this when
 the horizon relationship holds.
