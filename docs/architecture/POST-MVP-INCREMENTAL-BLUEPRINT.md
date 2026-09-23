@@ -1,8 +1,10 @@
 # Post-MVP Incremental Ingestion Blueprint
 
-> Status: **ARCHITECTURE PLANNING / IMPLEMENTATION NOT AUTHORIZED**
+> Status: **DISCOVERY ACTIVE / IMPLEMENTATION NOT AUTHORIZED**
 >
-> Tracking issue: #57
+> Architecture tracking: #57
+>
+> Active research: #59
 >
 > Scope: IndexCore infrastructure only. This is **not Gate 5 product architecture**.
 
@@ -50,7 +52,34 @@ The original blueprint intentionally deferred true incremental work until:
 
 Gate 1–4 are now closed, so this is the correct time to design the deferred capability.
 
-## 2. Target outcome
+## 2. Discovery-first decision rule
+
+No incremental implementation shape is selected yet.
+
+The current task is to determine, with evidence:
+
+```text
+Can we discover real provider changes materially faster
+than ordinary AList/OpenList cache visibility,
+without repeating full traversal
+and without rewriting mature provider drivers?
+```
+
+Candidate outcomes include:
+
+```text
+Mutation Hint
+Native Delta / provider cursor
+Scoped Refresh through OpenList/AList
+Adaptive Polling
+Hybrid strategy
+Full-scan only
+Stop / do not implement
+```
+
+The architecture must not select one of these until Issue #59 produces the capability report.
+
+### Candidate future outcome — only if evidence supports native delta
 
 For a provider that exposes a trustworthy native cursor or change feed:
 
@@ -131,9 +160,13 @@ state cannot safely be inferred from the raw change event alone.
 A state indicating provider-cursor continuity can no longer be trusted and the root must re-establish
 a baseline through the full-scan path.
 
-## 5. Capability model
+## 5. Capability model — research hypothesis, not accepted contract
 
-Incremental behavior must be optional per Collector.
+The fields and interfaces in this section are **candidate design vocabulary only**.
+
+Issue #59 must first establish what real providers/drivers actually expose. Do not implement this interface merely because it appears in the blueprint.
+
+Incremental behavior, if later approved, must remain optional per Collector.
 
 The existing Collector contract stays valid. Incremental support should be an optional extension,
 conceptually:
@@ -432,7 +465,62 @@ Meaning:
 
 Immediately transition the root to `FULL_RESYNC_REQUIRED`.
 
-## 12. Phase I1 — additive incremental MVP
+## 12. Discovery Gate D0 — Change Discovery Capability Research
+
+Before I0/I1 implementation planning, complete Issue #59 and publish:
+
+`docs/research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md`
+
+Research must compare at least:
+
+```text
+A. Mutation Hint
+B. Native Delta / provider cursor
+C. Scoped Refresh via OpenList/AList
+D. Adaptive Polling
+E. Full Scan fallback
+```
+
+Primary scenario:
+
+```text
+real cloud drive already has a new object
+AList/OpenList cache has not refreshed
+goal: surface the object to IndexCore/Web earlier
+without scanning the whole provider tree
+```
+
+The report must determine:
+
+- whether 115 has an official/reliable native change mechanism;
+- whether OpenList/AList can force-refresh one directory independently;
+- whether that refresh actually reaches the real provider;
+- request amplification and rate-limit/account risks;
+- large-directory behavior;
+- token/provider failure behavior;
+- what mature tools already solve;
+- what IndexCore would still need to own;
+- realistic latency targets;
+- UNKNOWNs requiring live tests.
+
+No production code, Store schema, IncrementalCollector interface, `sync` command, or provider cursor persistence may be implemented during D0.
+
+### D0 exit decision
+
+After the report, Architect chooses exactly one of:
+
+```text
+STOP
+PROTOTYPE_MUTATION_HINT
+PROTOTYPE_NATIVE_DELTA
+PROTOTYPE_SCOPED_REFRESH
+PROTOTYPE_HYBRID
+KEEP_FULL_SCAN_ONLY
+```
+
+Only then may the later implementation sections become actionable.
+
+## 13. Candidate Phase I1 — additive incremental MVP (not authorized)
 
 The first implementation should optimize the common safe case:
 
@@ -467,7 +555,7 @@ Important property:
 
 The ideal first version changes Collector/runtime/Store plumbing while reusing the accepted Kernel.
 
-## 13. Deletion policy
+## 14. Deletion policy
 
 Deletion is where incremental systems most often become unsafe.
 
@@ -508,7 +596,7 @@ That would be a **separate architecture review** because it changes removal-evid
 
 It is not part of I1.
 
-## 14. Dirty-scope verification
+## 15. Dirty-scope verification
 
 Dirty scopes exist to avoid full-root rescans when a feed gives incomplete change detail.
 
@@ -538,7 +626,7 @@ FULL_RESYNC_REQUIRED
 
 This prevents "incremental" from degenerating into thousands of unsafe micro-scans.
 
-## 15. Bootstrap: starting incremental mode safely
+## 16. Bootstrap: starting incremental mode safely
 
 The dangerous race is:
 
@@ -567,7 +655,7 @@ If a provider supports snapshot-at-cursor semantics, the adapter may use that st
 If the provider cannot establish a safe bootstrap point, native incremental mode remains disabled for
 that adapter and IndexCore falls back to full scanning.
 
-## 16. Cursor expiry, reset, gap, truncation
+## 17. Cursor expiry, reset, gap, truncation
 
 These cases must never look like "zero changes".
 
@@ -596,7 +684,7 @@ resume incremental mode
 
 Fail closed.
 
-## 17. No-change semantics
+## 18. No-change semantics
 
 An empty change page only means "nothing to apply" when the adapter can prove cursor continuity.
 
@@ -610,7 +698,7 @@ missing canonical rows should be removed
 
 Incremental feed continuity and Snapshot completeness are related but distinct concepts.
 
-## 18. Incremental window / generation control
+## 19. Incremental window / generation control
 
 Provider feeds may paginate heavily.
 
@@ -636,7 +724,7 @@ Rules:
 - canonical Journal records canonical results, not every raw provider event;
 - raw provider ordering does not become canonical event ordering.
 
-## 19. Same-root ordering
+## 20. Same-root ordering
 
 Existing rule remains:
 
@@ -649,7 +737,7 @@ Incremental batches must enter the same absolute per-root ordering discipline.
 
 No incremental worker may leapfrog earlier pending root work.
 
-## 20. CLI shape
+## 21. CLI shape
 
 Do not silently change the meaning of existing `scan`.
 
@@ -702,7 +790,7 @@ Should show status/reason/timestamps/capability class, but not raw provider curs
 
 Must require an explicit operator action and transition to `FULL_RESYNC_REQUIRED`.
 
-## 21. HTTP API impact
+## 22. HTTP API impact
 
 First incremental implementation should add **no public write API**.
 
@@ -711,7 +799,7 @@ Q1–Q9 remain unchanged.
 If a future product genuinely needs provider-sync operational status over HTTP, that should be proposed
 as a separate read-only operational API change, not smuggled into Q9.
 
-## 22. Rolling verification
+## 23. Rolling verification
 
 Native delta is faster, but long-running systems need a drift backstop.
 
@@ -737,7 +825,7 @@ Policy may be based on:
 
 The blueprint does not freeze a universal interval.
 
-## 23. Scheduling
+## 24. Scheduling
 
 Separate correctness from scheduling.
 
@@ -751,7 +839,7 @@ After one-shot sync is accepted, `serve` may gain bounded per-root scheduling.
 
 Do not combine first incremental correctness work with a full scheduler rewrite.
 
-## 24. Provider capability discovery
+## 25. Provider capability discovery
 
 Before implementing a native adapter, document the source as:
 
@@ -784,7 +872,7 @@ UNKNOWN
 
 Do not claim that all rclone/AList/OpenList providers support native delta.
 
-## 25. Security / privacy
+## 26. Security / privacy
 
 Provider cursors can contain opaque provider metadata.
 
@@ -798,7 +886,7 @@ Rules:
 - credentials continue to use environment-secret references;
 - operator diagnostics use cursor fingerprint/age/status, not raw token.
 
-## 26. Observability
+## 27. Observability
 
 Minimum metrics/log fields:
 
@@ -821,7 +909,7 @@ resync_required_reason
 
 Never log raw provider cursor.
 
-## 27. Acceptance test matrix
+## 28. Acceptance test matrix
 
 The implementation gate must cover at least:
 
@@ -877,7 +965,7 @@ The implementation gate must cover at least:
 - Gate 2/3 Store/Kernel regression suite remains green;
 - 20k baseline full-scan behavior does not regress unexpectedly.
 
-## 28. Performance acceptance
+## 29. Performance acceptance
 
 At minimum prove:
 
@@ -892,7 +980,7 @@ At minimum prove:
 
 No universal latency SLA is frozen in this architecture plan.
 
-## 29. Implementation phases
+## 30. Candidate implementation phases — inactive until D0 exit decision
 
 ### I0 — Capability discovery + contract hardening
 
@@ -941,7 +1029,7 @@ Separate architecture review.
 
 Only if a provider can prove the required delete/cursor guarantees.
 
-## 30. What success looks like
+## 31. What success could look like
 
 Before:
 
@@ -975,24 +1063,43 @@ The desired end state is:
 
 > IndexCore remains conservative and trustworthy, while Provider traffic becomes proportional to actual change volume whenever the source can support it.
 
-## 31. Architecture decision summary
+## 32. Current architecture decision
 
-**Recommended direction: APPROVE for implementation planning, but not code yet.**
+**Current decision: RESEARCH FIRST. No implementation direction is approved yet.**
 
-Key design choice:
+The only design principle accepted before research is:
 
-> Build incremental ingestion as a durable Collector/runtime extension that reuses the existing Kernel,
-> rather than adding a second direct "delta writes canonical rows" pathway.
+> Any future change-discovery optimization must reuse the existing Kernel safety path and must not become a second direct canonical-write mechanism.
 
-First implementation should be **additive incremental + dirty scope + full fallback**.
+Everything else remains subject to evidence.
 
-Destructive delta remains a later, separately-reviewed capability.
+### Research authorization
 
-Implementation authorization requires:
+Authorized now:
 
-1. Architect acceptance of this blueprint;
-2. one bounded execution issue;
-3. exact Store schema/migration plan;
-4. exact optional IncrementalCollector interface;
-5. selected first real provider/fixture;
-6. test matrix attached to the implementation PR.
+- official documentation research;
+- source-code research;
+- issue/bug/community evidence review;
+- licensing/build-vs-buy analysis;
+- request-path/rate-limit analysis;
+- controlled non-production live tests when credentials/environment are explicitly provided.
+
+Not authorized now:
+
+- production Go code;
+- SQL/migrations;
+- new Store state;
+- new `sync` CLI;
+- provider cursor persistence;
+- direct 115 integration;
+- changes to Q1–Q9;
+- destructive delta.
+
+### Implementation authorization requires
+
+1. Issue #59 research report completed;
+2. Architect decision on the discovery strategy;
+3. explicit prototype/implementation scope;
+4. exact provider/tool selected;
+5. exact safety/fallback contract;
+6. only then: Store/interface/migration/test plan.
