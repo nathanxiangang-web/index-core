@@ -114,7 +114,7 @@ INDEXCORE_SRC=/path/to/index-core npm run e2e:real   # see docs/E2E-RUNBOOK.md
 
 The script builds and starts the Reference Web, prepares real `rclone` sources and roots through
 the IndexCore CLI, seeds the controlled COMPLETE fixtures through the **index-core verification
-fixture**, and asserts on rendered HTML. Last run: **`PASS=42 FAIL=0`**.
+fixture**, and asserts on rendered HTML. Last run: **`PASS=52 FAIL=0`**.
 
 Run against the real Gate-3 IndexCore runtime (`indexcore serve`, PostgreSQL 18, schema v4) with a
 real `rclone` scan where applicable, and controlled COMPLETE fixtures where the frozen Kernel
@@ -147,6 +147,9 @@ requires them.
 | Stale cursor UX | page 1 cursor → advance generation (new scan) → reuse cursor | rendered “Data changed while paging · Reload from the first page” (409 `stale_cursor`, not hidden) |
 | Deprecated partition nav | `/roots?include_deprecated=1` → root D → `sub/` → breadcrumb → resource | visibility opt-in survives directory, breadcrumb and resource-detail links |
 | Deleted partition nav | `/roots?include_deleted=1` → root E → resource | visibility opt-in survives into resource detail |
+| Removed on a lifecycle root | `/removed?root=<deprecated>&include_deprecated_root=1` → tombstone | the resource link keeps both `include_removed=true` and `include_deprecated_root=true`, so Q3 is reachable |
+| Journal on a lifecycle root | `/journal?root=<deprecated>&include_deprecated_root=1` → resource | the resource link keeps the root visibility opt-in into Q3 |
+| Q6 on a lifecycle root | `/roots/<deprecated>?include_deprecated_root=1[&view=active]` | the Q6 entry is hidden; a forced `view=active` shows an explicit notice and falls back to hierarchy (no misleading not_found) |
 | IndexCore unavailable | stop `indexcore` container | pages render “IndexCore is unreachable”; Web itself still serves HTTP 200; degraded page still leaks no address |
 | Independent restart | start `indexcore` again | `/` recovers and lists roots again |
 
@@ -198,3 +201,17 @@ consumer boundary" gap plus four navigation/leak bugs. All are resolved on `gate
 
 Round 2 verification: `npm run typecheck`, `npm run lint`, `npm test` (38 tests) and `npm run build`
 are green; `INDEXCORE_SRC=/path/to/index-core npm run e2e:real` → **PASS=42 FAIL=0**.
+## 10. Round 3 review response (2026-09-24)
+
+Round 3 accepted index-core PR #53 (the controlled COMPLETE fixture) and confirmed the three-PR
+split; it left exactly two narrow consumer navigation issues. Both are resolved on
+`gate4/reference-consumer` (PR #2); the index-core fixture was **not** touched.
+
+| # | Round 3 finding | Resolution |
+| --- | --- | --- |
+| 1 | `/removed` and `/journal` dropped the DEPRECATED/DELETED root opt-in when following a resource into Q3, so detail fell back to default visibility and returned `not_found` | both pages now accept `include_deprecated_root` / `include_deleted_root` (picker checkboxes + pagination/next links) and thread them into resource-detail links alongside `include_removed` |
+| 2 | A DEPRECATED/DELETED root still offered the **Active resources (Q6)** entry, although frozen Q6 has no root-visibility option (misleading 404) | the Q6 entry is hidden for lifecycle roots; a forced `?view=active` renders an explicit notice and falls back to Hierarchy (Q4) |
+
+Round 3 verification: `npm run typecheck`, `npm run lint`, `npm test` (38 tests) and `npm run build`
+are green; `INDEXCORE_SRC=/path/to/index-core npm run e2e:real` → **PASS=52 FAIL=0** (adds
+removed/journal lifecycle-root navigation and the Q6-refusal regression to the previous 42).
