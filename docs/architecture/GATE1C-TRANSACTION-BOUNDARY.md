@@ -96,8 +96,8 @@ before reconcile work can run").
 | R8 | Compute transitions (Kernel pure function; not Store) | `DERIVED` |
 | R9 | Apply canonical changes | `DERIVED` |
 | R10 | Append ordered journal events (generation + `intra_generation_seq`) | `DERIVED` |
-| R11 | Advance generation with CAS | `DERIVED` |
-| R12 | Set `index_admission.status='APPLIED'` + APPEND an `index_applied_snapshot` row | `DERIVED` |
+| R11 | **Conditional** generation validation: MUTATION path CAS `expected_generation = G` and advance `G -> G+1`; ZERO-mutation normal reconcile keeps `G` but MUST still verify persisted `current_generation == expected_generation` before recording (compare-and-check / no-op CAS, or an equivalent row-lock/version check held through commit), so a stale computation is never accepted | `DERIVED` (PR #43 final verification) |
+| R12 | Set `index_admission.status='APPLIED'` + APPEND an `index_applied_snapshot` row using the ACTUAL post-application generation (`G+1` on mutation, `G` on zero mutation) | `DERIVED` (PR #43 final verification) |
 | R13 | Commit atomically | `DERIVED` |
 
 > `DERIVED` (Architect, PR #43 review #1) — journal events are ordered per root by
@@ -138,13 +138,21 @@ before reconcile work can run").
 
 ## 2. CAS / locking semantics
 
-### 2.1 Generation CAS
+### 2.1 Generation CAS (conditional advance)
 
-> `DERIVED` Generation is the optimistic concurrency token; `commit` succeeds only
+> `DERIVED` Generation is the optimistic concurrency token; a commit succeeds only
 > if the persisted generation still equals the value the reconcile loaded
 > (GATE1A C1.3; GATE1B-SAFE-RECONCILE Sec 2.5). `FACT`.
+>
+> `DERIVED` (Architect, PR #43 final verification) — generation advances ONLY when
+> the reconcile actually mutates canonical state (Gate 1B frozen). A zero-mutation
+> normal reconcile keeps `current_generation`, but MUST still validate the same
+> concurrency token before recording the application, so a result computed against
+> superseded truth is never accepted. `FACT`.
 
 Mechanism (`PROPOSED`):
+
+MUTATION path — CAS and advance:
 
 ```sql
 UPDATE index_root
@@ -153,6 +161,23 @@ UPDATE index_root
    AND current_generation = :expected_generation;
 -- rowcount = 1 -> success; rowcount = 0 -> CAS_FAIL
 ```
+
+ZERO-mutation normal-reconcile path — NO advance, but the SAME token check MUST
+hold and MUST remain concurrency-safe. A compare-and-check / no-op CAS, or an
+equivalent row-lock / version check held through commit, is acceptable:
+
+```sql
+SELECT 1 FROM index_root
+ WHERE root_id = :root
+   AND current_generation = :expected_generation
+ FOR UPDATE;
+-- no matching row -> the loaded truth was superseded; ROLLBACK and re-load
+-- (match -> proceed to record the application at the UNCHANGED generation)
+```
+
+Under the optimistic option C in Sec 2.2 (no lock), the zero-mutation path MUST
+still perform an equivalent compare-and-check (e.g. a no-op CAS on a version
+column) so a stale computation cannot be accepted.
 
 ### 2.2 Per-root serialization
 
@@ -298,7 +323,7 @@ Definitions:
 |--------|----------------|-----|
 | Isolation level | `READ COMMITTED` with explicit row locks / CAS; `SERIALIZABLE` is an alternative but heavier | `CANDIDATE` |
 | Consumers | read committed snapshot at a generation; never blocked by the writer (MVCC) | `DERIVED` (GATE1A C2.2) |
-| Canonical read during reconcile | read at `current_generation` loaded in R3; the CAS in R11 rejects if it changed | `DERIVED` |
+| Canonical read during reconcile | read at `current_generation` loaded in R3; the generation validation in R11 (CAS on mutation; compare-and-check on zero mutation) rejects if it changed | `DERIVED` (PR #43 final verification) |
 
 > `CANDIDATE` — exact isolation level is a Store implementation choice as long as
 > the IO1-IO7 semantics and INV-013 hold. `INFERENCE`.
