@@ -48,7 +48,7 @@ The experimental subagent topology is retired.
 
 Operating mode: **Stable Alpha Foundation / Maintenance**
 
-Architecture planning now active for the previously deferred **Post-MVP Incremental Ingestion** extension (Issue #57). Implementation is **NOT AUTHORIZED**.
+Discovery is now active for the previously deferred **Post-MVP Incremental Ingestion** extension. Issue #57 is the architecture umbrella; Issue #59 is the active Change Discovery research. Implementation is **NOT AUTHORIZED**.
 
 **Gate 4 — Reference Consumer Integration — CLOSED**
 
@@ -82,7 +82,7 @@ Status:
 
 There is no active Gate-5 execution issue and no Worker implementation task.
 
-Separately, IndexCore Issue #57 tracks architecture-only planning for provider-native delta / provider cursor / dirty-scope incremental ingestion. This does not authorize Worker implementation and does not authorize Gate 5.
+Separately, IndexCore Issue #57 tracks the incremental architecture umbrella and Issue #59 tracks evidence-first Change Discovery research. Research may proceed; production implementation is not authorized and Gate 5 remains separate.
 Do not start a formal successor product, auth/user system, search/catalog,
 preview/download product path, 115 integration, AI, or other deferred product
 work until a new Architect plan explicitly authorizes it.
@@ -324,7 +324,7 @@ Current execution status:
 
 ```text
 Gate 4: CLOSED
-Post-MVP Incremental: ARCHITECTURE PLANNING (Issue #57)
+Post-MVP Incremental: DISCOVERY ACTIVE (Issue #59 under #57)
 Post-MVP Incremental implementation: NOT AUTHORIZED
 Gate 5: NOT AUTHORIZED
 Active Worker task: NONE
