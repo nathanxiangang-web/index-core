@@ -1,32 +1,19 @@
 # Index Core — Project Context
 
-> Purpose: minimal durable context for any Architect / Foreman / AI session.
-> Read this before detailed research documents.
+> Purpose: minimal durable context for any Architect / Codex execution session.
 > Rule: **Chat history is cache. Git repository is project memory.**
 
 ## 1. What this project is
 
-Index Core is a planned independent, reusable resource indexing kernel.
+Index Core is an independent, reusable resource indexing kernel.
 
 It is **not** a CloudSite-only module.
 
-CloudSite may become one consumer of Index Core, but the kernel must remain usable without CloudSite and without a specific storage product.
-
-The project exists because resource discovery, provider access, search, application logic and state ownership became too coupled in previous CloudSite evolution.
+CloudSite may become one consumer, but the kernel must remain usable without CloudSite and without a specific storage product.
 
 ## 2. Core problem
 
-The target system must eventually accept resource facts from one or more collectors and maintain a trustworthy canonical resource inventory.
-
-Candidate input sources may include:
-
-- AList / OpenList
-- snapshot files
-- remote feeds
-- provider-specific collectors
-- other storage abstraction tools if later proven necessary
-
-The kernel must not assume a specific collector implementation.
+The system accepts external resource facts from collectors and maintains one trustworthy Canonical Inventory.
 
 Conceptual flow:
 
@@ -37,9 +24,7 @@ Collector / Snapshot / Feed
           ↓
        Identity
           ↓
-         Diff
-          ↓
-     Safety Guard
+   Completeness Gate
           ↓
       Reconcile
           ↓
@@ -48,104 +33,126 @@ Canonical Inventory
    Change Journal
 ```
 
-## 2.1 Initial persistence decision
+Candidate external sources may include AList/OpenList, rclone-backed collectors, snapshot files, remote feeds or provider-specific adapters.
+
+The Kernel must not assume a specific Collector implementation.
+
+## 3. Persistence direction
 
 The first formal persistence target for PoC and MVP is **PostgreSQL**.
 
-There is no SQLite-first implementation phase.
+There is no SQLite-first phase.
 
-This is a storage implementation decision, not a Domain coupling decision:
+This is an implementation choice behind a Store Interface:
 
-- Kernel depends on Store Interface
-- Domain types do not depend on PostgreSQL schema/ORM
-- another store may be introduced later without redefining Canonical Inventory semantics
+- Kernel Domain does not depend on PostgreSQL schema/ORM
+- Store persists Kernel-defined Domain state
+- another Store may be introduced later without redefining Canonical Inventory semantics
 
-## 3. Responsibility boundaries
+## 4. Frozen responsibility boundaries
 
-### Collector layer
-Obtains external resource facts and produces a standard snapshot/change input.
+### Collector
+Obtains external facts and emits normalized Snapshot / evidence.
 
-Collector does not own Canonical Inventory.
+Collector does not own Canonical Inventory, canonical identity, final completeness acceptance, removal or Canonical Change Journal.
 
 ### Index Kernel
-Owns canonical resource truth, validation, identity, reconcile, safety and change journal.
+Owns:
+- Canonical Inventory
+- identity continuity semantics
+- Snapshot acceptance
+- completeness/safety gate
+- Safe Reconcile
+- root/generation semantics
+- Canonical Change Journal semantics
 
-### Storage layer
-Persists kernel state behind an explicit store boundary.
+### Store
+Persists Kernel-defined Domain state and supplies atomic commit / rollback / concurrency guarantees behind the Store Interface.
 
-### Consumer layer
-CloudSite, search, catalog, media UI, admin UI and other applications consume kernel outputs.
+### Consumer
+CloudSite, Search, Catalog and future applications read Kernel truth through Query contracts and may maintain projections.
 
-Consumers do not become source-of-truth.
+Consumers do not redefine resource truth.
 
-## 4. Current working hypothesis
+## 5. Relationship to external tools
 
-Snapshot is the preferred formal input boundary.
+### AList / OpenList
+Useful provider aggregation / access boundaries.
 
-This is still subject to Architecture Gate confirmation.
+Accepted research shows their search index is not Canonical Inventory and public identity/completeness semantics are driver-dependent.
 
-A collector may obtain that snapshot by:
+### rclone
+Accepted research shows stronger generic traversal-error propagation than AList/OpenList, but stable ID/hash/change-notify remain backend-dependent.
 
-- recursively reading an API
-- importing a pre-generated index asset
-- reading a remote feed
-- other mechanisms
+### fsspec
+Useful reference abstraction; no evidence currently requires it in the main path.
 
-The kernel should care about snapshot semantics, not how a provider was accessed.
+No final Collector has been selected.
 
-## 5. Relationship to CloudSite
+## 6. Relationship to CloudSite
 
-CloudSite v1.0.0 demonstrated that the application can work with AList as an access/download layer.
+CloudSite remains separate while Index Core architecture is frozen.
 
-Index Core is being researched independently before any new CloudSite integration.
+Do not modify CloudSite during Gate 1.
 
-Current rule:
+Integration is deferred until Index Core architecture and PoC are accepted.
 
-- do not modify CloudSite during Discovery
-- do not copy CloudSite V2 code into this repository yet
-- evaluate useful V2 mechanisms later, after external alternatives are understood
+## 7. Execution topology
 
-## 6. Relationship to AList / OpenList
-
-AList/OpenList are currently being investigated as possible external Collector/provider aggregation boundaries.
-
-They are not assumed to be the kernel database.
-
-Their search database is not assumed to be canonical inventory.
-
-Discovery 02 exists to determine exactly what their public APIs and drivers can reliably expose.
-
-## 7. Relationship to rclone / fsspec
-
-They are **not currently in Discovery 02**.
-
-They are deferred candidates for Discovery 03 only if AList/OpenList prove insufficient as the external Collector boundary.
-
-Do not introduce them early without an Architect decision.
-
-## 8. Command topology
+The project execution model is intentionally small:
 
 ```text
-Architect / ChatGPT
-        ↓
-Local Windows Foreman
-        ↓
-Worker A / B / C / D
-        ↓
-Foreman QA + cross-check
-        ↓
-single integration PR
-        ↓
-Architect final review
-        ↓
+ChatGPT Architect
+       ↓
+Codex Executor
+       ↓
+branch + docs/code/tests
+       ↓
+Pull Request
+       ↓
+ChatGPT Architect Review
+       ↓
 main
 ```
 
-Workers are untrusted execution units.
+### ChatGPT Architect owns
+- architecture
+- scope
+- invariants
+- gate definitions
+- task packets
+- review / acceptance
+- decisions to advance phases
 
-Worker PASS is not final acceptance.
+### Codex Executor owns
+- repository inspection required by the assigned task
+- implementation of the Architect-approved task
+- docs/code/tests/fixtures required by that task
+- branch/commit/push/PR preparation
+- evidence of correctness
+- reporting blockers instead of inventing architecture
 
-Only evidence, reproducibility, tests (once implementation begins) and Architect acceptance allow changes into main.
+Codex must not silently:
+- create new gates
+- change accepted invariants
+- broaden project scope
+- select deferred architecture on its own
+- merge its own architecture PR
+
+There is no Foreman layer, no Worker A/B/C/D production topology and no subagent layer in the formal project workflow.
+
+## 8. Quality model
+
+Codex output is not accepted because it says PASS.
+
+Architect review uses:
+- architecture invariants
+- evidence
+- cross-contract consistency
+- reproducible tests once implementation starts
+- fault injection / failure-path verification where appropriate
+
+A high rework rate is treated as a signal to narrow the task and tighten the contract, not to add more autonomous execution layers.
 
 ## 9. Project memory hierarchy
 
@@ -154,58 +161,44 @@ Only evidence, reproducibility, tests (once implementation begins) and Architect
 2. `PROJECT-STATE.md`
 3. `ARCHITECTURE-INVARIANTS.md`
 4. `NEXT-ACTIONS.md`
-5. current control / Foreman GitHub issues
+5. current control Issue
+6. current Codex execution Issue
 
 ### L2 — read when needed
+- accepted architecture docs
 - `docs/research/`
-- `docs/decisions/` (when ADRs exist)
-- contracts and architecture docs
+- `docs/decisions/`
+- current PR review
 
 ### L3 — evidence
 - source code
 - exact commits
-- test output
+- tests / fixtures
 - external donor repositories
 
-Do not load all L2/L3 material unless the task requires it.
+Do not load all L2/L3 material unless required by the task.
 
 ## 10. Context recovery protocol
 
-A fresh Architect/AI session must:
+A fresh Architect or Codex execution session must:
 
 1. read the four L1 files in order
-2. read the current GitHub control issue
-3. read the active Foreman issue
-4. verify main HEAD
-5. identify current phase and latest accepted gate
-6. only then read deeper reports required for the current decision
-7. do not start implementation merely because older chats mention implementation ideas
+2. read control Issue #1
+3. read the active Codex execution Issue
+4. verify remote `main` HEAD
+5. identify current phase and latest Architect-accepted gate
+6. read only the deeper material required by the current task
+7. stop and report if repository state conflicts with the task packet
 
-## 11. Worker context isolation
+## 11. Evidence standard
 
-Foreman should give each Worker a narrow Task Packet containing only:
+Claims should be categorized as needed:
 
-- TASK-ID
-- GOAL
-- minimum BACKGROUND
-- INPUT / repositories / exact commits
-- MUST ANSWER
-- INVARIANTS relevant to that task
-- OUTPUT
-- DONE WHEN
-- DO NOT
-
-Do not send the entire project history to every Worker.
-
-## 12. Evidence standard
-
-Research claims should be categorized as:
-
-- VERIFIED / FACT
+- FACT / VERIFIED
 - INFERENCE
 - UNKNOWN
 
-Capabilities should use precise statuses where relevant:
+Provider capabilities should remain precise:
 
 - DIRECT
 - DERIVABLE
@@ -215,17 +208,18 @@ Capabilities should use precise statuses where relevant:
 
 Do not turn one driver's behavior into a universal provider capability.
 
-## 13. Where detailed history lives
+## 12. Detailed history
 
-Accepted Xiaoya research:
-
-`docs/research/XIAOYA-INDEX-ARCHITECTURE-REPORT.md`
+Accepted research:
+- `docs/research/XIAOYA-INDEX-ARCHITECTURE-REPORT.md`
+- `docs/research/ALIST-OPENLIST-COLLECTOR-DISCOVERY-REPORT.md`
+- `docs/research/D03-COLLECTOR-GAP-COMPARISON.md`
 
 Project blueprint:
+- `通用资源索引内核项目蓝图 v0.1.md`
 
-`通用资源索引内核项目蓝图 v0.1.md`
-
-Current phase and tasks:
-
-`PROJECT-STATE.md`
-`NEXT-ACTIONS.md`
+Current state:
+- `PROJECT-STATE.md`
+- `NEXT-ACTIONS.md`
+- Issue #1
+- active Codex execution Issue

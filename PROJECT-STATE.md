@@ -8,9 +8,9 @@
 
 ## Main branch
 
-Latest accepted baseline:
+Latest accepted baseline at this governance transition:
 
-`688f6b9493cd00a9a4ee46d57df298ed2a89cf99`
+`7dcc89bcfa74af2d872358b79fb7638bf309f6fa`
 
 Accepted content includes:
 
@@ -19,6 +19,25 @@ Accepted content includes:
 - PostgreSQL-first persistence decision
 - D01 / D02 / D03 accepted research
 - Gate 1A responsibility boundary and contract skeleton
+- removal of the experimental subagent workflow
+
+## Execution model
+
+```text
+ChatGPT Architect
+       ↓
+Codex Executor
+       ↓
+Pull Request
+       ↓
+ChatGPT Architect Review
+       ↓
+main
+```
+
+The previous Foreman + Worker A/B/C/D topology is retired.
+
+The experimental subagent topology is retired.
 
 ## Current phase
 
@@ -26,9 +45,15 @@ Accepted content includes:
 
 Status:
 
-**READY TO START**
+**REWORK / CONSOLIDATION**
 
 No product implementation is authorized.
+
+Active execution issue:
+
+**#37 — [CODEX][GATE-1B] Core Semantics Rework**
+
+Legacy PR #35 and legacy Worker Issues #29-#33 are superseded by #37 and must not drive new work.
 
 ## Latest accepted architecture phase
 
@@ -47,96 +72,74 @@ Accepted documents:
 
 ## Gate 1A frozen boundaries
 
-### Collector / Scanner
+### Collector
+Owns traversal/pagination/provider-error capture/SnapshotEntry production/normalized evidence.
 
-Owns:
-
-- provider traversal / pagination
-- provider error capture
-- SnapshotEntry production
-- Snapshot-level evidence
-- refresh / cache policy execution
-
-Does not own:
-
-- canonical resource identity
-- completeness acceptance
-- confirmed removal
-- canonical generation
-- canonical Change Journal
-- direct Canonical Inventory mutation
+Does not own canonical identity, final completeness acceptance, confirmed removal, canonical generation, Canonical Change Journal or direct Canonical Inventory mutation.
 
 ### Kernel
-
-Owns:
-
-- Canonical Inventory
-- identity continuity semantics
-- Snapshot acceptance
-- completeness safety gate
-- Safe Reconcile semantics
-- Root / canonical generation semantics
-- Canonical Change Journal semantics
-- canonical conflict resolution responsibility
+Owns Canonical Inventory, identity continuity, Snapshot acceptance, completeness safety, Safe Reconcile, root/generation semantics and Canonical Change Journal semantics.
 
 ### Store
-
-Owns:
-
-- persistence of Kernel-defined Domain state
-- atomic canonical+journal+generation commit semantics
-- rollback / concurrency protection behind Store Interface
+Persists Kernel-defined Domain state and supplies atomic commit / rollback / concurrency protection behind the Store Interface.
 
 ### Consumer
-
-May read canonical/query state and own projections.
-
-Must not mutate Canonical Inventory or bypass Query Contract.
+Reads canonical/query state and owns projections; cannot mutate Canonical Inventory or redefine truth.
 
 ## Gate 1B scope
 
-Gate 1B freezes core semantics only:
+Freeze:
 
 1. Domain Model
 2. Stable Identity v1
-3. Snapshot Contract final core fields/evidence
+3. Snapshot Contract core fields/evidence
 4. Completeness acceptance semantics
-5. Safe Reconcile state machine
+5. Safe Reconcile
 6. Failure Model
 7. Canonical Change Journal semantics
-8. concurrent canonical conflict semantics
-9. root ownership / overlap semantics
+8. deterministic per-root input ordering
+9. root ownership/lifecycle semantics
+
+## Gate 1B Architect rework requirements
+
+The current Gate 1B design must correct:
+
+- hash is evidence, not identity
+- same path/size is not sufficient identity proof
+- provider IDs require stability qualification before strong use
+- rename/move continuity horizon must be compatible with removal safety
+- directory-move v1 semantics must be frozen or conservatively unsupported
+- PARTIAL/STALE/SUSPICIOUS absence must not mutate prior canonical truth
+- freshness evidence must be provider-neutral
+- Collector failure-visibility/completeness assurance must be explicit
+- Kernel must not re-traverse providers for removal validation
+- canonical lifecycle state vs removal-control state must be unambiguous
+- Journal append-only semantics must not conflict with repair
+- MOVE/RENAME + UPDATE semantic result must be frozen
+- per-root accepted input ordering must be deterministic
+- no Gate 1D
+- no subagent/Foreman/4-worker workflow in formal docs
 
 ## Gate 1B must NOT design
 
 - PostgreSQL schema / SQL / migrations
 - exact Query API transport
-- journal persistence/event schema
+- journal physical persistence/event schema
 - final Collector selection
 - Scanner checkpoint/resume
 - native delta / true incremental
 - product code
 
-These belong to Gate 1C or post-MVP phases.
-
-## Gate 1A preconditions carried into Gate 1B
-
-1. `parent_ref` must remain Collector-local and never be canonical `resource_id`.
-2. completeness heuristics may inspect submitted evidence + prior canonical state only; they must not trigger provider traversal.
-3. root overlap/ownership semantics must be explicitly resolved.
-4. Canonical Inventory is authoritative over derived Journal/projection repair.
-5. hash, provider_object_id and native delta remain optional capabilities.
-
-## Accepted persistence decision
+## Persistence decision
 
 **PostgreSQL-first**
 
-Persistence shape remains deferred to Gate 1C.
+Persistence shape remains Gate 1C.
 
-Domain must remain independent of PostgreSQL schema/ORM.
+Domain remains independent of PostgreSQL schema/ORM.
 
 ## Implementation status
 
 **NO PRODUCT CODE**
 
-Gate 2 PoC remains blocked until Gate 1B + Gate 1C are accepted.
+Gate 2 PoC remains blocked until Gate 1B and Gate 1C are Architect-accepted.

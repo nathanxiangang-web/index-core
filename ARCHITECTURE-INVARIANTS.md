@@ -1,8 +1,8 @@
 # Index Core — Architecture Invariants
 
 > These are guardrails, not a complete architecture.
-> A Worker or Foreman may not silently change them.
-> Any intentional change requires explicit Architect review and should normally become an ADR.
+> Codex may not silently change them.
+> Any intentional change requires explicit ChatGPT Architect review and should normally become an ADR.
 
 ## INV-001 — One canonical resource truth
 
@@ -20,7 +20,7 @@ Failure to observe an item during an incomplete, failed, stale or ambiguous coll
 
 ## INV-004 — Incomplete input cannot authorize destructive reconcile
 
-Any future destructive reconcile requires an explicit completeness/safety gate.
+Any destructive reconcile requires an explicit completeness/safety gate.
 
 ## INV-005 — Kernel is independent from CloudSite
 
@@ -44,13 +44,13 @@ Search, Catalog, UI, AI features, download/playback logic and other consumers ca
 
 External resource facts must cross a defined contract boundary before reconciliation.
 
-The exact final contract is not frozen yet, but implicit direct writes from provider code into canonical tables are prohibited.
+Implicit direct writes from provider code into canonical tables are prohibited.
 
 ## INV-010 — Identity and path are different concepts
 
 A path, file name or URL must not automatically be treated as stable resource identity.
 
-Stable identity design must explicitly account for rename and move.
+Stable identity design must explicitly account for rename, move and path reuse.
 
 ## INV-011 — Driver capability is not universal capability
 
@@ -68,27 +68,23 @@ Terminology must remain precise.
 
 A failed validation/reconcile/commit must not silently leave a partially authoritative new inventory.
 
-Exact transaction/staging mechanism is not yet frozen, but the safety property is mandatory.
-
 ## INV-014 — Architecture before implementation
 
-Discovery evidence → architecture/contracts → PoC → MVP.
+Discovery evidence -> architecture/contracts -> PoC -> MVP.
 
 Do not skip directly from an attractive donor implementation to product code.
 
 ## INV-015 — One gate at a time
 
-A later stage may not begin until the prior gate is Architect-accepted.
+A later stage may not begin until the prior gate is ChatGPT Architect-accepted.
 
-Parallel research is allowed only inside the current authorized stage.
+## INV-016 — Evidence over executor confidence
 
-## INV-016 — Evidence over worker confidence
-
-Worker statements such as “done”, “pass” or “works” have no architectural authority.
+Codex statements such as "done", "pass" or "works" have no architectural authority.
 
 Claims require evidence appropriate to the phase:
 
-- research: source/API/data evidence
+- architecture/research: contracts, source/API/data evidence, adversarial consistency
 - implementation: tests, fault injection, reproducibility
 
 ## INV-017 — License uncertainty blocks copying, not research
@@ -101,11 +97,11 @@ Accepted project truth must be recoverable from repository files, issues, ADRs, 
 
 Critical architectural state must not exist only in chat history.
 
-## INV-019 — Worker context is intentionally narrow
+## INV-019 — Codex executes a bounded Architect task
 
-Workers receive the minimum context needed for their task.
+Codex receives an explicit task packet / Issue and works within it.
 
-Workers do not independently reinterpret the full project roadmap.
+Codex must report architectural ambiguity instead of silently redefining the roadmap, invariants or phase boundaries.
 
 ## INV-020 — Keep the kernel small
 
@@ -117,3 +113,23 @@ Before adding a responsibility to Index Core, prove that it cannot remain in:
 - external mature tool
 
 The default is to keep responsibilities outside the kernel unless canonical truth/safety requires kernel ownership.
+
+## INV-021 — Hash is evidence, not canonical identity
+
+A content hash may be a strong fingerprint when available, but identical content does not prove two observations are the same canonical resource.
+
+## INV-022 — Incomplete coverage cannot create canonical absence
+
+PARTIAL, STALE, SUSPICIOUS, failed or otherwise incomplete coverage may report unknown/unobserved scope, but must not by itself mutate a previously present canonical resource into a missing/removal state or advance removal evidence.
+
+## INV-023 — Kernel does not re-traverse providers
+
+Completeness and removal decisions consume normalized Collector evidence, accepted Snapshots and canonical history.
+
+The Kernel does not independently call provider listing/refresh APIs to validate its own decisions.
+
+## INV-024 — Accepted input ordering is Kernel-owned and deterministic
+
+Store CAS protects commits, but commit timing must not define canonical ordering.
+
+Duplicate, concurrent and out-of-order inputs require explicit deterministic per-root semantics.
