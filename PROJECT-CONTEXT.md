@@ -1,225 +1,234 @@
 # Index Core — Project Context
 
-> Purpose: minimal durable context for any Architect / Codex execution session.
+> Purpose: durable project context for maintainers, Architect sessions, and bounded Codex work.
 > Rule: **Chat history is cache. Git repository is project memory.**
 
 ## 1. What this project is
 
-Index Core is an independent, reusable resource indexing kernel.
+IndexCore is an independent, reusable, provider-neutral resource indexing kernel.
 
-It is **not** a CloudSite-only module.
+It accepts external resource observations, evaluates identity/completeness/safety, maintains one Canonical Inventory, records canonical changes in an append-only Journal, and exposes read-only Query APIs.
 
-CloudSite may become one consumer, but the kernel must remain usable without CloudSite and without a specific storage product.
-
-## 2. Core problem
-
-The system accepts external resource facts from collectors and maintains one trustworthy Canonical Inventory.
-
-Conceptual flow:
+Current status:
 
 ```text
-Collector / Snapshot / Feed
-          ↓
-      Validation
-          ↓
-       Identity
-          ↓
-   Completeness Gate
-          ↓
-      Reconcile
-          ↓
-Canonical Inventory
-          ↓
-   Change Journal
+Core development for accepted Alpha scope: COMPLETE
+Gate 1–4: CLOSED / ARCHITECT_ACCEPTED
+Operating mode: Stable Alpha Foundation / Maintenance
+Gate 5: NOT AUTHORIZED
 ```
 
-Candidate external sources may include AList/OpenList, rclone-backed collectors, snapshot files, remote feeds or provider-specific adapters.
+IndexCore is not a CloudSite-only module and is not a full product backend.
 
-The Kernel must not assume a specific Collector implementation.
+## 2. Core flow
 
-## 3. Persistence direction
+```text
+Collector / Snapshot
+        ↓
+Validation + evidence
+        ↓
+Identity
+        ↓
+Completeness / safety
+        ↓
+Safe Reconcile
+        ↓
+Canonical Inventory
+        ↓
+Canonical Change Journal
+        ↓
+read-only Query / HTTP /v1
+```
 
-The first formal persistence target for PoC and MVP is **PostgreSQL**.
+## 3. Current implementation
 
-There is no SQLite-first phase.
+Accepted runtime stack:
 
-This is an implementation choice behind a Store Interface:
+- Go 1.27.x;
+- PostgreSQL 18.x via pgx/v5;
+- SQL-first migrations;
+- rclone Collector;
+- AList/OpenList Collector;
+- single `indexcore` binary;
+- explicit `migrate`, `doctor`, `root`, `scan`, `serve` CLI;
+- read-only Q1–Q9 HTTP transport;
+- single active writer daemon per database;
+- restart-safe durable admissions;
+- 20k real-PostgreSQL scale evidence.
 
-- Kernel Domain does not depend on PostgreSQL schema/ORM
-- Store persists Kernel-defined Domain state
-- another Store may be introduced later without redefining Canonical Inventory semantics
+PostgreSQL is the current Store implementation behind the Store Interface. Domain semantics do not depend on PostgreSQL schema/ORM.
 
 ## 4. Frozen responsibility boundaries
 
 ### Collector
-Obtains external facts and emits normalized Snapshot / evidence.
 
-Collector does not own Canonical Inventory, canonical identity, final completeness acceptance, removal or Canonical Change Journal.
+Obtains external facts and emits normalized Snapshot/evidence.
+
+Collector does not own Canonical Inventory, final canonical identity, final completeness acceptance, removal decisions, or the Canonical Change Journal.
+
+Current runtime collectors are rclone and AList/OpenList. Both remain additive-safe by default unless a source can provide separately accepted positive completeness evidence.
 
 ### Index Kernel
-Owns:
-- Canonical Inventory
-- identity continuity semantics
-- Snapshot acceptance
-- completeness/safety gate
-- Safe Reconcile
-- root/generation semantics
-- Canonical Change Journal semantics
+
+Owns Canonical Inventory, identity continuity semantics, Snapshot acceptance, completeness/safety, Safe Reconcile, root/generation semantics, and Canonical Change Journal semantics.
 
 ### Store
-Persists Kernel-defined Domain state and supplies atomic commit / rollback / concurrency guarantees behind the Store Interface.
+
+Persists Kernel-defined state and supplies transaction, rollback, locking, CAS, and durable admission guarantees behind the Store Interface.
 
 ### Consumer
-CloudSite, Search, Catalog and future applications read Kernel truth through Query contracts and may maintain projections.
 
-Consumers do not redefine resource truth.
+Applications read canonical truth through the Query Contract and may maintain projections. Consumers must not redefine resource truth or write IndexCore tables directly.
 
-## 5. Relationship to external tools
+## 5. Current Consumer boundary
 
-### AList / OpenList
-Useful provider aggregation / access boundaries.
+Gate 4 proved the intended integration:
 
-Accepted research shows their search index is not Canonical Inventory and public identity/completeness semantics are driver-dependent.
+```text
+Browser / app
+    ↓
+application server / BFF
+    ↓ server-side HTTP
+IndexCore /v1
+```
 
-### rclone
-Accepted research shows stronger generic traversal-error propagation than AList/OpenList, but stable ID/hash/change-notify remain backend-dependent.
+The separate reference implementation is:
 
-### fsspec
-Useful reference abstraction; no evidence currently requires it in the main path.
+`nathanxiangang-web/indexcore-reference-web`
 
-No final Collector has been selected.
+It verified Q1–Q9 without direct PostgreSQL, IndexCore Go internals, provider dependencies, or CloudSite code.
 
 ## 6. Relationship to CloudSite
 
-CloudSite remains separate while Index Core architecture is frozen.
+CloudSite 1.0 is **Legacy / Frozen Product**.
 
-Do not modify CloudSite during Gate 1.
+It may be consulted for historical requirements, UX lessons, preview/download behavior, and architecture-debt lessons, but it is not the IndexCore validation target and is not the default foundation for a future product.
 
-Integration is deferred until Index Core architecture and PoC are accepted.
+Rule:
 
-## 7. Execution topology
+> Reference CloudSite requirements; do not inherit CloudSite architecture.
 
-The project execution model is intentionally small:
+## 7. Relationship to external tools
+
+### rclone
+
+Supported runtime Collector. Runs as an external process and is additive-safe by default. Provider IDs/hashes are evidence, not automatically canonical identity.
+
+### AList / OpenList
+
+Supported runtime Collector through the HTTP API. Credentials are referenced through environment-variable names, not persisted as plaintext provider secrets.
+
+The AList/OpenList search/index implementation is not IndexCore Canonical Inventory.
+
+### Future providers
+
+New providers belong behind the Collector boundary unless canonical truth/safety itself requires a Kernel change.
+
+## 8. Execution model for future changes
+
+There is currently no active implementation gate.
+
+When future work is authorized:
 
 ```text
 ChatGPT Architect
        ↓
+bounded execution Issue / plan
+       ↓
 Codex Executor
        ↓
-branch + docs/code/tests
+branch + code/docs/tests
        ↓
 Pull Request
        ↓
-ChatGPT Architect Review
+Architect review
        ↓
 main
 ```
 
-### ChatGPT Architect owns
-- architecture
-- scope
-- invariants
-- gate definitions
-- task packets
-- review / acceptance
-- decisions to advance phases
+Codex must not silently create a new Gate, change frozen invariants, broaden Kernel responsibility, make a deferred product decision, or merge architecture changes without review.
 
-### Codex Executor owns
-- repository inspection required by the assigned task
-- implementation of the Architect-approved task
-- docs/code/tests/fixtures required by that task
-- branch/commit/push/PR preparation
-- evidence of correctness
-- reporting blockers instead of inventing architecture
+## 9. Maintenance rule
 
-Codex must not silently:
-- create new gates
-- change accepted invariants
-- broaden project scope
-- select deferred architecture on its own
-- merge its own architecture PR
+IndexCore is now a stable Alpha foundation, not an invitation to keep adding features.
 
-There is no Foreman layer, no Worker A/B/C/D production topology and no subagent layer in the formal project workflow.
+Before changing the Kernel, classify the requirement:
 
-## 8. Quality model
+```text
+IndexCore responsibility
+Collector responsibility
+Consumer/product responsibility
+Operations/deployment responsibility
+Out of scope
+```
 
-Codex output is not accepted because it says PASS.
+Only true IndexCore responsibility should modify the core.
 
-Architect review uses:
-- architecture invariants
-- evidence
-- cross-contract consistency
-- reproducible tests once implementation starts
-- fault injection / failure-path verification where appropriate
+## 10. Project memory hierarchy
 
-A high rework rate is treated as a signal to narrow the task and tighten the contract, not to add more autonomous execution layers.
+### Current user/operator docs
 
-## 9. Project memory hierarchy
+- `README.md`
+- `docs/README.md`
+- `docs/QUICKSTART.md`
+- `docs/CLI.md`
+- `docs/HTTP-API.md`
+- `docs/COLLECTORS.md`
+- `docs/INTEGRATION.md`
+- `docs/OPERATIONS.md`
 
-### L1 — always read
+### Current architecture state
+
 1. `PROJECT-CONTEXT.md`
 2. `PROJECT-STATE.md`
 3. `ARCHITECTURE-INVARIANTS.md`
 4. `NEXT-ACTIONS.md`
-5. current control Issue
-6. current Codex execution Issue
+5. current approved Issue/PR, if any
 
-### L2 — read when needed
-- accepted architecture docs
-- `docs/research/`
+### Deep evidence
+
+- `docs/architecture/`
 - `docs/decisions/`
-- current PR review
+- `docs/gate2/`
+- `docs/gate3/`
+- `docs/gate4/`
+- `docs/research/`
+- source code / tests / exact commits
 
-### L3 — evidence
-- source code
-- exact commits
-- tests / fixtures
-- external donor repositories
+## 11. Context recovery protocol
 
-Do not load all L2/L3 material unless required by the task.
+A fresh maintenance or architecture session should:
 
-## 10. Context recovery protocol
+1. verify remote `main`;
+2. read `PROJECT-CONTEXT.md`;
+3. read `PROJECT-STATE.md`;
+4. read `ARCHITECTURE-INVARIANTS.md`;
+5. read `NEXT-ACTIONS.md`;
+6. confirm whether a new Gate/Issue is actually authorized;
+7. read only the deeper contracts/evidence needed for the requested change.
 
-A fresh Architect or Codex execution session must:
+If no new Gate is authorized, do not convert a vague "continue" request into implementation work.
 
-1. read the four L1 files in order
-2. read control Issue #1
-3. read the active Codex execution Issue
-4. verify remote `main` HEAD
-5. identify current phase and latest Architect-accepted gate
-6. read only the deeper material required by the current task
-7. stop and report if repository state conflicts with the task packet
+## 12. Evidence standard
 
-## 11. Evidence standard
+Claims should remain precise: FACT / VERIFIED, INFERENCE, or UNKNOWN.
 
-Claims should be categorized as needed:
-
-- FACT / VERIFIED
-- INFERENCE
-- UNKNOWN
-
-Provider capabilities should remain precise:
-
-- DIRECT
-- DERIVABLE
-- DRIVER_DEPENDENT
-- UNAVAILABLE
-- UNKNOWN
+Provider capability vocabulary remains: DIRECT, DERIVABLE, DRIVER_DEPENDENT, UNAVAILABLE, UNKNOWN.
 
 Do not turn one driver's behavior into a universal provider capability.
 
-## 12. Detailed history
+## 13. Detailed history
+
+Project blueprint:
+
+- `通用资源索引内核项目蓝图 v0.1.md`
 
 Accepted research:
+
 - `docs/research/XIAOYA-INDEX-ARCHITECTURE-REPORT.md`
 - `docs/research/ALIST-OPENLIST-COLLECTOR-DISCOVERY-REPORT.md`
 - `docs/research/D03-COLLECTOR-GAP-COMPARISON.md`
 
-Project blueprint:
-- `通用资源索引内核项目蓝图 v0.1.md`
+Final Gate 4 consumer evidence:
 
-Current state:
-- `PROJECT-STATE.md`
-- `NEXT-ACTIONS.md`
-- Issue #1
-- active Codex execution Issue
+- `docs/gate4/GATE4-REFERENCE-CONSUMER-REPORT.md`
