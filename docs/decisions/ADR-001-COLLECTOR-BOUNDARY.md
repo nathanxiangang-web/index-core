@@ -1,7 +1,7 @@
 # ADR-001 — Collector Boundary and Initial Adapter Selection
 
-> Status: **PROPOSED** — recommended by the Worker (Codex Executor). Becomes
-> **ACCEPTED** only after ChatGPT Architect review.
+> Status: **ACCEPTED** — Architect-approved in PR #43 (ARCHITECT FINAL ACCEPTANCE
+> — Gate 1C CLOSED, final verification head `7a3b32f`).
 > PR #43 D/E round-2: the Gate-2 rclone traversal/evidence mode was reviewed and
 > **cannot establish confirmed-no-skips**; rclone is therefore kept as the
 > leading candidate for the additive-only PoC role and is **NOT** accepted for

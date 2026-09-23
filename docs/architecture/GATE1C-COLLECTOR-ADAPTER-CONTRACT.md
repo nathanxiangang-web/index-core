@@ -4,12 +4,12 @@
 > frozen IndexCore Snapshot / Evidence contracts, plus the Architect-facing
 > contract-fit evidence for the initial adapter selection.
 > Produced by the Codex Executor (Worker) for ChatGPT Architect review.
-> Status: **PARTIAL_FOR_ARCH_REVIEW** (deliverable E; PR #43 D/E round-1
-> rework applied: E1 identity gate, E2 digest canonicalization, E3
-> skipped_scopes UNKNOWN, E4 Kernel-owned shrink corroboration; round-2 rework
-> applied: final IO3 identity finalized after Kernel evaluation, rclone Gate-2
-> traversal/evidence mode + PoC role split; round-3 narrow fix: final IO3 digest
-> canonicalization namespace/version are Kernel-owned).
+> Status: **FROZEN** — Architect-approved in PR #43 (ARCHITECT FINAL ACCEPTANCE —
+> Gate 1C CLOSED, final verification head `7a3b32f`). Rework history: D/E
+> round-1 (E1 identity gate, E2 digest canonicalization, E3 skipped_scopes
+> UNKNOWN, E4 Kernel-owned shrink corroboration), round-2 (final IO3 identity
+> finalized after Kernel evaluation; rclone Gate-2 mode + PoC role split),
+> round-3 (final IO3 digest canonicalization namespace/version Kernel-owned).
 > Baseline: remote `main` = `6a131f17657807d9aee2921be1f286ceaff784e4`.
 > Depends on `GATE1A-COLLECTOR-CONTRACT-SKELETON.md`,
 > `GATE1B-SNAPSHOT-COMPLETENESS.md`, `GATE1B-DOMAIN-MODEL.md` and the FROZEN

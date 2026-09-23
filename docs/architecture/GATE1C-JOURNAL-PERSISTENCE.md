@@ -3,10 +3,11 @@
 > Implementation-facing contract for the persistence, sequencing, consumption,
 > and repair of the Canonical Change Journal.
 > Produced by the Codex Executor (Worker) for ChatGPT Architect review.
-> Status: **PARTIAL_FOR_ARCH_REVIEW** (deliverable D; PR #43 D/E round-1
-> rework applied: D1 rebuild/checkpoint split, D2 lifecycle concurrency domain;
-> round-2 rework applied: J6 Journal-repair transaction exception, Sec 5/6/8/10;
-> round-3 narrow fix: J6 repair permitted on a `DELETED` root).
+> Status: **FROZEN** — Architect-approved in PR #43 (ARCHITECT FINAL ACCEPTANCE —
+> Gate 1C CLOSED, final verification head `7a3b32f`). Rework history: D/E
+> round-1 (D1 rebuild/checkpoint split, D2 lifecycle concurrency domain),
+> round-2 (J6 Journal-repair transaction exception), round-3 (J6 repair
+> permitted on a `DELETED` root).
 > Baseline: remote `main` = `6a131f17657807d9aee2921be1f286ceaff784e4`.
 > Depends on the FROZEN contracts `GATE1C-POSTGRESQL-STORE.md` (A),
 > `GATE1C-TRANSACTION-BOUNDARY.md` (B), `GATE1C-QUERY-CONTRACT.md` (C) and the

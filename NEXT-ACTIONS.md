@@ -2,140 +2,76 @@
 
 ## Current phase
 
-**Gate 1C — Persistence / Query / Collector Boundary**
+**Gate 2 — PoC**
 
-Architecture / acceptance owner:
+Architecture / acceptance owner: **ChatGPT Architect**
 
-**ChatGPT Architect**
+Execution owner: **Codex**
 
-Execution owner:
+Active task: **a new Gate 2 issue to be opened by the Architect** (replaces
+Issue #40, which closes on the PR #43 merge).
 
-**Codex**
+## Gate 1C — CLOSED
 
-Active task:
+PR #43 received **ARCHITECT FINAL ACCEPTANCE — Gate 1C CLOSED** at final
+verification head `7a3b32f`, and is authorized to merge to `main`.
 
-**Issue #40 — [CODEX][GATE-1C] Persistence, Query & Collector Contracts**
+- A `GATE1C-POSTGRESQL-STORE.md` — FROZEN
+- B `GATE1C-TRANSACTION-BOUNDARY.md` — FROZEN
+- C `GATE1C-QUERY-CONTRACT.md` — FROZEN
+- D `GATE1C-JOURNAL-PERSISTENCE.md` — FROZEN
+- E `GATE1C-COLLECTOR-ADAPTER-CONTRACT.md` — FROZEN
+- ADR-001 Collector Boundary — ACCEPTED
+- ADR-002 PostgreSQL Store — ACCEPTED
 
 ## Immediate objective
 
-Turn the accepted Gate 1A/1B semantics into implementation-facing contracts that are precise enough for Gate 2 PoC without coupling the Domain to PostgreSQL or to a specific Collector.
+Begin the Gate 2 PoC on the frozen Gate 1C contracts: realize the PostgreSQL
+Store, expose the read-only Query Contract, implement Journal persistence, and
+validate the Collector Adapter Contract with **rclone as the first real Collector
+for additive-safe validation only**.
 
-## Codex work package
+## Codex work package (Gate 2 PoC)
 
-Start from current remote `main` and read Issue #40.
+Preconditions: Gate 1C CLOSED (met); a Gate 2 execution issue from the Architect.
 
-Create:
+Planned scope (to be confirmed by the Gate 2 issue):
 
-`architecture/gate1c-implementation-contracts`
+1. PostgreSQL Store realization of the frozen A/B/C contracts.
+2. Journal persistence + projection catch-up per frozen D.
+3. Read-only Query Contract surface per frozen C.
+4. rclone Collector adapter for the additive-only role (E / ADR-001). It MUST NOT
+   claim destructive-safe COMPLETE while `skipped_scopes` is UNKNOWN.
+5. COMPLETE/removal Kernel logic validated with **controlled Snapshot V1/V2
+   fixtures**.
+6. Destructive COMPLETE deferred until a provider proves a positive completeness
+   signal (per-provider exhaust/truncation evidence).
 
-### PostgreSQL Store
+## Constraints carried forward
 
-Define the persistence representation for:
+- Domain != PostgreSQL schema/ORM.
+- failed commit preserves prior canonical truth.
+- canonical + journal + generation + input-order state commit atomically.
+- incomplete inputs cannot advance removal state.
+- append-only journal; root/resource_id immutability; consumer write prohibition.
+- Collector replaceability.
 
-- ResourceRoot + lifecycle
-- CanonicalResource + logical REMOVED tombstone
-- RemovalEvidenceState
-- Snapshot metadata/evidence required by accepted semantics
-- per-root Generation
-- serialized per-root admission/applied-input ordering state
-- applied snapshot identity / idempotency tracking
-- append-only Canonical Change Journal
-- correctness indexes/constraints
-
-### Transaction boundary
-
-Freeze exact transaction behavior so one reconcile atomically:
-
-1. checks generation/order preconditions
-2. applies canonical changes
-3. appends ordered journal events
-4. advances generation
-5. records applied snapshot/admission state
-6. commits all-or-nothing
-
-CAS/locking enforce ordering; database timing must not define it.
-
-### Query Contract
-
-Define the minimum provider-neutral read surface for future consumers:
-
-- roots
-- active resources
-- resource lookup
-- hierarchy/path resolution
-- explicit tombstone/history access
-- generation/status
-- Change Journal cursor/sequence consumption
-
-Consumers receive no canonical write path.
-
-### Change Journal persistence
-
-Freeze:
-
-- sequence scope
-- relation to generation
-- intra-generation event ordering
-- append-only guarantees
-- corrective events
-- projection catch-up semantics
-
-### Collector Adapter Contract
-
-Map AList/OpenList and rclone to the accepted normalized contracts:
-
-- traversal
-- failure visibility assurance
-- freshness evidence
-- identity assurance
-- optional hashes
-- skipped scopes/errors
-- root/scope mapping
-- operational complexity
-- license boundary
-
-Codex provides the evidence matrix and ADR recommendation.
-
-ChatGPT Architect makes the final architecture acceptance/selection.
-
-## Required consistency checks
-
-Before PR, prove:
-
-- every Gate 1B state has an unambiguous persistence representation
-- PARTIAL/STALE/SUSPICIOUS cannot advance removal evidence in transaction flow
-- confirmed removal tombstone + journal event commit atomically
-- duplicate replay is idempotent
-- stale/out-of-order input cannot overwrite newer truth
-- MOVE/RENAME + UPDATE journal ordering is preserved
-- DELETED root cannot reconcile
-- IDs cannot be reused
-- Consumer cannot mutate canonical truth
-- Collector-specific fields do not leak into Kernel Domain
-
-## Forbidden in Gate 1C
+## Forbidden
 
 - CloudSite integration
 - UI
-- product MVP implementation
 - Scanner Resume
 - native delta / true incremental
 - new gate names
-- silent change to Gate 1B semantics
+- silent change to Gate 1B/1C semantics
 - license-incompatible donor code copying
 
-## Gate 1C exit condition
+## Gate 2 exit direction
 
-ChatGPT Architect must be able to answer:
+Gate 2 PoC succeeds when:
 
-1. How is every accepted Domain state represented in PostgreSQL?
-2. What exact transaction boundary preserves previous truth?
-3. How are generation and admission ordering enforced?
-4. How is the journal sequenced and replayed?
-5. What can Consumers read?
-6. What can Consumers never write?
-7. How does a Collector prove normalized freshness/failure/identity assurance?
-8. Which initial Collector adapter should Gate 2 validate, and why?
-9. Can the Collector be replaced without rewriting Kernel semantics?
-
-Only then may Gate 2 PoC begin.
+1. Snapshot -> PostgreSQL Inventory works against the frozen A/B/C/D contracts.
+2. Reconcile is validated with controlled V1/V2 fixtures, including
+   COMPLETE/removal.
+3. rclone (additive-only) is validated as the first real Collector.
+4. No Kernel semantics were changed without an Architect decision.

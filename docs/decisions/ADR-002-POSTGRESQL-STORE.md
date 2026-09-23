@@ -1,12 +1,11 @@
 # ADR-002 — PostgreSQL as the Store realization behind the Store Interface
 
-> Status: **PROPOSED** — recommended by the Worker (Codex Executor). Becomes
-> **ACCEPTED** only after ChatGPT Architect review.
+> Status: **ACCEPTED** — Architect-approved in PR #43 (ARCHITECT FINAL ACCEPTANCE
+> — Gate 1C CLOSED, final verification head `7a3b32f`).
 > Date: 2026-09-24. Gate: 1C.
 > Related (FROZEN): `docs/architecture/GATE1C-POSTGRESQL-STORE.md` (A),
 > `docs/architecture/GATE1C-TRANSACTION-BOUNDARY.md` (B),
-> `docs/architecture/GATE1C-QUERY-CONTRACT.md` (C).
-> Related (PARTIAL_FOR_ARCH_REVIEW, PR #43 D/E round-1 rework):
+> `docs/architecture/GATE1C-QUERY-CONTRACT.md` (C),
 > `docs/architecture/GATE1C-JOURNAL-PERSISTENCE.md` (D).
 > Upstream: Gate 1A Store Interface; Gate 1B Domain/Reconcile/Completeness.
 
@@ -30,9 +29,9 @@ froze the semantics that persistence must realize:
 - root lifecycle and root-level-only DELETED tombstone semantics.
 
 Gate 1C A/B/C (FROZEN, PR #43 Final Freeze Decision) fixed the concrete schema,
-transaction boundary, and read-only Query Contract. D proposes the Journal
-persistence contract and is still **PARTIAL_FOR_ARCH_REVIEW** (PR #43 D/E
-round-1 rework); this ADR does not treat D as frozen.
+transaction boundary, and read-only Query Contract. D (the Journal persistence
+contract) is **FROZEN** in the PR #43 ARCHITECT FINAL ACCEPTANCE (Gate 1C CLOSED,
+final verification head `7a3b32f`).
 This ADR records **why PostgreSQL is the PoC Store** and what that commits us to.
 
 ---
@@ -40,8 +39,8 @@ This ADR records **why PostgreSQL is the PoC Store** and what that commits us to
 ## Decision
 
 Use **PostgreSQL** as the Store realization for the Gate 2 PoC, implementing the
-FROZEN A/B/C contracts and the D Journal-persistence contract (currently
-`PARTIAL_FOR_ARCH_REVIEW`), with these concrete commitments:
+FROZEN A/B/C contracts and the FROZEN D Journal-persistence contract, with these
+concrete commitments:
 
 1. **Isolation:** `READ COMMITTED` with explicit row locks / CAS; per-root
    serialization (`SELECT ... FOR UPDATE` or advisory lock) as the recommended
@@ -141,8 +140,7 @@ FROZEN A/B/C contracts and the D Journal-persistence contract (currently
 ## Evidence
 
 - FROZEN `GATE1C-POSTGRESQL-STORE.md`, `GATE1C-TRANSACTION-BOUNDARY.md`,
-  `GATE1C-QUERY-CONTRACT.md`; `GATE1C-JOURNAL-PERSISTENCE.md` (D,
-  `PARTIAL_FOR_ARCH_REVIEW`).
+  `GATE1C-QUERY-CONTRACT.md`, `GATE1C-JOURNAL-PERSISTENCE.md` (D).
 - Gate 1B `GATE1B-DOMAIN-MODEL.md`, `GATE1B-SAFE-RECONCILE.md`,
   `GATE1B-SNAPSHOT-COMPLETENESS.md`, `GATE1B-ADVERSARIAL-CASES.md`.
 - Gate 1A `GATE1A-STORE-QUERY-CONTRACT-SKELETON.md`,
