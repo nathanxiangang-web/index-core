@@ -158,7 +158,7 @@ skip evidence, which none of these candidates provides (E Sec 7.1).
 |-------------|----------------------|
 | Collector reports evidence; Kernel decides (Gate 1A B4) | Adapter never sets `complete=true`; Kernel owns acceptance. |
 | Optional `provider_object_id`/`hash` (INV-011) | Preserved; no provider excluded. |
-| `snapshot_identity` = (`kind`,`namespace`,`version`,`value`), no wall-clock | Adapter maps a documented whole-scope revision token, else a versioned deterministic digest over entry set + decision-relevant evidence; per-object ids are not tokens (E1/E2); the Kernel finalizes the IO3 identity after evaluation (E Sec 2.4.3). |
+| `snapshot_identity` = (`kind`,`namespace`,`version`,`value`), no wall-clock | Adapter maps a documented whole-scope revision token, else a versioned deterministic digest over entry set + decision-relevant evidence; per-object ids are not tokens (E1/E2); the Kernel finalizes the IO3 identity after evaluation and owns its canonicalization namespace/version (E Sec 2.4.3). |
 | `scope_shrink_corroboration` is not self-declared | Kernel/evaluation-owned; the adapter supplies only raw normalized evidence (E4); the finalized IO3 identity includes it (E Sec 2.4.3). |
 | C-9 skip evidence (`skipped_scopes` empty) | rclone RC cannot establish it; `skipped_scopes` stays UNKNOWN and rclone is limited to the additive-only role (E Sec 7.1/7.2). |
 | Root visibility / scope disjointness (Gate 1B) | Adapter owns `root_id -> scope`; `scope_descriptor` opaque to Kernel. |

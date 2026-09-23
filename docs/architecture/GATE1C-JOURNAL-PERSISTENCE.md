@@ -5,7 +5,8 @@
 > Produced by the Codex Executor (Worker) for ChatGPT Architect review.
 > Status: **PARTIAL_FOR_ARCH_REVIEW** (deliverable D; PR #43 D/E round-1
 > rework applied: D1 rebuild/checkpoint split, D2 lifecycle concurrency domain;
-> round-2 rework applied: J6 Journal-repair transaction exception, Sec 5/6/8/10).
+> round-2 rework applied: J6 Journal-repair transaction exception, Sec 5/6/8/10;
+> round-3 narrow fix: J6 repair permitted on a `DELETED` root).
 > Baseline: remote `main` = `6a131f17657807d9aee2921be1f286ceaff784e4`.
 > Depends on the FROZEN contracts `GATE1C-POSTGRESQL-STORE.md` (A),
 > `GATE1C-TRANSACTION-BOUNDARY.md` (B), `GATE1C-QUERY-CONTRACT.md` (C) and the
@@ -305,7 +306,14 @@ exception:
 - **Same per-root concurrency domain.** It MUST acquire the same per-root
   serialization/version guard as a reconcile (B Sec 1.1 `A1`, Sec 1.2 `R1`,
   Sec 2.2), and MUST validate the expected canonical generation under that guard
-  (B `R11`). It MUST be rejected when `lifecycle_state = 'DELETED'` (B `R4`).
+  (B `R11`).
+- **Permitted on a `DELETED` root (PR #43 D/E round-3 narrow fix).** The B `R4`
+  `DELETED` guard blocks **new external Snapshot reconciles**, NOT internal
+  Journal audit repair. A `DELETED` root retains its history precisely for audit,
+  so if its Journal lost or diverged from a transition that Canonical Inventory
+  still reflects, a J6 Journal-repair transaction MUST remain permitted on it.
+  The repair MUST still change **nothing** but the append-only Journal: no
+  resource mutation, no root lifecycle change, no generation advance.
 - **Current generation asserted.** The corrective event carries the **current,
   unchanged** `generation_number` of the root (Sec 5).
 - **`event_seq` = next per-root value.** It takes the next per-root `event_seq`
@@ -394,7 +402,7 @@ the consuming cursor semantics (`JC1`–`JC8`). D closes the protocol.
 | Atomic visibility | A read returns a single committed generation; no half-commit is observed. | C `CR1` |
 | Replay is a NO-OP | Same snapshot identity at the same generation emits **no** event and no generation bump. | Gate 1B IO3/Sec 2.4; U8 |
 | Re-reconcile is event-accurate | Same identity after the generation advanced runs a normal reconcile: mutation -> new events + `G+1`; zero mutation -> no events, generation unchanged, application row only. | B Sec 3, T12; A G14/G16 |
-| Journal repair is non-canonical | A `J6` Journal-repair transaction appends a corrective event **without** mutating canonical state and **without** advancing the generation; a failed repair leaves no durable event and the generation unchanged. | Gate 1B `J6`; Sec 8.2 |
+| Journal repair is non-canonical | A `J6` Journal-repair transaction appends a corrective event **without** mutating canonical state and **without** advancing the generation; a failed repair leaves no durable event and the generation unchanged. It remains permitted on a `DELETED` root (audit repair); only **new external reconciles** are blocked by the `R4` guard. | Gate 1B `J6`; Sec 8.2 |
 
 `PROPOSED` — failure-recording transaction shape (closes B `T-AT5`, `PROPOSED`):
 
@@ -444,6 +452,7 @@ the consuming cursor semantics (`JC1`–`JC8`). D closes the protocol.
 | JD13 | A dedicated root-lifecycle op and a reconcile target the same root concurrently | Both enter the same per-root serialization/version guard; the later one validates the committed generation / `DELETED` state and either applies on top or is rejected — no stale commit over the lifecycle transition, no second ordering system. |
 | JD14 | A Journal transition was lost/diverged while Canonical Inventory already reflects the change (Gate 1B `J6`) | A Kernel Journal-repair transaction appends a corrective `resource-*` event asserting current canonical truth: **no** Canonical Inventory change, generation unchanged, `event_seq` = next per-root value, `intra_generation_seq` = current max `+ 1` for that (`root_id`,`generation_number`); the corrected history is never edited/deleted/back-dated. |
 | JD15 | Full replay after a corrective append | Replaying the root's Journal from `event_seq = 0` reaches the same final projection as the pre-repair history plus the corrective event; no duplicate or contradictory canonical state; the repair creates no new generation. |
+| JD16 | A `DELETED` root's Journal has lost/diverged from a transition that Canonical Inventory still reflects | A J6 Journal-repair transaction is **permitted** on the `DELETED` root (the B `R4` guard blocks new external Snapshot reconciles, not internal Journal audit repair): it appends a corrective event under the same per-root guard with **no** change to resources, root lifecycle, or generation; a **new external Snapshot reconcile** on the same `DELETED` root is still rejected. |
 
 ---
 
@@ -453,7 +462,7 @@ the consuming cursor semantics (`JC1`–`JC8`). D closes the protocol.
 |------|-----|------|
 | `intra_generation_seq` exact allocation algorithm (Kernel transition enumeration) | `PROPOSED` | Sec 6 fixes scoping/contiguity; the Kernel-side enumeration implementation is a Gate 2 choice under the frozen semantics. |
 | Append-only trigger vs role-only enforcement | `CANDIDATE` | Sec 7.2 requires role revocation; the trigger is optional defense-in-depth. |
-| `J6` Journal-repair transaction (append without canonical mutation) | `PROPOSED` | Sec 8.2 closes the Path A feasibility gap; the exception is the Worker's closure and needs Architect acceptance. |
+| `J6` Journal-repair transaction (append without canonical mutation) | `PROPOSED` | Sec 8.2 closes the Path A feasibility gap and is permitted on a `DELETED` root (audit repair; `R4` blocks only new external reconciles); needs Architect acceptance. |
 | Corrective-event `resource-*` type selection policy | `PROPOSED` | Sec 8 fixes mechanism/constraint; the semantic choice rule follows Kernel repair logic (Gate 2). |
 | Projection rebuild checkpoint storage | `CANDIDATE` | Sec 9 fixes the protocol; whether cursors/checkpoints are persisted in a table or derived is implementation. A non-zero resume MUST have a matching checkpoint (state + cursor); the storage form is the choice. |
 | Lifecycle event emitted by a dedicated lifecycle op vs a catalog reconcile | `PROPOSED` | Sec 5.1 requires one atomic transaction either way. |

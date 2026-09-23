@@ -8,7 +8,8 @@
 > rework applied: E1 identity gate, E2 digest canonicalization, E3
 > skipped_scopes UNKNOWN, E4 Kernel-owned shrink corroboration; round-2 rework
 > applied: final IO3 identity finalized after Kernel evaluation, rclone Gate-2
-> traversal/evidence mode + PoC role split).
+> traversal/evidence mode + PoC role split; round-3 narrow fix: final IO3 digest
+> canonicalization namespace/version are Kernel-owned).
 > Baseline: remote `main` = `6a131f17657807d9aee2921be1f286ceaff784e4`.
 > Depends on `GATE1A-COLLECTOR-CONTRACT-SKELETON.md`,
 > `GATE1B-SNAPSHOT-COMPLETENESS.md`, `GATE1B-DOMAIN-MODEL.md` and the FROZEN
@@ -173,10 +174,15 @@ application would record identity@G and a later, stronger observation at the sam
 generation would be wrongly collapsed to an IO3 NO-OP, so the Kernel could never
 re-evaluate removal eligibility.
 
-> `PROPOSED` (E2) — for the digest form the canonicalization rule-set id is the
-> `snapshot_identity_namespace` (A Sec 3.8). Changing this rule set is a new
-> `snapshot_identity_version`, hence a distinct identity (`C-AS1`); old and new
-> digests never collapse.
+> `PROPOSED` (E2; ownership refined by PR #43 D/E round-3) — the digest form
+> carries a canonicalization rule-set id in `snapshot_identity_namespace` and a
+> rule-set version in `snapshot_identity_version` (A Sec 3.8). Ownership is
+> two-layered: the adapter's **raw evidence** identity input is adapter-scoped
+> (it fixes only the normalized entry set + traversal/completeness evidence),
+> while the **final IO3 identity** (Sec 2.4.3) is **Kernel-owned** because it
+> additionally covers Kernel-derived decision evidence. Changing either rule set
+> is a new `snapshot_identity_version`, hence a distinct identity (`C-AS1`); old
+> and new digests never collapse.
 >
 > `DERIVED` The native `REVISION_TOKEN` path MUST also preserve the E2 guarantee:
 > two submissions whose reconcile evidence is materially different MUST NOT
@@ -198,6 +204,12 @@ Sec 3.5).
 - **Gate 2 default/final form.** The finalized `DETERMINISTIC_DIGEST` is the
   default and final IO3 identity for Gate 2; a native whole-scope token never
   replaces it.
+- **Kernel-owned canonicalization.** The final IO3 identity's
+  `snapshot_identity_namespace` (canonicalization rule-set id) and
+  `snapshot_identity_version` are **Kernel-owned**, because the finalized digest
+  covers Kernel-derived decision evidence (e.g. `scope_shrink_corroboration`).
+  The adapter owns only its raw evidence/provenance input and MUST NOT dictate
+  the final digest's namespace/version.
 - Consequence: `NONE` / `CORROBORATED` / `CONTRADICTED` produce **distinct** IO3
   identities wherever the distinction changes reconcile eligibility.
 - A native whole-scope `REVISION_TOKEN`, where admitted under E1, may be retained

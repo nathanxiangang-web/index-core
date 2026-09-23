@@ -462,7 +462,7 @@ advanced (a re-reconcile); each successful application appends one row.
 |--------|------|------|-------|
 | `root_id` | `uuid` | NO | FK -> `index_root`. |
 | `snapshot_identity_kind` | `text` | NO | CHECK IN (`REVISION_TOKEN`,`DETERMINISTIC_DIGEST`). Part of the identity. |
-| `snapshot_identity_namespace` | `text` | NO | Namespace that makes the value collision-free: for a token, the adapter/provider scope that issued it; for a digest, the canonicalization rule-set id. Adapter-declared. Part of the identity. |
+| `snapshot_identity_namespace` | `text` | NO | Namespace that makes the value collision-free: for a native **token**, the adapter/provider scope that issued it (adapter-declared); for the **final Kernel IO3 digest**, the canonicalization rule-set id, which is **Kernel-owned** (the adapter supplies only raw evidence/provenance). Part of the identity. PR #43 D/E round-3 narrow clarification. |
 | `snapshot_identity_version` | `text` | NO | Version of the identity algorithm/contract (required for the digest form; token-scheme version for the token form). Part of the identity. |
 | `snapshot_identity_value` | `text` | NO | The revision token string or the digest hex. |
 | `snapshot_id` | `uuid` | NO | The snapshot applied in this application. |
@@ -521,6 +521,14 @@ Constraints:
 > evidence such as `scope_shrink_corroboration`. A native whole-scope revision
 > token may be retained as provenance/input but MUST NOT bypass Kernel-derived
 > decision evidence. `FACT`.
+>
+> `DERIVED` (PR #43 D/E round-3 narrow clarification, not a redesign) — because
+> the finalized `DETERMINISTIC_DIGEST` is computed by the Kernel after evaluation
+> and covers Kernel-derived decision evidence, its canonicalization
+> `snapshot_identity_namespace` and `snapshot_identity_version` are
+> **Kernel-owned**, not adapter-declared. The adapter owns only its raw
+> evidence/provenance identity input; the token-form namespace remains the
+> adapter/provider scope that issued the token. `FACT`.
 
 ### 3.9 T9 `index_journal_event` — Canonical Change Journal (append-only)
 
