@@ -16,7 +16,8 @@ This directory contains two kinds of documentation:
 | Configure rclone / AList / OpenList | [COLLECTORS.md](COLLECTORS.md) |
 | Integrate a new Web/application | [INTEGRATION.md](INTEGRATION.md) |
 | Operate / deploy / recover | [OPERATIONS.md](OPERATIONS.md) |
-| Review planned provider-native incremental ingestion | [architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md](architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md) |
+| Review incremental discovery architecture | [architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md](architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md) |
+| Follow active incremental capability research | [research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md](research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md) |
 
 A complete consumer example is available in the separate repository:
 
@@ -35,7 +36,7 @@ Gate 3  Standalone runtime + scale            CLOSED
 Gate 4  Independent consumer validation       CLOSED
 
 Current mode: Stable Alpha Foundation / Maintenance
-IndexCore extension planning: Post-MVP Incremental (Issue #57, IMPLEMENTATION NOT AUTHORIZED)
+IndexCore extension research: Post-MVP Incremental Discovery (Issue #59 under #57, IMPLEMENTATION NOT AUTHORIZED)
 Next product blueprint phase: Gate 5 (NOT AUTHORIZED)
 ```
 
