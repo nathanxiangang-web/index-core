@@ -156,7 +156,7 @@ candidate pair resolves to exactly one transition:
 [ResourcePresence = PRESENT, RemovalEvidenceState = REMOVAL_CANDIDATE]
     |
     v  (removal validation passed AND governing snapshot COMPLETE -- Sec 1.3.2)
-[ResourcePresence = REMOVED]   # ResourceEntry deleted; resource-removed journal event appended
+[ResourcePresence = REMOVED]   # logical tombstone retained; resource-removed journal event appended
 ```
 
 The first three rows are `ResourcePresence = PRESENT` with evolving
@@ -174,7 +174,7 @@ produces no canonical mutation / no journal event").
 ```
 ResourcePresence:               # externally visible canonical state
   PRESENT                       # resource exists in Canonical Inventory
-  REMOVED                       # resource deleted (CONFIRMED_REMOVED)
+  REMOVED                       # logically removed/tombstoned (CONFIRMED_REMOVED)
 
 RemovalEvidenceState:           # Kernel-internal lifecycle evidence
   NONE                          # observed in the latest accepted snapshot
@@ -282,9 +282,7 @@ journal event.
 >   accepted snapshot between promotion and validation. Evidence:
 >   principle 1.
 
-On `CONFIRMED_REMOVED`: the `ResourceEntry` is deleted from Canonical
-Inventory and a `resource-removed` journal event is appended, all inside
-the same committed reconcile transaction (Gate 1A C1.2, C2.2 atomic
+On `CONFIRMED_REMOVED`: the canonical resource transitions to logical `ResourcePresence = REMOVED`; the tombstoned record is retained for identity/audit continuity, excluded from the active inventory, and a `resource-removed` journal event is appended, all inside the same committed reconcile transaction (Gate 1A C1.2, C2.2 atomic
 commit).
 
 #### 1.3.3 When does MISSING become CONFLICT? (ambiguous evidence)
@@ -322,10 +320,7 @@ commit).
 | INV-004 | Incomplete snapshot CANNOT authorize `CONFIRMED_REMOVED`. Only `COMPLETE` snapshots (Completeness contract) can authorize destructive removal. | `ACCEPTED_SEMANTIC` | Principle 4, Sec 1.3.1 C1, Sec 1.3.2 V1, Completeness contract contract |
 | INV-013 | Any uncommitted reconcile MUST NOT destroy previous canonical truth. | `ACCEPTED_SEMANTIC` | Gate 1A C2.2 (atomic commit + rollback + zero durable mutation), Sec 2.3, Sec 2.7 |
 
-> `ACCEPTED_SEMANTIC` Destructive removal (`CONFIRMED_REMOVED` ->
-> `resource-removed`) is the ONLY transition that deletes a canonical
-> `ResourceEntry`, and it is gated by both completeness (`COMPLETE`) and
-> validation. All other transitions are additive or in-place update.
+> `ACCEPTED_SEMANTIC` Destructive removal (`CONFIRMED_REMOVED` -> `resource-removed`) is the ONLY transition that changes consumer-visible resource presence from `PRESENT` to logical `REMOVED`. It does not physically erase the canonical tombstone. The transition is gated by both completeness (`COMPLETE`) and validation. All other transitions are additive, in-place update, or internal removal-evidence mutation.
 > Evidence: Sec 1.1 table (canonical mutation column), INV-003, INV-004.
 
 ---
@@ -638,8 +633,8 @@ inline. Runtime test execution against product code is
 | --- | --- | --- | --- |
 | a | Every `RESOLVED` entry reaches ADD/UPDATE/RENAME/MOVE/UNCHANGED | covered | Sec 1.2 rule 3/4 |
 | b | Every `UNRESOLVED` entry reaches CONFLICT | covered | Sec 1.2 rule 2 |
-| c | Every `COMPLETE`-governed MISSING can reach REMOVAL_CANDIDATE/CONFIRMED_REMOVED; every `PARTIAL`-governed MISSING cannot | covered | Sec 1.3.1 C1, INV-004 |
-| d | Every externally-visible canonical-mutating transition (ADD/UPDATE/RENAME/MOVE/CONFIRMED_REMOVED) produces exactly one journal event; every non-mutating transition produces none | covered | Sec 3.1, J1, J4 |
+| c | COMPLETE-governed absence may advance removal evidence toward REMOVAL_CANDIDATE/CONFIRMED_REMOVED; PARTIAL/STALE/SUSPICIOUS absence cannot create or advance removal evidence | covered | Sec 1.2 rule 5, Sec 1.3.1 C1, INV-004/INV-022 |
+| d | Every externally visible resource transition (ADD/UPDATE/RENAME/MOVE/CONFIRMED_REMOVED) produces its resource journal event; root DEPRECATED/DELETED lifecycle transitions produce their root events; internal removal-evidence and no-op/conflict/rejected outcomes produce none | covered | Sec 3.1, J1, J4 |
 | e | Every journal event corresponds to a committed transition | covered | J1 |
 | f | Canonical-wins on Journal disagreement; Journal history append-only; repair via corrective append or derived-projection rebuild | covered | J5, J6, Sec 3.4 (Blocker G) |
 | g | MISSING/REMOVAL_CANDIDATE are NOT Consumer-visible canonical state; only ResourcePresence is | covered | Sec 1.3 state-field split (Blocker F) |
@@ -730,7 +725,7 @@ and out of scope for this document.
 | Do NOT design completeness acceptance (Completeness contract) | Met -- completeness is consumed as an input; only `COMPLETE`/`PARTIAL`/`REJECTED` gating is defined. |
 | Do NOT design PostgreSQL schema/SQL/migration/transaction implementation | Met -- no schema, SQL, migration, or ORM appears; Store atomicity is cited as a Gate 1A boundary. |
 | Do NOT design exact Query API | Met -- Query Contract is not designed here (Gate 1A C3 deferred it to Gate 1B read API; this doc is reconcile/journal semantics only). |
-| Do NOT design journal persistence/event schema (Gate 1C) | Met -- journal *semantics* (5 events, rules) are defined; payload schema and persistence are deferred to Gate 1C. |
+| Do NOT design journal persistence/event schema (Gate 1C) | Met -- journal *semantics* (7 events: five resource events plus two root-lifecycle events) are defined; payload schema and persistence are deferred to Gate 1C. |
 | Do NOT write product code | Met -- document only. |
 | Do NOT select final Collector | Met -- Collector is referenced as the snapshot source; no selection. |
 | Do NOT design Scanner checkpoint/resume | Met -- not discussed (principle 10: not Kernel's default). |
