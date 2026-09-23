@@ -31,6 +31,23 @@ Final executable evidence:
 
 `INDEXCORE_FROZEN_CONTRACT_CHANGES: NONE`
 
+## Current usage documentation
+
+For running or integrating the accepted IndexCore Alpha, use:
+
+- `README.md`
+- `docs/README.md`
+- `docs/QUICKSTART.md`
+- `docs/CLI.md`
+- `docs/HTTP-API.md`
+- `docs/COLLECTORS.md`
+- `docs/INTEGRATION.md`
+- `docs/OPERATIONS.md`
+
+Core development for the accepted Alpha scope is complete. Operational maintenance,
+bug fixes, security hardening, and separately Architect-approved IndexCore changes
+may continue without turning deferred product features into Kernel responsibilities.
+
 ## Gate 4 conclusion
 
 The public read-only `/v1` Query Contract is sufficient for a clean new

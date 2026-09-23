@@ -27,24 +27,24 @@ pg-down:
 build:
 	$(GO) build ./...
 
-# Gate 3 Alpha binary with build identity.
+# IndexCore Alpha binary with build identity.
 bin:
 	$(GO) build -ldflags "$(LDFLAGS)" -o bin/indexcore ./cmd/indexcore
 
 fmt:
 	$(GO) fmt ./...
 
-# Tests run against a real PostgreSQL 18 (Gate 2/Gate 3 requirement).
+# Tests run against a real PostgreSQL 18 per the accepted Store/runtime contract.
 # -p 1 serializes packages so DB-backed packages do not reset the same schema concurrently.
 test:
 	INDEXCORE_TEST_DATABASE_URL="$(TEST_DSN)" $(GO) test -p 1 ./... $(ARGS)
-# Gate 3 P8 scale harness (>=20k resources). Override N with SCALE_N=<n>.
+# Accepted scale harness (>=20k resources). Override N with SCALE_N=<n>.
 SCALE_N ?= 20000
 scale:
 	INDEXCORE_TEST_DATABASE_URL="$(TEST_DSN)" INDEXCORE_SCALE_TEST=1 INDEXCORE_SCALE_N=$(SCALE_N) \
 		$(GO) test ./internal/runtime/scale -run TestScalePopulationAndDelta -v -timeout 20m
 
-# Gate 3 P9 packaging.
+# Docker packaging.
 docker-build:
 	docker build -t indexcore:alpha \
 		--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg DATE=$(DATE) .
@@ -54,6 +54,6 @@ compose-up:
 
 compose-down:
 	docker compose down
-# Gate 3 G3-R2.6 clean-volume Compose smoke (down -v -> up --build -> ready -> restart).
+# Clean-volume Compose smoke (down -v -> up --build -> ready -> restart).
 compose-smoke:
 	bash scripts/compose-smoke.sh
