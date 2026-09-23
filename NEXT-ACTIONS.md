@@ -10,7 +10,14 @@ Execution owner: **none currently**
 
 Status:
 
-**NO ACTIVE IMPLEMENTATION GATE**
+**ARCHITECTURE PLANNING ACTIVE / NO IMPLEMENTATION AUTHORIZED**
+
+Current architecture planning:
+
+- Issue #57 — Provider-native delta / provider cursor / dirty-scope incremental ingestion
+- Blueprint: `docs/architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md`
+
+Worker execution remains **NONE** until the incremental blueprint is Architect-accepted and a bounded implementation contract is opened.
 
 Accepted Gate-4 merge commits:
 
@@ -70,7 +77,35 @@ successor product.
 
 CloudSite 1.0 remains **Legacy / Frozen Product**.
 
-## Next blueprint phase
+## IndexCore Post-MVP Incremental planning
+
+This is a separate IndexCore infrastructure extension and does **not** consume or authorize Gate 5.
+
+Planning target:
+
+```text
+Provider
+   ↓
+provider cursor / native change feed
+   ↓
+durable incremental batch
+   ↓
+existing Kernel safety / identity / reconcile
+   ↓
+Canonical Inventory + Journal
+```
+
+The first recommended implementation phase is **additive incremental only**:
+
+- positive create/update/move observations may reuse the existing Snapshot/Kernel path;
+- provider delete events become verification/dirty-scope work, not immediate canonical deletion;
+- cursor gaps/expiry/reset force full-resync fallback;
+- existing full `scan` behavior remains available and unchanged;
+- proposed new `sync` path prefers incremental when safe.
+
+Implementation is **NOT AUTHORIZED** yet. The Architect must first accept Issue #57's blueprint and open an execution contract.
+
+## Next product blueprint phase
 
 **Gate 5 — Future Product Architecture**
 
@@ -112,7 +147,8 @@ Do not begin:
 - direct IndexCore write APIs;
 - direct browser-to-IndexCore public exposure;
 - changes to frozen Gate 1B/1C semantics;
-- Scanner Resume / native delta / multi-daemon HA unless separately planned.
+- Scanner Resume / multi-daemon HA unless separately planned.
+- native delta implementation until Issue #57 architecture is accepted and a separate execution contract is opened.
 
 ## Recovery rule
 
