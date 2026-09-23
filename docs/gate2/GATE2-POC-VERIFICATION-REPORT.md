@@ -256,4 +256,38 @@ FROZEN_CONTRACT_CHANGES: NONE
 Tests: real PostgreSQL 18.6 + real rclone v1.75.1 process-boundary run; 65 test
 functions; `go vet` / `gofmt` clean.
 
+---
+
+# Round 5 rework (PR #46 Round-4 review, R4-1..R4-4)
+
+Head: **`548404e`**.
+
+| Item | Fix |
+|------|-----|
+| R4-1 | `AdmitOrResumeSnapshot` reuses an existing PENDING `admission_seq` for the same Snapshot (never renumbers); `Coordinator.ProcessHead` processes the existing absolute head so a stranded later input progresses after the earlier head terminalises. Tests: same-seq resume, no duplicate PENDING rows, stranded input progresses without a new admission. |
+| R4-2 | Corroboration is anchored to the **first uncorroborated shrink** of the episode: the candidate must itself have `acceptance_state=SUSPICIOUS` + `scope_shrink_corroboration=NONE`, match the reduced scope signature, and have **no intervening admitted observation with a different signature**. An old pre-growth same-signature Snapshot no longer corroborates. |
+| R4-3 | Q6 `ListActivePage` / Q7 `ListRemovedPage` are **whole-root reads** (no parent filter); only Q4 root-level `ListResources` applies `parent IS NULL`. Tests cover a nested directory + child and a nested removed tombstone. |
+| R4-4 | `.gitignore` split `__pycache__/.env` into `__pycache__/`, `.env`, `/bin/`. |
+
+## Round 5 status template
+
+```
+STATUS: READY_FOR_ARCH_REVIEW — GATE 2 POC (Round 5)
+
+POSTGRESQL_STORE: PASS
+TRANSACTION_BOUNDARY: PASS
+KERNEL_EVALUATION: PASS
+SAFE_RECONCILE: PASS
+CHANGE_JOURNAL: PASS
+QUERY_CONTRACT: PASS
+FIXTURE_POC: PASS
+RCLONE_ADAPTER_ADDITIVE: PASS (additive only; destructive-safe COMPLETE explicitly unsupported)
+
+FROZEN_CONTRACT_CHANGES: NONE
+```
+
+Tests: real PostgreSQL 18.6 + real rclone v1.75.1 process-boundary run; 69 test
+functions; `go vet` / `gofmt` clean.
+
+
 
