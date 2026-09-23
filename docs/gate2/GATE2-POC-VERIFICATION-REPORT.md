@@ -128,3 +128,48 @@ frozen contract; each is an implementation/CANDIDATE selection to be reviewed.
 ## 8. Architecture contradictions
 
 **NONE.** No frozen Gate 1B/1C semantic was changed. No contract conflict was found.
+---
+
+# Round 2 rework (PR #46 Architect review, B1–B7)
+
+Head: **`74c3585`**. Green tests do not override the frozen contracts; the
+following were semantic violations / end-to-end gaps, now fixed.
+
+| Item | Fix | Where |
+|------|-----|-------|
+| B1 Stable Identity | R3 now requires continuity context: same-path hash = MATCHED; cross-path hash to a MISSING candidate inside the horizon = MATCHED; cross-path hash to a still-PRESENT resource = CONFLICT; MISSING outside horizon = UNRESOLVED; R11 insufficient evidence = UNRESOLVED (never guessed); R10 provider-id change = UNRESOLVED; R8 imposter = NEW_RESOURCE; a REMOVED tombstone is never re-matched (reappearance = fresh ADD); move horizon enforced; `MoveRecognitionHorizon` now used | `internal/kernel/reconcile/identity.go` |
+| B2 removal independence | first qualifying COMPLETE absence only records MISSING evidence; confirmation requires a later, independently admitted COMPLETE snapshot (V2c); same-snapshot re-admission does not count; reappearance resets evidence; PARTIAL/STALE/SUSPICIOUS never advance | `reconcile.go`, migration `0002`, `missing_first_snapshot_id` |
+| B3 identity evidence in tx | reconcile loads rich prior and appends versioned `index_identity_evidence_observation` rows inside the Stage-2 transaction; `tagProvider()` removed | `LoadPriorResources`, `AppendObservation`, `tx.go` |
+| B4 full P3 pipeline | Kernel coordinator evaluates Snapshot → acceptance → final `DETERMINISTIC_DIGEST` → IO3; digest now covers `hash_algorithm`, `content_type`, provider assurance; integration flow injects neither identity nor acceptance | `internal/kernel/pipeline`, `EvaluateSnapshot` |
+| B5 query separation | consumer-facing read-only `QueryReader` / `query.Reader` facade (no `*postgres.Store`, no `Pool()`); pagination reads generation + rows in ONE read-only REPEATABLE READ transaction | `internal/query/reader.go`, `postgres/query.go` |
+| B6 snapshot lifecycle | terminal outcomes map to RECONCILED/REJECTED atomically inside the reconcile tx; retryable failures leave the Snapshot EVALUATED | `tx.go`, `SetSnapshotLifecycleState` |
+| B7 rclone | failure visibility WEAK by default (STRONG only via an explicit mode/backend-qualified opt-in); the real rclone binary is exercised against a local backend across the process boundary | `internal/collector/rclone` |
+
+Additional tests added: cross-path hash vs PRESENT, MISSING inside/outside horizon,
+weak-evidence UNRESOLVED, provider-id change, REMOVED reappearance, removal
+independence (first-only / same-snapshot replay / independent confirmation),
+reappearance reset, move+update ordered pair, digest decision-field coverage,
+snapshot lifecycle, rclone real process boundary.
+
+## Round 2 status template
+
+```
+STATUS: READY_FOR_ARCH_REVIEW — GATE 2 POC (Round 2)
+
+POSTGRESQL_STORE: PASS
+TRANSACTION_BOUNDARY: PASS
+KERNEL_EVALUATION: PASS
+SAFE_RECONCILE: PARTIAL   # implemented paths obey frozen R1/R3/R4/R5/R8/R10/R11; R6/R7 nuance still not exhaustive
+CHANGE_JOURNAL: PASS
+QUERY_CONTRACT: PASS
+FIXTURE_POC: PASS
+RCLONE_ADAPTER_ADDITIVE: PASS (additive only; destructive-safe COMPLETE explicitly unsupported)
+
+FROZEN_CONTRACT_CHANGES: NONE
+```
+
+CANDIDATE implementation choices (chosen for PoC ≠ newly frozen architecture):
+`missing_first_snapshot_id` (Store-internal independence proof), snapshot-entry
+provider assurance hint, entry `ParentRef` = parent canonical path, enum storage
+as constrained text, T8 primary key = six C-AS1 columns, migration runner, lock/CAS
+mechanism, shrink threshold 0.5 (D-DEFER-7).
