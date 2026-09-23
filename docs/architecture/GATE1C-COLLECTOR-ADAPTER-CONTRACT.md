@@ -6,7 +6,9 @@
 > Produced by the Codex Executor (Worker) for ChatGPT Architect review.
 > Status: **PARTIAL_FOR_ARCH_REVIEW** (deliverable E; PR #43 D/E round-1
 > rework applied: E1 identity gate, E2 digest canonicalization, E3
-> skipped_scopes UNKNOWN, E4 Kernel-owned shrink corroboration).
+> skipped_scopes UNKNOWN, E4 Kernel-owned shrink corroboration; round-2 rework
+> applied: final IO3 identity finalized after Kernel evaluation, rclone Gate-2
+> traversal/evidence mode + PoC role split).
 > Baseline: remote `main` = `6a131f17657807d9aee2921be1f286ceaff784e4`.
 > Depends on `GATE1A-COLLECTOR-CONTRACT-SKELETON.md`,
 > `GATE1B-SNAPSHOT-COMPLETENESS.md`, `GATE1B-DOMAIN-MODEL.md` and the FROZEN
@@ -182,6 +184,45 @@ re-evaluate removal eligibility.
 > this, the adapter MUST use the deterministic digest. `FACT` (IO3 correctness,
 > E2).
 
+#### 2.4.3 Final IO3 identity is finalized **after** Kernel evaluation (PR #43 D/E review round 2)
+
+The adapter feeds a normalized **raw identity input** (the Sec 2.4.2 digest over
+the normalized entry set + traversal/completeness evidence, or a native revision
+token admitted under the E1 gate). The identity that **T8 / IO3 actually compare**
+is the **Kernel-finalized `DETERMINISTIC_DIGEST`**, computed and finalized
+**after** Kernel evaluation over the normalized entry set **plus all
+reconcile-decision-relevant evidence, including Kernel-derived decision
+evidence** such as `scope_shrink_corroboration` (Sec 2.5; persisted in A
+Sec 3.5).
+
+- **Gate 2 default/final form.** The finalized `DETERMINISTIC_DIGEST` is the
+  default and final IO3 identity for Gate 2; a native whole-scope token never
+  replaces it.
+- Consequence: `NONE` / `CORROBORATED` / `CONTRADICTED` produce **distinct** IO3
+  identities wherever the distinction changes reconcile eligibility.
+- A native whole-scope `REVISION_TOKEN`, where admitted under E1, may be retained
+  as **provenance / input basis**, but MUST NOT bypass Kernel-derived decision
+  evidence: it cannot by itself define the final IO3 identity when
+  evaluation-derived evidence differs.
+- Persistence timing: `scope_shrink_corroboration` is set **once** by the Kernel
+  during `SUBMITTED -> EVALUATED` and is immutable thereafter (A Sec 3.5, narrow
+  clarification); the finalized digest is therefore stable for a given evaluated
+  Snapshot.
+
+**Failure case this closes.** At the same generation `G`, S1 observes a
+significant scope shrink whose corroboration is `NONE`; it reconciles additively
+(zero canonical mutation), so identity `X` is recorded at `G`. A later,
+independent S2 observes the **same** reduced entry set, but its evidence lets the
+Kernel derive `CORROBORATED` at `G`. If the identity were the adapter's raw
+observation, S2 would also map to `X` and IO3 would wrongly NO-OP it, so the
+`CORROBORATED` observation could never authorize the removal reconcile. Because
+the finalized digest includes the Kernel-owned `scope_shrink_corroboration`, S2's
+identity differs from `X` and S2 is **not** collapsed to a NO-OP.
+
+`DERIVED` The identity must be the identity of the **evaluated Snapshot
+semantics**, not the adapter's raw observation. `FACT` (frozen `C-AS*` + IO3;
+Gate 1B Sec 3.1.3).
+
 ### 2.5 `scope_shrink_corroboration` is Kernel/evaluation-owned (PR #43 D/E review round 1, E4)
 
 `scope_shrink_corroboration` (Gate 1B Sec 3.1.3; persisted in A Sec 3.5 as
@@ -200,7 +241,7 @@ self-declare it.
 - The significant-shrink threshold value is a Gate 1C/runtime config
   (`D-DEFER-7`), not a Collector concern.
 
-`DERIVED` (Gate 1B Sec 3.1.3, C-7/C-9; A Sec 3.7). The adapter boundary stays
+`DERIVED` (Gate 1B Sec 3.1.3, C-7/C-9; A Sec 3.5). The adapter boundary stays
 neutral: no provider-specific Kernel field is introduced. `FACT`.
 
 ---
@@ -421,38 +462,73 @@ Collector/Kernel boundary (Gate 1A). `FACT`.
 
 ---
 
-## 7. Initial adapter recommendation
+## 7. Initial adapter recommendation and PoC role split
 
 `PROPOSED` (recommendation; the binding decision with alternatives is
-`ADR-001-COLLECTOR-BOUNDARY.md`):
+`ADR-001-COLLECTOR-BOUNDARY.md`).
 
-**Recommend rclone as the initial Collector adapter**, on contract-fit grounds:
+### 7.1 Gate-2 rclone traversal/evidence mode (PR #43 D/E round 2)
 
-1. **License (gate):** MIT — no AGPL isolation burden, directly usable as a
-   process/RC boundary. AList/OpenList are AGPL-3.0 and would require strict
-   isolation + separate legal review.
-2. **Failure visibility (gate, conditional):** can declare `STRONG` **in the
-   traversal mode the adapter actually uses** — i.e. only where that mode
-   propagates typed errors and preserves the evidence the frozen completeness
-   gate needs (C-9/C-9a). `STRONG` is NOT a blanket property of every rclone
-   backend/mode; the adapter MUST declare the visibility class per mode and MUST
-   NOT claim `STRONG` where errors can still be swallowed. Where it does hold,
-   successes are not auto-degraded to `SUSPICIOUS` (C-9a). AList/OpenList are
-   `WEAK` (silent swallow), which structurally blocks treating a reported success
-   as trustworthy.
-3. **Identity/hash:** DRIVER_DEPENDENT, exactly like AList — so rclone is **not**
-   worse on the dimensions that matter for optionality, while better on the
-   gates.
-4. **Operations:** single binary / RC daemon; no mandatory long-running
-   third-party service.
+The concrete Gate-2 rclone mode considered is RC `operations/list` with
+`recurse=true` (or the equivalent CLI `lsjson --recursive`). On the accepted
+D02/D03 evidence this mode **cannot establish confirmed no skips on a successful
+scan**:
 
-**AList/OpenList** remain a supported adapter path (independent process / public
-API boundary), suitable where the deployment already runs AList and accepts the
-`WEAK` failure-visibility downgrade.
+- `operations/list` returns only a `list` array with **no completeness marker,
+  total, or cursor**; pagination is internal and not exposed
+  (`d03/W-B-RCLONE-COMPLETENESS-RC.md` Q7; `fs/operations/rc.go:27-80`).
+- For backends **without** native `ListR` the traversal falls back to
+  `listRwalk`, whose callback swallows per-directory list errors, logs them, and
+  returns only the **last** one; for backends **with** native `ListR` the error
+  semantics are backend-specific. Either way there is **no structured skipped-set**
+  (`d03/W-B-...` Q4/Q5).
+- Accepted D03 verdict: **no** examined tool can detect a backend that returns a
+  partial list **without an error** (silent truncation); a snapshot builder may
+  rely on "error returned ⇒ scan incomplete" but **cannot** rely on "no error ⇒
+  scan complete" (`d03/W-D-COLLECTOR-GAP-MATRIX.md`, finding F3 and the
+  silent-truncation finding).
 
-`INFERENCE` Because no candidate proves provider-complete traversal, the
-decisive contract-fit difference is the combination of **license** and
-**failure visibility**, both of which favor rclone.
+`DERIVED` Consequently `skipped_scopes` for this mode MUST be encoded as
+absent/`NULL` (UNKNOWN, Sec 2.3.1) — never `[]`. A successful rclone RC scan
+therefore does **not** satisfy the frozen completeness gate C-9's
+"`skipped_scopes` empty" positive condition, and cannot by itself authorize a
+destructive/COMPLETE reconcile. The absence of a structured skip list is **not**
+positive evidence of no skips. `FACT`.
+
+### 7.2 PoC role split (not a blanket rclone selection)
+
+Because rclone RC cannot establish confirmed-no-skips, rclone is **NOT accepted
+as the initial adapter for the PoC role that must exercise COMPLETE/removal
+semantics**. The roles are split:
+
+1. **Additive-only PoC role — rclone is acceptable (leading candidate).** Where a
+   reconcile is additive (additions only), an UNKNOWN skip set can only **delay**
+   additions; it can never authorize removal. On the contract-fit gates that
+   matter here — license (MIT) and failure visibility (`STRONG` **conditional on
+   the mode actually used**, typed + propagated) — rclone leads: AList/OpenList
+   are `WEAK` (silent swallow) and AGPL-3.0, and would require strict isolation +
+   legal review.
+2. **COMPLETE/removal-semantics PoC role — requires a positive completeness
+   signal; NOT satisfied by rclone RC.** This role needs an adapter/traversal mode
+   that can emit `skipped_scopes = []` from a **positive** end-of-enumeration
+   signal (every directory/page enumerated with the provider explicitly reporting
+   no truncation). That is a **per-provider** capability, not an rclone-wide one.
+   The concrete candidate path is a **direct-provider adapter** whose provider
+   listing API exposes an explicit exhaust/truncation flag, validated per provider
+   before `[]` may be emitted (Sec 2.3.1). Until such a provider is validated
+   this role is **BLOCKED/DEFERRED**; it MUST NOT be faked by treating UNKNOWN as
+   empty.
+
+**AList/OpenList** remain a supported boundary adapter path (independent process /
+public API boundary) where the deployment already runs AList and accepts the
+`WEAK` failure-visibility downgrade; they do not close the completeness gap
+either.
+
+`INFERENCE` Because no examined candidate proves provider-complete traversal, the
+decisive contract-fit difference for the **additive** role remains license +
+failure visibility (both favor rclone). The **destructive** role is gated by a
+separate positive-completeness property that none of the examined candidates
+currently provides, so it is a distinct PoC with a distinct evidence requirement.
 
 ---
 
@@ -465,6 +541,7 @@ decisive contract-fit difference is the combination of **license** and
 | fsspec as initial adapter | `REJECTED` | Weaker than rclone on failure visibility, identity, and structured skips; cloud backends are external/unverifiable from the core repo. |
 | AList/OpenList as initial adapter | `DEFERRED` (to a later/customer-driven need) | AGPL isolation burden + `WEAK` failure visibility; usable as a boundary adapter but not the contract-fit optimum. |
 | direct-provider first | `DEFERRED` (per-provider, only where necessary) | Highest operational surface; justified only for a provider rclone/AList cannot cover. |
+| rclone as the initial adapter for the COMPLETE/removal PoC | `REJECTED` | rclone RC cannot establish confirmed-no-skips (Sec 7.1); `skipped_scopes` must stay UNKNOWN and must not be encoded as confirmed-empty; rclone is retained for the additive-only role (Sec 7.2). |
 | Exposing a global collection cursor | `REJECTED` | Conflicts with the frozen no-cross-root-order rule and per-root identity/scope. |
 
 ---
@@ -479,6 +556,7 @@ decisive contract-fit difference is the combination of **license** and
 | selection not by feature count | Sec 3 evaluation method, Sec 8 rejected alternatives |
 | Architect-facing ADR recommendation | Sec 7 + `ADR-001-COLLECTOR-BOUNDARY.md` |
 | PR #43 D/E round-1 fixes (E1–E4) | Sec 2.4.1 (object id ≠ revision token), Sec 2.4.2 (digest canonicalization), Sec 2.3.1 (skipped_scopes UNKNOWN), Sec 2.5 (shrink corroboration Kernel-owned) |
+| PR #43 D/E round-2 fixes | Sec 2.4.3 (final IO3 identity finalized after Kernel evaluation, includes Kernel-owned `scope_shrink_corroboration`; EC13), Sec 7.1/7.2 (rclone Gate-2 mode + PoC role split; EC14) |
 
 ---
 
@@ -498,6 +576,8 @@ decisive contract-fit difference is the combination of **license** and
 | EC10 | Same generation, identical entries, first observation PARTIAL then a stronger COMPLETE observation | The two observations MUST NOT collapse to the same IO3 identity (the digest includes decision-relevant evidence); the later one is reconciled, not treated as a NO-OP (E2). |
 | EC11 | Adapter cannot observe skips (AList/OpenList; rclone logs-only) | `skipped_scopes` encoded as absent/`NULL` (UNKNOWN), never empty; C-9's "empty" positive condition is NOT satisfied (E3). |
 | EC12 | A scope shrink is observed, then a later independent admitted observation confirms it | The adapter sets no corroboration field; the Kernel/evaluation derives `CORROBORATED` from the independent observation and persists it on the evaluated Snapshot (E4, Gate 1B Sec 3.1.3). |
+| EC13 | Same generation `G`: S1 observes a significant shrink with `scope_shrink_corroboration = NONE` and reconciles additively (zero canonical mutation, identity `X`); an independent S2 observes the same reduced entry set and the Kernel derives `CORROBORATED` at `G` | S2's finalized IO3 identity differs from `X` (the digest is finalized after evaluation and includes the Kernel-owned `scope_shrink_corroboration`); S2 is **not** an IO3 NO-OP and MAY authorize the removal reconcile (Sec 2.4.3). |
+| EC14 | rclone RC (`operations/list`, recurse) completes successfully with no structured skip set | `skipped_scopes` is encoded absent/`NULL` (UNKNOWN), never `[]`; C-9's "empty" positive condition is NOT satisfied; rclone is not used for the COMPLETE/removal PoC role (Sec 7.1/7.2). |
 
 ---
 
@@ -505,9 +585,9 @@ decisive contract-fit difference is the combination of **license** and
 
 | Item | Tag | Note |
 |------|-----|------|
-| Final initial-adapter selection | `PROPOSED` | `ADR-001` recommendation; binding only after Architect review and after the E1/E2/E3 identity/completeness fixes are accepted. |
-| Concrete `snapshot_identity` mapping per adapter | `PROPOSED` | default is the versioned deterministic digest (Sec 2.4.2); `REVISION_TOKEN` only where the provider documents a whole-scope revision (E1). |
-| `skipped_scopes` population strategy when only logs exist | `CANDIDATE` | rclone: parse logs or track skips in the adapter; UNKNOWN stays absent/`NULL` until confirmed (E3). |
-| `scope_shrink_corroboration` derivation + persistence | `DERIVED` (Kernel-owned) | Kernel/evaluation derives from independent admitted observations (Sec 2.5); the adapter never sets it. |
+| Final initial-adapter selection + PoC role split | `PROPOSED` | `ADR-001`; rclone is the leading candidate for the **additive-only** PoC role, NOT accepted for the COMPLETE/removal role (Sec 7.1/7.2); binding only after Architect review. |
+| Concrete `snapshot_identity` mapping per adapter | `PROPOSED` | default is the versioned deterministic digest (Sec 2.4.2); `REVISION_TOKEN` only where the provider documents a whole-scope revision (E1); the IO3 identity is finalized by the Kernel after evaluation (Sec 2.4.3). |
+| `skipped_scopes` population strategy / positive completeness signal | `CANDIDATE` | UNKNOWN stays absent/`NULL` until confirmed (Sec 2.3.1); for the COMPLETE/removal role only a **positive** provider end-of-enumeration signal may yield `[]` (Sec 7.2) — rclone log parsing does NOT establish it. |
+| `scope_shrink_corroboration` derivation + persistence | `DERIVED` (Kernel-owned) | Kernel/evaluation derives from independent admitted observations (Sec 2.5); the adapter never sets it; set once during `SUBMITTED -> EVALUATED` (A Sec 3.5) and included in the finalized IO3 digest (Sec 2.4.3). |
 | `provider_identity_assurance` evidence per provider | `CANDIDATE` | required only where an id is claimed. |
 | `adapter_generation` (incremental) | `DEFERRED` | post-MVP; not part of the PoC contract. |

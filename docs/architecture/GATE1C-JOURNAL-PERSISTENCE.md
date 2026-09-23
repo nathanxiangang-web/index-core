@@ -4,7 +4,8 @@
 > and repair of the Canonical Change Journal.
 > Produced by the Codex Executor (Worker) for ChatGPT Architect review.
 > Status: **PARTIAL_FOR_ARCH_REVIEW** (deliverable D; PR #43 D/E round-1
-> rework applied: D1 rebuild/checkpoint split, D2 lifecycle concurrency domain).
+> rework applied: D1 rebuild/checkpoint split, D2 lifecycle concurrency domain;
+> round-2 rework applied: J6 Journal-repair transaction exception, Sec 5/6/8/10).
 > Baseline: remote `main` = `6a131f17657807d9aee2921be1f286ceaff784e4`.
 > Depends on the FROZEN contracts `GATE1C-POSTGRESQL-STORE.md` (A),
 > `GATE1C-TRANSACTION-BOUNDARY.md` (B), `GATE1C-QUERY-CONTRACT.md` (C) and the
@@ -141,9 +142,14 @@ Sec 1.5, U4).
   produced it. All events of one reconcile share the same `generation_number`
   (the **post-application generation**, B R12: `G+1` when the reconcile mutated
   canonical state).
-- A zero-mutation reconcile produces **no event** and does not create a
+- A **normal** zero-mutation reconcile produces **no event** and does not create a
   generation (U4). It may still record an application-history row (B Sec 3), but
   that row is not a Journal event.
+- **Exception — J6 Journal-repair transaction** (PR #43 D/E round-2): a
+  Kernel-owned repair operation MAY append a corrective event **without mutating
+  Canonical Inventory and without advancing the generation**, in order to
+  reassert current canonical truth in the append-only Journal. Such an event
+  carries the **current** (unchanged) `generation_number`. See Sec 8.
 - `generation_number` strictly increases per root across mutating reconciles;
   the Journal is therefore a sequence of generation-scoped event groups.
 - Consumers reconstruct canonical state by applying a root's events in
@@ -198,13 +204,21 @@ path-change transition (`RENAME` or `MOVE`), then the attribute-change transitio
 
 `PROPOSED` — `intra_generation_seq` allocation:
 
-- It is scoped to (`root_id`, `generation_number`) and starts at **1**.
+- It is scoped to (`root_id`, `generation_number`).
+- For a **mutating** reconcile that **creates** the generation, it starts at
+  **1**.
 - It is assigned in **Kernel transition order** within the reconcile: the
   path-change event receives the lower value, the attribute-change event the next.
-- It is contiguous `1..N` for the events this reconcile produces in that
-  generation (a zero-mutation reconcile produces none). `C-J2` UNIQUE (`root_id`,
-  `generation_number`, `intra_generation_seq`) makes any duplicate or collision a
-  hard failure, not a silent reorder.
+- It is contiguous `1..N` for the events a single mutating reconcile produces in
+  a newly created generation (a zero-mutation reconcile produces none). `C-J2`
+  UNIQUE (`root_id`, `generation_number`, `intra_generation_seq`) makes any
+  duplicate or collision a hard failure, not a silent reorder.
+- **Exception — J6 Journal-repair append (Sec 8.2; PR #43 D/E round-2):** when a
+  corrective event is appended to an **already-existing** generation, its
+  `intra_generation_seq` MUST be allocated strictly **after the current maximum**
+  for that (`root_id`, `generation_number`) (`MAX + 1`), and MUST NOT restart at
+  1. Restarting at 1 would collide with the generation's committed events under
+  `C-J2`.
 
 `DERIVED` — the semantic ordering itself (path-change before attribute-change,
 same generation, atomic commit) is fixed by Gate 1B Sec 1.2 rule 4 and is **not**
@@ -257,22 +271,62 @@ to Gate 1C:
 - **Path B — derived projection rebuild:** rebuild a read model; never edit the
   canonical Journal or canonical Inventory.
 
-`PROPOSED` — persistence rules for Path A:
+`PROPOSED` — persistence rules for Path A. A **normal** zero-mutation reconcile
+and a **J6 Journal-repair transaction** are different cases and MUST NOT be
+conflated (PR #43 D/E round-2):
 
 - A corrective event **reuses one of the seven existing `event_type`s**
   (`C-J4` forbids new types). Which `resource-*` type is chosen is the Kernel's
   semantic decision based on the observed disagreement.
-- It is emitted through the **same** reconcile transaction mechanism: it gets a
-  normal `event_seq` and `intra_generation_seq`, is committed atomically, and is
-  visible to consumers as an ordinary event (C `JC4`).
 - It is **never** marked as a rewrite, and it never edits, deletes, or back-dates
   the event it corrects. History is cumulative.
-- If the repair does not mutate canonical state, no event is emitted (U4); the
-  reconciliation is recorded only as an application-history row (B Sec 3).
+
+### 8.1 Normal zero-mutation reconcile (U4 unchanged)
+
+When a reconcile mutates no canonical state, it appends **no** Journal event and
+does not advance the generation; the reconciliation is recorded only as an
+application-history row (B Sec 3). This is U4 and is **not** relaxed by this
+section.
+
+### 8.2 J6 Journal-repair transaction (explicit exception)
+
+Gate 1B `J6` requires a repair mechanism for when the append-only Journal has lost
+or diverged from a transition that Canonical Inventory already reflects. Under
+Sec 8.1 alone Path A would be **unreachable**: the canonical state is already
+correct, so a repair that does not mutate canonical state would emit no event and
+the Journal could never be reasserted. D therefore defines one explicit
+exception:
+
+- **A Kernel-owned Journal-repair transaction MAY append a corrective
+  `resource-*` event without mutating Canonical Inventory and without advancing
+  the canonical generation.** This is the only path that appends a Journal event
+  with no canonical mutation, and it exists solely to reassert current canonical
+  truth in the append-only Journal (Gate 1B `J6`).
+- **Same per-root concurrency domain.** It MUST acquire the same per-root
+  serialization/version guard as a reconcile (B Sec 1.1 `A1`, Sec 1.2 `R1`,
+  Sec 2.2), and MUST validate the expected canonical generation under that guard
+  (B `R11`). It MUST be rejected when `lifecycle_state = 'DELETED'` (B `R4`).
+- **Current generation asserted.** The corrective event carries the **current,
+  unchanged** `generation_number` of the root (Sec 5).
+- **`event_seq` = next per-root value.** It takes the next per-root `event_seq`
+  (Sec 3); the per-root sequence remains gap-free and monotonic.
+- **`intra_generation_seq` appends after the existing maximum.** Because the
+  generation already exists, the repair event's `intra_generation_seq` MUST be
+  allocated **after the current maximum** for that (`root_id`,
+  `generation_number`) (Sec 6), never restarted at 1, so `C-J2` UNIQUE does not
+  collide with the generation's committed events.
+- **Kernel-owned and atomic.** It is a Kernel-owned operation, is NOT a
+  Collector-writable path, and commits atomically as one unit (A `M5`, B
+  `T-AT1`); a failed repair leaves the Journal and the generation unchanged.
+- **Consumers see an ordinary event.** It is visible as an ordinary event in
+  per-root `event_seq` order (C `JC4`); a full replay still reaches the same final
+  projection (JD15).
 
 > `DERIVED` Path A/B semantics and "never rewrite" are frozen (U6); the
-> `event_type`-reuse rule is forced by `C-J4`; the transaction reuse is the
-> `PROPOSED` mechanism. `FACT` for the constraint, `PROPOSED` for the mechanism.
+> `event_type`-reuse rule is forced by `C-J4`; the transaction reuse and the
+> Sec 8.2 no-canonical-mutation repair exception are the `PROPOSED` mechanism
+> that makes Path A reachable for `J6`. `FACT` for the constraint, `PROPOSED` for
+> the mechanism.
 
 ---
 
@@ -340,6 +394,7 @@ the consuming cursor semantics (`JC1`–`JC8`). D closes the protocol.
 | Atomic visibility | A read returns a single committed generation; no half-commit is observed. | C `CR1` |
 | Replay is a NO-OP | Same snapshot identity at the same generation emits **no** event and no generation bump. | Gate 1B IO3/Sec 2.4; U8 |
 | Re-reconcile is event-accurate | Same identity after the generation advanced runs a normal reconcile: mutation -> new events + `G+1`; zero mutation -> no events, generation unchanged, application row only. | B Sec 3, T12; A G14/G16 |
+| Journal repair is non-canonical | A `J6` Journal-repair transaction appends a corrective event **without** mutating canonical state and **without** advancing the generation; a failed repair leaves no durable event and the generation unchanged. | Gate 1B `J6`; Sec 8.2 |
 
 `PROPOSED` — failure-recording transaction shape (closes B `T-AT5`, `PROPOSED`):
 
@@ -387,6 +442,8 @@ the consuming cursor semantics (`JC1`–`JC8`). D closes the protocol.
 | JD11 | Rebuild requested from a non-zero `event_seq` floor with **no** matching checkpoint | **REJECTED** — it is not a valid rebuild. A non-zero floor is only a checkpoint resume; without the checkpoint state + matching cursor the projection would silently omit all earlier events. |
 | JD12 | Projection resumes from a persisted checkpoint (base projection state + matching per-root cursor) | Replay resumes strictly after the checkpoint cursor; the reconstructed state equals a full from-origin (`event_seq = 0`) replay of the same committed history. |
 | JD13 | A dedicated root-lifecycle op and a reconcile target the same root concurrently | Both enter the same per-root serialization/version guard; the later one validates the committed generation / `DELETED` state and either applies on top or is rejected — no stale commit over the lifecycle transition, no second ordering system. |
+| JD14 | A Journal transition was lost/diverged while Canonical Inventory already reflects the change (Gate 1B `J6`) | A Kernel Journal-repair transaction appends a corrective `resource-*` event asserting current canonical truth: **no** Canonical Inventory change, generation unchanged, `event_seq` = next per-root value, `intra_generation_seq` = current max `+ 1` for that (`root_id`,`generation_number`); the corrected history is never edited/deleted/back-dated. |
+| JD15 | Full replay after a corrective append | Replaying the root's Journal from `event_seq = 0` reaches the same final projection as the pre-repair history plus the corrective event; no duplicate or contradictory canonical state; the repair creates no new generation. |
 
 ---
 
@@ -396,6 +453,7 @@ the consuming cursor semantics (`JC1`–`JC8`). D closes the protocol.
 |------|-----|------|
 | `intra_generation_seq` exact allocation algorithm (Kernel transition enumeration) | `PROPOSED` | Sec 6 fixes scoping/contiguity; the Kernel-side enumeration implementation is a Gate 2 choice under the frozen semantics. |
 | Append-only trigger vs role-only enforcement | `CANDIDATE` | Sec 7.2 requires role revocation; the trigger is optional defense-in-depth. |
+| `J6` Journal-repair transaction (append without canonical mutation) | `PROPOSED` | Sec 8.2 closes the Path A feasibility gap; the exception is the Worker's closure and needs Architect acceptance. |
 | Corrective-event `resource-*` type selection policy | `PROPOSED` | Sec 8 fixes mechanism/constraint; the semantic choice rule follows Kernel repair logic (Gate 2). |
 | Projection rebuild checkpoint storage | `CANDIDATE` | Sec 9 fixes the protocol; whether cursors/checkpoints are persisted in a table or derived is implementation. A non-zero resume MUST have a matching checkpoint (state + cursor); the storage form is the choice. |
 | Lifecycle event emitted by a dedicated lifecycle op vs a catalog reconcile | `PROPOSED` | Sec 5.1 requires one atomic transaction either way. |

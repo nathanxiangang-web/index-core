@@ -329,8 +329,8 @@ Projection/cache table `index_identity_evidence_current` (NOT authoritative):
 | `skipped_scopes` | `jsonb` | YES | list of skipped prefixes + reasons. |
 | `freshness_evidence` | `text` | YES | CHECK IN (`FRESH_DIRECT`,`FRESH_REFRESHED`,`CACHED_FRESH`,`STALE`,`UNKNOWN`). Missing -> `UNKNOWN`. |
 | `collector_completeness_assurance` | `text` | YES | CHECK IN (`STRONG_FAILURE_VISIBILITY`,`WEAK_FAILURE_VISIBILITY`,`UNKNOWN_FAILURE_VISIBILITY`). Missing -> `UNKNOWN_FAILURE_VISIBILITY`. |
-| `scope_shrink_corroboration` | `text` | YES | CHECK IN (`NONE`,`CORROBORATED`,`CONTRADICTED`). |
-| `completeness_flag` | `text` | NO | CHECK IN (`COMPLETE`,`PARTIAL`). Collector-declared flag. |
+| `scope_shrink_corroboration` | `text` | YES | CHECK IN (`NONE`,`CORROBORATED`,`CONTRADICTED`). **Kernel-derived** decision evidence; set ONCE by the Kernel during `SUBMITTED -> EVALUATED`, then immutable; NOT Collector-writable (PR #43 D/E round-2 clarification). |
+| `completeness_flag` | `text` | NO | CHECK IN (`COMPLETE`,`PARTIAL`). **Non-authoritative Collector hint/audit only** — NEVER the destructive-reconcile verdict. The authoritative verdict is Kernel `acceptance_state` (Gate 1B Completeness; PR #43 D/E round-2 erratum). |
 | `acceptance_state` | `text` | YES | CHECK IN (`COMPLETE`,`PARTIAL`,`FAILED`,`STALE`,`SUSPICIOUS`). Kernel classification (set on EVALUATED). |
 | `lifecycle_state` | `text` | NO | CHECK IN (`DRAFT`,`SUBMITTED`,`EVALUATED`,`RECONCILED`,`REJECTED`,`RETIRED`). |
 | `entry_count` | `bigint` | YES | Weak sanity material. |
@@ -347,9 +347,20 @@ Indexes:
 - `I-S1` (`PROPOSED`): (`root_id`, `observed_at`).
 - `I-S2` (`PROPOSED`): (`root_id`, `lifecycle_state`).
 
-> `DERIVED` A Snapshot is immutable once submitted (GATE1B 1.2). `lifecycle_state`
-> and `acceptance_state` are the only mutable columns; they advance through the
-> lifecycle but never rewrite the evidence columns. `FACT`.
+> `DERIVED` A Snapshot's Collector evidence is immutable once submitted
+> (GATE1B 1.2). `lifecycle_state` and `acceptance_state` advance through the
+> lifecycle and never rewrite the Collector evidence columns. `FACT`.
+>
+> `DERIVED` (PR #43 D/E round-2 clarification, narrow — not a redesign) —
+> `scope_shrink_corroboration` is the one Kernel-derived evidence column: it is
+> set ONCE by the Kernel during `SUBMITTED -> EVALUATED` (from prior canonical
+> context plus independently admitted observations), after which it is
+> immutable and never Collector-writable. `FACT`.
+>
+> `DERIVED` (PR #43 D/E round-2 erratum) — `completeness_flag` is a Collector
+> hint/audit value only. It is NOT the completeness verdict for destructive
+> reconcile; the Kernel-owned `acceptance_state` (set on EVALUATED) is the only
+> authoritative classification (Gate 1B Completeness Sec 2/3; INV-004). `FACT`.
 
 ### 3.6 T6 `index_snapshot_entry` — SnapshotEntry (audit/replay)
 
@@ -500,6 +511,16 @@ Constraints:
 > produces a NEW generation only if it actually mutates canonical state (Gate 1B
 > frozen); a zero-mutation re-reconcile keeps the generation and still records the
 > application for that generation. `FACT`.
+>
+> `DERIVED` (PR #43 D/E round-2 clarification, narrow — not a redesign) — the
+> identity used by T8/IO3 is the identity of the **evaluated Snapshot semantics**,
+> not merely the adapter's raw observation. For Gate 2 the final
+> `DETERMINISTIC_DIGEST` is computed/finalized **after Kernel evaluation**
+> (`SUBMITTED -> EVALUATED`), over the normalized entry set plus all
+> reconcile-decision-relevant evidence — including Kernel-derived decision
+> evidence such as `scope_shrink_corroboration`. A native whole-scope revision
+> token may be retained as provenance/input but MUST NOT bypass Kernel-derived
+> decision evidence. `FACT`.
 
 ### 3.9 T9 `index_journal_event` — Canonical Change Journal (append-only)
 

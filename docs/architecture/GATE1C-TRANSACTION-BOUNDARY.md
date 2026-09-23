@@ -218,7 +218,7 @@ column) so a stale computation cannot be accepted.
 
 | Step | Behavior |
 |------|----------|
-| Compute `snapshot_identity` | Frozen provider-neutral contract (doc A Sec 3.8): the tuple (`kind`, `namespace`, `version`, `value`) from a stable adapter/native revision token OR a versioned deterministic digest. No wall-clock/admission/DB timing. |
+| Finalize `snapshot_identity` (after evaluation) | The adapter supplies normalized raw evidence (plus an optional whole-scope native revision token as an input/basis). The Kernel finalizes the IO3 tuple (`kind`, `namespace`, `version`, `value`) during `SUBMITTED -> EVALUATED`, computed over the **evaluated Snapshot semantics**: the normalized entry set + all reconcile-decision-relevant evidence, including Kernel-derived decision evidence (`scope_shrink_corroboration`). No wall-clock/admission/DB timing; native tokens MUST NOT bypass Kernel-derived decision evidence (doc A Sec 3.8; PR #43 D/E round-2 clarification). |
 | Look up `index_applied_snapshot` by identity tuple | If a row exists with the SAME identity AND `applied_generation = current_generation` -> NO-OP. |
 | Identity matched but canonical advanced | If matching rows exist but ALL have `applied_generation < current_generation` -> NORMAL reconcile against the newer generation (NOT a no-op). On success APPEND a row whose `applied_generation` is the POST-application generation: the NEW generation if the reconcile actually mutated canonical state, else the UNCHANGED `current_generation`. |
 | No matching identity | Normal reconcile; on success APPEND a row whose `applied_generation` is the POST-application generation (the new generation if it mutated, else the unchanged `current_generation`). |
@@ -240,6 +240,18 @@ column) so a stale computation cannot be accepted.
 > mutates canonical state (Gate 1B frozen); a ZERO-mutation re-reconcile keeps the
 > generation, yet still records the application at the unchanged `current_generation`
 > so the NEXT identical collection is a NO-OP (doc A G16, `C-AS3`). `FACT`.
+>
+> `DERIVED` (PR #43 D/E round-2 clarification, narrow — not a redesign) — the IO3
+> identity is the identity of the **evaluated Snapshot semantics**, not the
+> adapter's raw observation. The adapter supplies normalized raw evidence (and may
+> supply a whole-scope native revision token as an input/basis); the Kernel
+> **finalizes** the tuple during `SUBMITTED -> EVALUATED` over the entry set plus
+> all reconcile-decision-relevant evidence, including Kernel-derived decision
+> evidence (`scope_shrink_corroboration`). Therefore a `NONE` first observation
+> and a later `CORROBORATED` observation of the same raw entries get **different**
+> identities when that distinction changes reconcile eligibility, so the later one
+> is not wrongly NO-OP'd before it can authorize the destructive reconcile (doc A
+> Sec 3.8; E Sec 2.4.3). `FACT`.
 
 ---
 
