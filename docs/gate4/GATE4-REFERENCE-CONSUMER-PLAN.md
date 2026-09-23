@@ -3,7 +3,11 @@
 > Architect decision: 2026-09-24
 > Execution issue: #50
 > IndexCore baseline: main@f7edc518dfc99a43cfc464e332e6fe3bfcda601c
-> Status: AUTHORIZED
+> Status: CLOSED — ACCEPTED (ARCHITECT FINAL ACCEPTANCE, Issue #50, 2026-09-24)
+> Accepted heads: Reference Web PR #2 `ea4d9aa` (merged `8f70622`);
+>                 verification fixture PR #53 `4a254e1` (merged `9bc98fb`);
+>                 findings report PR #52 `16e41c2` (merged `9d23b24`)
+> Next phase: Gate 5 — Future Product Architecture — NOT AUTHORIZED
 
 ## 1. Decision
 

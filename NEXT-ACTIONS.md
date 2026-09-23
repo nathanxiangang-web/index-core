@@ -2,23 +2,33 @@
 
 ## Current phase
 
-**Gate 4 — Reference Consumer Integration**
+**Gate 5 — Future Product Architecture (NOT AUTHORIZED)**
 
 Architecture / acceptance owner: **ChatGPT Architect**
 
 Execution owner: **Codex**
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **GATE 4 CLOSED — no active execution**
 
 Active execution issue:
 
-**#50 — [CODEX][GATE-4] Reference Consumer Integration**
+**none — Gate 4 closed via Issue #50; Gate 5 not yet authorized**
 
-Authoritative IndexCore baseline:
+Gate 4 (Reference Consumer Integration) is **CLOSED** and accepted
+(ARCHITECT FINAL ACCEPTANCE, 2026-09-24). Merged:
 
-**`main@f7edc518dfc99a43cfc464e332e6fe3bfcda601c`** (Gate 3 merged and closed).
+- `indexcore-reference-web` PR #2 →
+  `main@8f7062216dc9924f64d9ae0367e504c279704857`
+- `index-core` PR #53 (verification fixture) → merged
+- `index-core` PR #52 (findings report) →
+  `index-core main@9d23b24f0ed715fce6128c031da99f6e111257ed`
 
-## Gate 4 objective
+Next action: **await Architect authorization of Gate 5**. Gate 5 is the next
+blueprint phase and is **NOT authorized**; do not start any Gate-5 work.
+
+The Gate 4 sections below are a closed historical record.
+
+## Gate 4 objective (completed)
 
 Validate that a brand-new Consumer can use IndexCore cleanly through the public
 read-only HTTP contract without inheriting CloudSite history or IndexCore internals.

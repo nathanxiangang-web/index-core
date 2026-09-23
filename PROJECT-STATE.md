@@ -20,7 +20,10 @@ Gate 2 PoC) and merged to `main` at `410050d0b084d999063cde1a4be8d2051fbcb88f`.
 Gate 3 MVP Alpha authorized by Architect in Issue #47, accepted at PR #49
 head `055402da83235e6dc5f88f45206378fb210a7672`, and merged to `main` at
 `f7edc518dfc99a43cfc464e332e6fe3bfcda601c` (Issue #47 completed).
-Gate 4 Reference Consumer Integration is authorized by Architect in Issue #50.
+Gate 4 Reference Consumer Integration was accepted by Architect in Issue #50 and
+merged to `main` at `9d23b24f0ed715fce6128c031da99f6e111257ed`. The disposable
+Reference Web is merged in `nathanxiangang-web/indexcore-reference-web` at
+`8f7062216dc9924f64d9ae0367e504c279704857`.
 
 ## Execution model
 
@@ -44,23 +47,34 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
-**Gate 4 — Reference Consumer Integration**
+**Gate 5 — Future Product Architecture (NOT AUTHORIZED)**
 
-Gate 1C, Gate 2, and Gate 3 are **CLOSED**. Gate 3 merged to `main` at
-`f7edc518dfc99a43cfc464e332e6fe3bfcda601c`; Issue #47 is completed.
+Gate 1C, Gate 2, Gate 3, and Gate 4 are all **CLOSED**.
+
+Gate 4 (Reference Consumer Integration) was accepted by the Architect on
+2026-09-24 (Issue #50) and merged to `main` at
+`9d23b24f0ed715fce6128c031da99f6e111257ed`; the disposable Reference Web is
+merged in `nathanxiangang-web/indexcore-reference-web` at
+`8f7062216dc9924f64d9ae0367e504c279704857`.
 
 Status:
 
-**AUTHORIZED / IN PROGRESS**
+**GATE 4 CLOSED**
+
+Gate 5 is the next blueprint phase (**Future Product Architecture**), but it is
+**NOT AUTHORIZED**: no Gate-5 work may start until the Architect explicitly
+authorizes it and opens an execution issue.
 
 Active execution issue:
 
-**#50 — [CODEX][GATE-4] Reference Consumer Integration**
+**none — Gate 4 closed; Gate 5 not yet authorized**
 
-Execution surfaces:
+Gate 4 execution surfaces (closed record):
 
-- `nathanxiangang-web/index-core` — frozen/accepted core; only consumer findings/report changes are expected unless a separately reviewed true IndexCore contract gap is found;
-- `nathanxiangang-web/indexcore-reference-web` — new, separate, disposable Reference Web repository to be created in Gate 4.
+- `nathanxiangang-web/index-core` — frozen/accepted core; Gate 4 added only the
+  controlled verification fixture and the findings report;
+- `nathanxiangang-web/indexcore-reference-web` — new, separate, disposable
+  Reference Web repository (created and merged in Gate 4).
 
 Architect-locked Gate-4 shape:
 
@@ -247,6 +261,48 @@ Deliberately deferred after Gate 3:
   completeness evidence
 - multi-daemon HA / distributed leases
 
+### Gate 4 — Reference Consumer Integration
+
+Status: **ACCEPTED** (ARCHITECT FINAL ACCEPTANCE — Gate 4, Issue #50)
+
+Artifacts:
+
+- `nathanxiangang-web/indexcore-reference-web` PR #2 — disposable Next.js +
+  TypeScript Reference Web (server-side typed `/v1` client, Q1–Q9 pages,
+  contract + boundary tests, real IndexCore E2E); merged at
+  `8f7062216dc9924f64d9ae0367e504c279704857`
+- `index-core` PR #53 — controlled `COMPLETE` verification fixture on the
+  index-core test/verification side (safe ingress
+  `CreateDraftSnapshot → SubmitAndAdmitSnapshot → ProcessHead`); merged
+- `index-core` PR #52 — authoritative findings report
+  `docs/gate4/GATE4-REFERENCE-CONSUMER-REPORT.md`; merged
+
+Final acceptance matrix — all PASS:
+
+- SEPARATE_REPO
+- SERVER_SIDE_BOUNDARY
+- Q1_Q9_COVERAGE
+- HIERARCHY
+- RESOURCE_DETAIL
+- RESOLVE_AMBIGUITY
+- ACTIVE_REMOVED
+- JOURNAL
+- STALE_CURSOR_UX
+- REAL_INDEXCORE_E2E
+- ZERO_INTERNAL_COUPLING
+- CONSUMER_REPORT
+
+`FROZEN_CONTRACT_CHANGES: NONE`
+
+Proven: a brand-new application can integrate IndexCore cleanly through the
+server-side read-only `/v1` HTTP Query Contract without inheriting PostgreSQL,
+AList/rclone, IndexCore internals, or CloudSite legacy architecture.
+
+Deferred after Gate 4 (Gate 5 scope — NOT authorized): formal successor product
+architecture, product UI / auth / account / tenant, search / catalog,
+share / favorite / history, preview / download, Scanner Resume,
+provider-native delta, destructive-safe provider COMPLETE, multi-daemon HA.
+
 ## Gate 1C scope (CLOSED)
 
 All six Gate 1C deliverables are delivered, Architect-accepted, and frozen:
@@ -289,15 +345,19 @@ All six Gate 1C deliverables are delivered, Architect-accepted, and frozen:
 
 ## Implementation status
 
-**GATE 4 REFERENCE CONSUMER INTEGRATION — AUTHORIZED**
+**GATE 4 REFERENCE CONSUMER INTEGRATION — CLOSED**
 
-Gate 3 MVP Alpha is merged and closed at
-`f7edc518dfc99a43cfc464e332e6fe3bfcda601c`.
+Gate 4 is complete: the disposable Reference Web validates the IndexCore Consumer
+Contract end-to-end over the server-side read-only `/v1` HTTP contract (Q1–Q9),
+with `FROZEN_CONTRACT_CHANGES: NONE`.
 
-Gate 4 is authorized through Issue #50 and
-`docs/gate4/GATE4-REFERENCE-CONSUMER-PLAN.md`.
+Gate 4 accepted artifacts: `indexcore-reference-web` PR #2 (merged
+`8f7062216dc9924f64d9ae0367e504c279704857`), `index-core` PR #53 (verification
+fixture), `index-core` PR #52 (findings report); `index-core` `main` at
+`9d23b24f0ed715fce6128c031da99f6e111257ed`.
+
+Next phase: **Gate 5 — Future Product Architecture — NOT AUTHORIZED.** No Gate-5
+work starts until the Architect authorizes it and opens an execution issue.
 
 CloudSite is no longer the direct integration target. It remains a legacy/frozen
-product and historical reference. Gate 4 uses a new disposable Reference Web to
-validate the IndexCore Consumer Contract before any formal successor product is
-designed.
+product and historical reference.
