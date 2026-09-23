@@ -17,7 +17,9 @@ Gate 1C accepted at PR #43 head `7a3b32f` (ARCHITECT FINAL ACCEPTANCE — Gate 1
 CLOSED).
 Gate 2 PoC accepted at PR #46 head `846a270` (ARCHITECT FINAL ACCEPTANCE —
 Gate 2 PoC) and merged to `main` at `410050d0b084d999063cde1a4be8d2051fbcb88f`.
-Gate 3 MVP Alpha authorized by Architect in Issue #47.
+Gate 3 MVP Alpha authorized by Architect in Issue #47, then accepted at PR #49
+head `055402da83235e6dc5f88f45206378fb210a7672` (ARCHITECT FINAL ACCEPTANCE —
+Gate 3 MVP Alpha).
 
 ## Execution model
 
@@ -46,9 +48,13 @@ The experimental subagent topology is retired.
 Gate 1C is **CLOSED**. Gate 2 PoC is **CLOSED** and merged to `main` at
 `410050d0b084d999063cde1a4be8d2051fbcb88f`. Issue #44 is completed.
 
+Gate 3 MVP Alpha is **ARCHITECT ACCEPTED** at PR #49 head
+`055402da83235e6dc5f88f45206378fb210a7672` (ARCHITECT FINAL ACCEPTANCE — Gate 3
+MVP Alpha).
+
 Status:
 
-**AUTHORIZED / IN PROGRESS**
+**ARCHITECT ACCEPTED / READY_TO_MERGE**
 
 Active execution issue:
 
@@ -56,7 +62,7 @@ Active execution issue:
 
 Executor branch:
 
-**`alpha/gate3-runtime`** (must start from current `main`).
+**`alpha/gate3-runtime`**.
 
 Architect-locked Gate-3 runtime shape:
 
@@ -191,6 +197,48 @@ Deliberately NOT supported by this PoC (deferred):
 - destructive-safe provider COMPLETE (rclone skip evidence stays UNKNOWN)
 - CloudSite integration, UI, Scanner Resume, native delta / true incremental
 
+### Gate 3 — MVP Alpha / Standalone Runtime & Scale
+
+Status: **ACCEPTED** (ARCHITECT FINAL ACCEPTANCE — Gate 3 MVP Alpha, PR #49,
+final verification head `055402da83235e6dc5f88f45206378fb210a7672`)
+
+Evidence:
+
+- `docs/gate3/GATE3-ALPHA-VERIFICATION-REPORT.md` (authoritative Round 5 status,
+  20k full-runtime-ingestion baseline)
+- Go 1.27.1 + PostgreSQL 18.6 + pgx/v5; real rclone v1.75.1; real `xhofe/alist`
+  source (3 entries / 3 HTTP-visible resources); read-only HTTP `/v1`;
+  clean-volume Compose smoke
+
+Accepted area results:
+
+- RUNTIME — PASS
+- CONFIG_STARTUP — PASS
+- ROOT_ADMIN — PASS
+- WORKER_RECOVERY — PASS
+- RCLONE_SCAN_PATH — PASS
+- ALIST_OPENLIST_REAL_SOURCE — PASS
+- QUERY_HTTP_V1 — PASS
+- OBSERVABILITY — PASS
+- SCALE_20K — PASS
+- PACKAGING — PASS
+- E2E_ALPHA — PASS
+- GATE2_REGRESSION — PASS
+
+`FROZEN_CONTRACT_CHANGES: NONE`
+
+The 20k Stage-1 admission stays O(1) (~1.5–2.6 ms) with entry writes outside the
+root lock, so the runtime transaction boundary is accepted.
+
+Deliberately NOT authorized (deferred):
+
+- CloudSite integration — Gate 4, **NOT yet authorized**
+- product UI / auth / account / tenant
+- Scanner Resume, provider-native delta / true incremental
+- destructive-safe provider COMPLETE without separately accepted positive
+  completeness evidence
+- multi-daemon HA / distributed leases
+
 ## Gate 1C scope (CLOSED)
 
 All six Gate 1C deliverables are delivered, Architect-accepted, and frozen:
@@ -233,10 +281,11 @@ All six Gate 1C deliverables are delivered, Architect-accepted, and frozen:
 
 ## Implementation status
 
-**GATE 3 MVP ALPHA AUTHORIZED**
+**GATE 3 MVP ALPHA ARCHITECT ACCEPTED — READY_TO_MERGE**
 
-Gate 2 is merged and closed. Gate 3 is the existing blueprint MVP gate, beginning
-with the standalone Alpha runtime and scale work defined in
-`docs/gate3/GATE3-MVP-ALPHA-PLAN.md` / Issue #47.
+Gate 3 MVP Alpha is accepted at PR #49 head
+`055402da83235e6dc5f88f45206378fb210a7672`. After the administrative closeout
+diff is verified, PR #49 may merge to `main` and Issue #47 closes.
 
-No CloudSite integration is authorized in Gate 3; that remains Gate 4.
+Gate 4 (CloudSite integration and the blueprint's next stage) is **NOT yet
+authorized**; no CloudSite work begins until the Architect opens it.

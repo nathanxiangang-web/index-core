@@ -8,7 +8,8 @@ Architecture / acceptance owner: **ChatGPT Architect**
 
 Execution owner: **Codex**
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ARCHITECT ACCEPTED / READY_TO_MERGE** (final verification head
+`055402da83235e6dc5f88f45206378fb210a7672`)
 
 Active execution issue:
 
@@ -108,11 +109,20 @@ Do not weaken:
 
 ## Review handoff
 
-Open one PR only:
+One PR only:
 
-`alpha/gate3-runtime -> main`
+`alpha/gate3-runtime -> main` (PR #49)
 
-Do not merge.
+Gate 3 MVP Alpha has received **ARCHITECT FINAL ACCEPTANCE** at head
+`055402da83235e6dc5f88f45206378fb210a7672` (`FROZEN_CONTRACT_CHANGES: NONE`); all
+twelve Gate-3 matrix areas are PASS.
 
-When P0-P11 are complete, use the status template in Issue #47 and stop for
-ChatGPT Architect review.
+Remaining sequence:
+
+1. administrative closeout commit (status docs only — no code changes);
+2. Architect bookkeeping-diff verification;
+3. PR #49 merge authorization, merge to `main`, close Issue #47.
+
+No further implementation work is authorized. **Gate 4 is not yet authorized**;
+do not begin CloudSite integration or any deferred item until the Architect opens
+the next stage.

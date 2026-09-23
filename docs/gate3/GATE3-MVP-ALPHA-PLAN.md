@@ -4,7 +4,8 @@
 > Execution issue: #47
 > Baseline: main@410050d0b084d999063cde1a4be8d2051fbcb88f
 > Executor branch: alpha/gate3-runtime
-> Status: AUTHORIZED
+> Status: ARCHITECT_ACCEPTED — READY_TO_MERGE
+> Final verification head: 055402da83235e6dc5f88f45206378fb210a7672 (PR #49)
 
 ## 1. Purpose
 
@@ -170,3 +171,8 @@ Gate 3 exits only when the exact Issue #47 P0-P11 work package is demonstrated,
 the full Gate-2 regression suite remains green, the 20k scale report is
 reproducible, real rclone and real AList/OpenList source paths have been exercised,
 and no frozen Gate-1 semantics were changed.
+**Result: ACCEPTED** by the Architect at PR #49 head
+`055402da83235e6dc5f88f45206378fb210a7672` — Issue #47 P0-P11 demonstrated, the
+full Gate-2 regression suite green, the 20k full-runtime-ingestion baseline
+reproducible, real rclone + real AList/OpenList source paths exercised, and
+`FROZEN_CONTRACT_CHANGES: NONE`.
