@@ -74,6 +74,14 @@ const (
 	TraversalInterrupted TraversalStatus = "INTERRUPTED"
 )
 
+// IsSourceFailure reports whether the traversal represents a genuine
+// source/process failure that the runtime command must surface as a non-zero
+// exit. PARTIAL is a legal additive-safe input (the Kernel still evaluates it)
+// and MUST NOT be classified as a source failure; only FAILED/INTERRUPTED are.
+func (t TraversalStatus) IsSourceFailure() bool {
+	return t == TraversalFailed || t == TraversalInterrupted
+}
+
 // FreshnessEvidence (doc E Sec 2.3). Missing is normalized to FreshnessUnknown.
 type FreshnessEvidence string
 

@@ -1,6 +1,14 @@
 package query
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrNotFound is returned by read operations for a missing/invisible root or
+// resource. It is a query-level sentinel so the transport never needs the Store
+// package (Gate 3 G3-R2).
+var ErrNotFound = errors.New("not found")
 
 // Reader is the consumer-facing read-only Query Contract surface. A consumer
 // receives only this interface: never *postgres.Store, never pgxpool.Pool, and

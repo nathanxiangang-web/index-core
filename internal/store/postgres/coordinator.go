@@ -359,26 +359,28 @@ func (s *Store) reconcileHeadSafe(ctx context.Context, rootID string, seq int64,
 			return ReconcileOutcome{}, err
 		}
 	}
-	if plan.MutatesCanonical {
+	if plan.MutatesCanonical && len(plan.Events) > 0 {
+		// Assign sequences ONCE and increment in memory: calling MAX() per event
+		// would be O(N^2) at 20k+ resources (Gate 3 P8).
 		evSeq, err := s.NextEventSeq(ctx, tx, rootID)
 		if err != nil {
 			return ReconcileOutcome{}, err
 		}
-		for _, ev := range plan.Events {
+		intraSeq, err := s.NextIntraGenerationSeq(ctx, tx, rootID, appliedGen)
+		if err != nil {
+			return ReconcileOutcome{}, err
+		}
+		for i := range plan.Events {
+			ev := plan.Events[i]
 			ev.RootID = rootID
-			ev.EventSeq = evSeq
 			ev.GenerationNumber = appliedGen
-			if ev.IntraGenerationSeq == 0 {
-				intra, err := s.NextIntraGenerationSeq(ctx, tx, rootID, appliedGen)
-				if err != nil {
-					return ReconcileOutcome{}, err
-				}
-				ev.IntraGenerationSeq = intra
-			}
+			ev.EventSeq = evSeq
+			ev.IntraGenerationSeq = intraSeq
 			if err := s.AppendJournalEvent(ctx, tx, ev); err != nil {
 				return ReconcileOutcome{}, err
 			}
 			evSeq++
+			intraSeq++
 		}
 	}
 

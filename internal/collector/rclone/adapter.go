@@ -16,13 +16,14 @@ package rclone
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+
 	"os/exec"
 	"path"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/nathanxiangang-web/index-core/internal/collector/adapter"
 	"github.com/nathanxiangang-web/index-core/internal/domain"
 )
 
@@ -38,33 +39,11 @@ type Entry struct {
 	Hashes   map[string]string `json:"Hashes"`
 }
 
-// NormalizedEntry is a provider-neutral SnapshotEntry candidate. ProviderObjectID
-// is optional evidence only; it is never the Snapshot revision token.
-type NormalizedEntry struct {
-	EntryLocalID          string
-	Name                  string
-	ParentRef             string
-	IsDir                 bool
-	Size                  *int64
-	Mtime                 *time.Time
-	ContentHash           *string
-	HashAlgorithm         *string
-	ProviderObjectID      *string
-	ProviderObjectIDScope *string
-	ContentType           *string
-}
+// NormalizedEntry is the neutral adapter output (alias).
+type NormalizedEntry = adapter.NormalizedEntry
 
-// RawScan is the normalized Collector evidence for one scan.
-type RawScan struct {
-	Entries                   []NormalizedEntry
-	TraversalStatus           domain.TraversalStatus
-	ErrorSummary              []byte
-	SkippedScopes             []byte
-	SkippedKnownEmpty         bool
-	Freshness                 domain.FreshnessEvidence
-	Assurance                 domain.FailureVisibility
-	ProviderIdentityAssurance domain.ProviderIdentityAssurance
-}
+// RawScan is the neutral adapter scan output (alias).
+type RawScan = adapter.RawScan
 
 // Normalize converts rclone lsjson output into normalized evidence, using the
 // safe default failure visibility (WEAK). See NormalizeWithAssurance to qualify
@@ -174,6 +153,10 @@ func jsonError(key, msg string) []byte {
 type Adapter struct {
 	Binary string
 	Remote string
+	// ConfigPath, when set, is passed to rclone as --config <path> so a custom
+	// rclone configuration (including AList/WebDAV remotes) is actually used.
+	// It is never logged.
+	ConfigPath string
 	// Assurance is the mode/backend-qualified failure visibility. Empty defaults
 	// to WEAK (safe). STRONG requires explicit evidence for the mode used.
 	Assurance domain.FailureVisibility
@@ -195,7 +178,12 @@ func (a Adapter) Scan(ctx context.Context, subPath string) (RawScan, error) {
 	if a.Remote != "" {
 		target = a.Remote + ":" + subPath
 	}
-	cmd := exec.CommandContext(ctx, bin, "lsjson", "--recursive", target)
+	args := []string{"lsjson", "--recursive"}
+	if a.ConfigPath != "" {
+		args = append(args, "--config", a.ConfigPath)
+	}
+	args = append(args, target)
+	cmd := exec.CommandContext(ctx, bin, args...)
 	out, err := cmd.Output()
 
 	assurance := a.Assurance
@@ -206,9 +194,4 @@ func (a Adapter) Scan(ctx context.Context, subPath string) (RawScan, error) {
 		return NormalizeWithAssurance(nil, err, assurance), nil
 	}
 	return NormalizeWithAssurance(out, nil, assurance), nil
-}
-
-func (s RawScan) String() string {
-	return fmt.Sprintf("rclone scan: %d entries, status=%s, assurance=%s, skippedKnownEmpty=%v",
-		len(s.Entries), s.TraversalStatus, s.Assurance, s.SkippedKnownEmpty)
 }

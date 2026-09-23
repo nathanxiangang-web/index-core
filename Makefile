@@ -2,8 +2,13 @@ GO ?= go
 PG_CONTAINER ?= indexcore-pg
 PG_PORT ?= 55432
 TEST_DSN ?= postgres://indexcore:indexcore@localhost:$(PG_PORT)/indexcore?sslmode=disable
+VERSION ?= 0.3.0-alpha
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+PKG ?= github.com/nathanxiangang-web/index-core/internal/runtime/version
+LDFLAGS ?= -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).Date=$(DATE)
 
-.PHONY: pg-up pg-down build test fmt
+.PHONY: pg-up pg-down build bin fmt test scale docker-build compose-up compose-down compose-smoke
 
 pg-up:
 	@docker rm -f $(PG_CONTAINER) >/dev/null 2>&1 || true
@@ -22,9 +27,33 @@ pg-down:
 build:
 	$(GO) build ./...
 
+# Gate 3 Alpha binary with build identity.
+bin:
+	$(GO) build -ldflags "$(LDFLAGS)" -o bin/indexcore ./cmd/indexcore
+
 fmt:
 	$(GO) fmt ./...
 
-# Gate 2 tests run against a real PostgreSQL 18 (Issue #44 requirement).
+# Tests run against a real PostgreSQL 18 (Gate 2/Gate 3 requirement).
+# -p 1 serializes packages so DB-backed packages do not reset the same schema concurrently.
 test:
-	INDEXCORE_TEST_DATABASE_URL="$(TEST_DSN)" $(GO) test ./... $(ARGS)
+	INDEXCORE_TEST_DATABASE_URL="$(TEST_DSN)" $(GO) test -p 1 ./... $(ARGS)
+# Gate 3 P8 scale harness (>=20k resources). Override N with SCALE_N=<n>.
+SCALE_N ?= 20000
+scale:
+	INDEXCORE_TEST_DATABASE_URL="$(TEST_DSN)" INDEXCORE_SCALE_TEST=1 INDEXCORE_SCALE_N=$(SCALE_N) \
+		$(GO) test ./internal/runtime/scale -run TestScalePopulationAndDelta -v -timeout 20m
+
+# Gate 3 P9 packaging.
+docker-build:
+	docker build -t indexcore:alpha \
+		--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg DATE=$(DATE) .
+
+compose-up:
+	docker compose up -d --build
+
+compose-down:
+	docker compose down
+# Gate 3 G3-R2.6 clean-volume Compose smoke (down -v -> up --build -> ready -> restart).
+compose-smoke:
+	bash scripts/compose-smoke.sh

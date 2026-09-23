@@ -25,8 +25,9 @@ import (
 func RemovalDecisionContext(prior []PriorResource, entries []domain.SnapshotEntry, cfg Config, now time.Time) string {
 	observed := make(map[string]bool, len(prior))
 	reset := make(map[string]bool)
+	ix := BuildPriorIndex(prior)
 	for i := range entries {
-		status, p, _ := resolveIdentity(entries[i], prior, cfg, now)
+		status, p, _ := ix.resolve(entries[i], cfg, now)
 		if status == ResolutionMatched {
 			observed[p.ResourceID] = true
 			if p.hasMissingEvidence() || p.MissingSince != nil || p.ConsecutiveCompleteMissing > 0 {
