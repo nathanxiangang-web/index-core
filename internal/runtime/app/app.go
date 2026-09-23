@@ -10,10 +10,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/nathanxiangang-web/index-core/internal/runtime/config"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/version"
+	"github.com/nathanxiangang-web/index-core/internal/runtime/worker"
 	"github.com/nathanxiangang-web/index-core/internal/store/postgres"
 	"github.com/nathanxiangang-web/index-core/internal/transport/httpapi"
 )
@@ -88,16 +90,29 @@ func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		logger.Warn("HTTP is bound to a non-loopback address; Gate 3 has no auth layer", "addr", cfg.HTTPAddr)
 	}
 
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Single write-orchestration daemon: bounded per-root concurrency, drains the
+	// durable PENDING heads, and resumes them across restart.
+	st := postgres.New(pool)
+	var ready atomic.Bool
+	wk := worker.New(st, cfg.MaxConcurrentRoots, logger)
+	go func() {
+		ready.Store(true)
+		if err := wk.Run(ctx); err != nil {
+			logger.Warn("worker stopped", "error_class", "worker")
+		}
+	}()
+
 	srv := httpapi.New(httpapi.Deps{
 		Pool:    pool,
 		Query:   postgres.NewQueryReader(pool),
 		Logger:  logger,
 		Version: version.String(),
+		Ready:   ready.Load,
 	})
 	srv.Addr = cfg.HTTPAddr
-
-	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -120,11 +135,6 @@ func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
-}
-
-// Root implements root administration (Gate 3 P3).
-func Root(ctx context.Context, cfg config.Config, logger *slog.Logger, args []string) error {
-	return errors.New("root administration is implemented in Gate 3 P3")
 }
 
 // Scan implements the rclone-driven scan orchestration (Gate 3 P5).

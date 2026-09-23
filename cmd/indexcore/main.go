@@ -41,14 +41,29 @@ func run(args []string) error {
 		return nil
 	}
 
-	cfg, positionals, err := loadConfig(cmd, rest)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Subcommand-bearing commands parse their own config flags after the
+	// subcommand (e.g. `root create --database-url ...`), so they receive the
+	// env-based config as a base and parse the remaining args themselves.
+	if cmd == "root" || cmd == "scan" {
+		base, err := config.Load()
+		if err != nil {
+			return err
+		}
+		logger := newLogger(base)
+		if cmd == "root" {
+			return app.Root(ctx, base, logger, rest)
+		}
+		return app.Scan(ctx, base, logger, rest)
+	}
+
+	cfg, _, err := loadConfig(cmd, rest)
 	if err != nil {
 		return err
 	}
 	logger := newLogger(cfg)
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	switch cmd {
 	case "migrate":
@@ -57,10 +72,6 @@ func run(args []string) error {
 		return app.Doctor(ctx, cfg, logger)
 	case "serve":
 		return app.Serve(ctx, cfg, logger)
-	case "root":
-		return app.Root(ctx, cfg, logger, positionals)
-	case "scan":
-		return app.Scan(ctx, cfg, logger, positionals)
 	default:
 		printUsage(os.Stderr)
 		return fmt.Errorf("unknown subcommand %q", cmd)
