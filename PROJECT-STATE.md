@@ -12,7 +12,7 @@ Always verify the current remote `main` before execution.
 
 Latest accepted architecture milestone:
 
-`33e2e63440eb87afae7a572e22e296b3ee2c701b`
+`9291ac0706af6d584684498d75b714c408b9ffbe`
 
 ## Execution model
 
@@ -66,9 +66,13 @@ Accepted:
 
 Status: **ACCEPTED**
 
-Accepted commit:
+Accepted core-semantics commit:
 
 `33e2e63440eb87afae7a572e22e296b3ee2c701b`
+
+Pre-code hardening commit:
+
+`9291ac0706af6d584684498d75b714c408b9ffbe`
 
 Accepted contracts:
 
