@@ -779,7 +779,7 @@ self-verified in isolation, but the three contracts must compose safely.
   "requires coordination with Safe Reconcile staging (Worker C) and
   completeness assessment (Worker B)" (W-A Sec 2.2 R6). Worker C's state
   machine (Sec 1.1-1.2) defines 10 transition types but none specifically
-  address directory move propagation. Worker C's scenario-tester subagent
+  address directory move propagation. Worker C's scenario matrix check
   (Sec 4) tested "(d) MOVE new parent -> resource-moved, identity
   preserved" but this is a single-resource move, not directory
   propagation.
@@ -844,16 +844,16 @@ self-verified in isolation, but the three contracts must compose safely.
 
 ---
 
-## 6. Subagent Ledger
+## 6. Worker Self-Check (Foreman cross-check, no subagent)
 
-| Subagent | Narrow question | Key result | Worker verification | Decision |
+| Check | Narrow question | Key result | Worker verification | Decision |
 |----------|-----------------|------------|---------------------|----------|
-| counterexample-hunter #1 (self-run, identity continuity) | Do Worker A's identity rules R0-R11 produce identity loss for any of scenarios 1-8 under adversarial inputs (long rename gap, hash collision, universally absent attributes, provider ID scheme change)? | Scenario 1: R5 recency window CANDIDATE -> identity loss across long gaps. Scenario 4: R3 single-match hash collision -> false MATCHED (imposter not detected). Scenario 6: provider ID scheme change -> all CONFLICT -> system frozen. Scenario 8: R4 "both absent consistently" ambiguous for universally absent attributes. No principle violation found; all gaps are CANDIDATE dependencies or acknowledged limitations. | VERIFIED: I re-traced each attack through the exact rule text in W-A Sec 2.2. R5 recency window is explicitly "v1 candidate." R3 does not address single-match false-positive. R10 does not provide bulk resolution. R4 "both absent consistently" is genuinely ambiguous. | ADOPT (R0-R4, R7-R11 are sound); FLAG (R5 recency window, R3 hash collision risk, R10 bulk resolution, R4 absent-attribute ambiguity) as WARNING |
-| counterexample-hunter #2 (self-run, completeness/destructive-delete) | Do Worker B's classification rules C-1 through C-10 permit destructive reconcile under any adversarial input for scenarios 9-14 (silent partial scan, unreported permission denial, trusted freshness, small truncation, deprecated root, legitimate mass deletion)? | Scenario 9: silent partial scan with positive freshness -> C-9 -> COMPLETE -> destructive allowed (irreducible ambiguity). Scenario 10: AList swallows permission error -> C-9 -> COMPLETE -> destructive allowed (Collector trust gap). Scenario 11: Collector lies about cache_bypassed -> C-9 -> COMPLETE -> destructive allowed. Scenario 12: small truncation below threshold -> C-9 -> COMPLETE -> destructive allowed. Scenario 13: deprecated root empty -> C-8 -> SUSPICIOUS (safe but may block cleanup). Scenario 14: legitimate mass deletion -> SUSPICIOUS -> delayed but safe. No rule violates INV-004 directly; all gaps are Collector trust or threshold dependencies. | VERIFIED: I re-traced each attack through C-1 through C-10 in order. C-9 requires ALL dimensions positive, which is the gate, but the dimensions trust Collector-reported evidence. C-7/C-8 thresholds are CANDIDATE. | ADOPT (C-1 through C-10 cascade is sound); FLAG (Collector trust dependency, threshold CANDIDATE, deprecated root gap) as WARNING |
-| counterexample-hunter #3 (self-run, concurrency/replay) | Do Worker C's failure model scenarios 15-21 preserve previous canonical truth under adversarial concurrency (infinite retry, timing-dependent ordering, root delete/recreate, accidental overlap)? | Scenario 15: snapshot dedup CANDIDATE -> replay may not be idempotent. Scenario 16: infinite retry possible (no bound). Scenario 17: CAS provides serializability but not deterministic order (timing-dependent winner). Scenario 20: root delete/recreate UNDEFINED -> VIOLATION (no worker defines root lifecycle). Scenario 21: no overlap detection -> silent duplication. Scenarios 18, 19: rollback/atomicity preserve truth (PASS). | VERIFIED: I re-traced each attack through W-C Sec 2.1-2.8. Scenario 20 is a true gap -- W-A Sec 1.1 has no lifecycle field, W-B Sec 10 item 5 defers to Worker A, W-C does not address root deletion. | ADOPT (Scenarios 18, 19 PASS); FLAG (15, 16, 17, 21 as WARNING); ESCALATE (20 as VIOLATION -- root lifecycle undefined) |
-| scenario-tester #1 (self-run, state machine scenarios) | Do Worker C's 10 transition types and precedence rules produce exactly one transition per (canonical resource, snapshot entry) pair for all combinations of IdentityResolution (RESOLVED/UNRESOLVED) x CompletenessClass (COMPLETE/PARTIAL/REJECTED) x canonical presence (present/absent)? | RESOLVED x COMPLETE x present -> ADD/UPDATE/RENAME/MOVE/UNCHANGED (rule 3/4). RESOLVED x COMPLETE x absent -> ADD (rule 3). RESOLVED x PARTIAL x present -> ADD/UPDATE/RENAME/MOVE/UNCHANGED (rule 3/4, Sec 2.2). RESOLVED x PARTIAL x absent -> ADD (rule 3). UNRESOLVED x any -> CONFLICT (rule 2). any x REJECTED -> REJECTED (rule 1). canonical-not-observed x COMPLETE -> MISSING -> lifecycle (rule 5). canonical-not-observed x PARTIAL -> MISSING (not promoted) (rule 5). Each pair resolves to exactly one transition. Partition verified. | VERIFIED: I enumerated all combinations and traced through W-C Sec 1.2 rules 1-6. Precedence is total and pairwise exclusive. | ADOPT (transition partition and precedence are sound) |
-| scenario-tester #2 (self-run, root overlap/recreate) | Does the composed A/B/C design handle root delete/recreate (Scenario 20) and overlapping roots (Scenario 21) correctly? | Scenario 20: VIOLATION. No worker defines root lifecycle (new/active/deprecated/deleted). W-A Sec 1.1 ResourceRoot has no lifecycle field. W-B Sec 3.1 references "root lifecycle state" as input but defers definition to Worker A (Sec 10 item 5). W-C does not address root deletion. If a root is deleted, its canonical resources are orphaned (root_id immutable, no snapshot covers them). If recreated with same root_id, old resources reconcile against new content -> eventual removal. If recreated with new root_id, old resources leak. Scenario 21: WARNING. Overlapping roots rejected (W-A Sec 3 Option A). No detection for accidental overlap. Silent duplication. | VERIFIED: I searched all three documents for "lifecycle," "deprecated," "root delete," "root recreate." W-A has no lifecycle definition. W-B references it but defers. W-C does not mention it. | ESCALATE (Scenario 20 VIOLATION -- root lifecycle must be defined); FLAG (Scenario 21 WARNING -- overlap detection absent) |
-| contract-consistency-checker (self-run, Journal vs Canonical Inventory) | Are Worker C's journal rules J1-J7 internally consistent and consistent with principles 1 and 8? Specifically, does J5 (append-only) contradict Sec 3.4 repair option (a) (rebuild)? Does J6 (canonical wins) conflict with J5? Are the 5 event types mapped correctly from transitions? | J5 vs Sec 3.4: "rebuild affected event range" contradicts J5 "events are never edited or deleted." "Append corrective event" preserves J5. Both options offered, neither specified. WARNING. J6 vs J5: J6 (canonical wins, repair journal) is compatible with J5 if repair = append corrective event. Compatible if mechanism (b) chosen. 5 event types map correctly: ADD->resource-added, UPDATE->resource-updated, RENAME->resource-renamed, MOVE->resource-moved, CONFIRMED_REMOVED->resource-removed. MISSING/REMOVAL_CANDIDATE/UNCHANGED/CONFLICT/REJECTED -> no event. Mapping verified. J7 (no provider delta -> journal) consistent with principle 8. J1 (only committed) consistent with Gate 1A C2.2. | VERIFIED: I cross-checked each J rule against Sec 3.1 event table and Sec 3.4 repair text. The J5 vs rebuild contradiction is real. | ADOPT (J1-J4, J6-J7); FLAG (J5 vs Sec 3.4 rebuild option as WARNING); FLAG (repair mechanism DEFERRED_TO_GATE1C) |
+| Counterexample check #1 (identity continuity) | Do Worker A's identity rules R0-R11 produce identity loss for any of scenarios 1-8 under adversarial inputs (long rename gap, hash collision, universally absent attributes, provider ID scheme change)? | Scenario 1: R5 recency window CANDIDATE -> identity loss across long gaps. Scenario 4: R3 single-match hash collision -> false MATCHED (imposter not detected). Scenario 6: provider ID scheme change -> all CONFLICT -> system frozen. Scenario 8: R4 "both absent consistently" ambiguous for universally absent attributes. No principle violation found; all gaps are CANDIDATE dependencies or acknowledged limitations. | VERIFIED: I re-traced each attack through the exact rule text in W-A Sec 2.2. R5 recency window is explicitly "v1 candidate." R3 does not address single-match false-positive. R10 does not provide bulk resolution. R4 "both absent consistently" is genuinely ambiguous. | ADOPT (R0-R4, R7-R11 are sound); FLAG (R5 recency window, R3 hash collision risk, R10 bulk resolution, R4 absent-attribute ambiguity) as WARNING |
+| Counterexample check #2 (completeness/destructive-delete) | Do Worker B's classification rules C-1 through C-10 permit destructive reconcile under any adversarial input for scenarios 9-14 (silent partial scan, unreported permission denial, trusted freshness, small truncation, deprecated root, legitimate mass deletion)? | Scenario 9: silent partial scan with positive freshness -> C-9 -> COMPLETE -> destructive allowed (irreducible ambiguity). Scenario 10: AList swallows permission error -> C-9 -> COMPLETE -> destructive allowed (Collector trust gap). Scenario 11: Collector lies about cache_bypassed -> C-9 -> COMPLETE -> destructive allowed. Scenario 12: small truncation below threshold -> C-9 -> COMPLETE -> destructive allowed. Scenario 13: deprecated root empty -> C-8 -> SUSPICIOUS (safe but may block cleanup). Scenario 14: legitimate mass deletion -> SUSPICIOUS -> delayed but safe. No rule violates INV-004 directly; all gaps are Collector trust or threshold dependencies. | VERIFIED: I re-traced each attack through C-1 through C-10 in order. C-9 requires ALL dimensions positive, which is the gate, but the dimensions trust Collector-reported evidence. C-7/C-8 thresholds are CANDIDATE. | ADOPT (C-1 through C-10 cascade is sound); FLAG (Collector trust dependency, threshold CANDIDATE, deprecated root gap) as WARNING |
+| Counterexample check #3 (concurrency/replay) | Do Worker C's failure model scenarios 15-21 preserve previous canonical truth under adversarial concurrency (infinite retry, timing-dependent ordering, root delete/recreate, accidental overlap)? | Scenario 15: snapshot dedup CANDIDATE -> replay may not be idempotent. Scenario 16: infinite retry possible (no bound). Scenario 17: CAS provides serializability but not deterministic order (timing-dependent winner). Scenario 20: root delete/recreate UNDEFINED -> VIOLATION (no worker defines root lifecycle). Scenario 21: no overlap detection -> silent duplication. Scenarios 18, 19: rollback/atomicity preserve truth (PASS). | VERIFIED: I re-traced each attack through W-C Sec 2.1-2.8. Scenario 20 is a true gap -- W-A Sec 1.1 has no lifecycle field, W-B Sec 10 item 5 defers to Worker A, W-C does not address root deletion. | ADOPT (Scenarios 18, 19 PASS); FLAG (15, 16, 17, 21 as WARNING); ESCALATE (20 as VIOLATION -- root lifecycle undefined) |
+| Scenario matrix check #1 (state machine scenarios) | Do Worker C's 10 transition types and precedence rules produce exactly one transition per (canonical resource, snapshot entry) pair for all combinations of IdentityResolution (RESOLVED/UNRESOLVED) x CompletenessClass (COMPLETE/PARTIAL/REJECTED) x canonical presence (present/absent)? | RESOLVED x COMPLETE x present -> ADD/UPDATE/RENAME/MOVE/UNCHANGED (rule 3/4). RESOLVED x COMPLETE x absent -> ADD (rule 3). RESOLVED x PARTIAL x present -> ADD/UPDATE/RENAME/MOVE/UNCHANGED (rule 3/4, Sec 2.2). RESOLVED x PARTIAL x absent -> ADD (rule 3). UNRESOLVED x any -> CONFLICT (rule 2). any x REJECTED -> REJECTED (rule 1). canonical-not-observed x COMPLETE -> MISSING -> lifecycle (rule 5). canonical-not-observed x PARTIAL -> MISSING (not promoted) (rule 5). Each pair resolves to exactly one transition. Partition verified. | VERIFIED: I enumerated all combinations and traced through W-C Sec 1.2 rules 1-6. Precedence is total and pairwise exclusive. | ADOPT (transition partition and precedence are sound) |
+| Scenario matrix check #2 (root overlap/recreate) | Does the composed A/B/C design handle root delete/recreate (Scenario 20) and overlapping roots (Scenario 21) correctly? | Scenario 20: VIOLATION. No worker defines root lifecycle (new/active/deprecated/deleted). W-A Sec 1.1 ResourceRoot has no lifecycle field. W-B Sec 3.1 references "root lifecycle state" as input but defers definition to Worker A (Sec 10 item 5). W-C does not address root deletion. If a root is deleted, its canonical resources are orphaned (root_id immutable, no snapshot covers them). If recreated with same root_id, old resources reconcile against new content -> eventual removal. If recreated with new root_id, old resources leak. Scenario 21: WARNING. Overlapping roots rejected (W-A Sec 3 Option A). No detection for accidental overlap. Silent duplication. | VERIFIED: I searched all three documents for "lifecycle," "deprecated," "root delete," "root recreate." W-A has no lifecycle definition. W-B references it but defers. W-C does not mention it. | ESCALATE (Scenario 20 VIOLATION -- root lifecycle must be defined); FLAG (Scenario 21 WARNING -- overlap detection absent) |
+| Contract consistency check (Journal vs Canonical Inventory) | Are Worker C's journal rules J1-J7 internally consistent and consistent with principles 1 and 8? Specifically, does J5 (append-only) contradict Sec 3.4 repair option (a) (rebuild)? Does J6 (canonical wins) conflict with J5? Are the 5 event types mapped correctly from transitions? | J5 vs Sec 3.4: "rebuild affected event range" contradicts J5 "events are never edited or deleted." "Append corrective event" preserves J5. Both options offered, neither specified. WARNING. J6 vs J5: J6 (canonical wins, repair journal) is compatible with J5 if repair = append corrective event. Compatible if mechanism (b) chosen. 5 event types map correctly: ADD->resource-added, UPDATE->resource-updated, RENAME->resource-renamed, MOVE->resource-moved, CONFIRMED_REMOVED->resource-removed. MISSING/REMOVAL_CANDIDATE/UNCHANGED/CONFLICT/REJECTED -> no event. Mapping verified. J7 (no provider delta -> journal) consistent with principle 8. J1 (only committed) consistent with Gate 1A C2.2. | VERIFIED: I cross-checked each J rule against Sec 3.1 event table and Sec 3.4 repair text. The J5 vs rebuild contradiction is real. | ADOPT (J1-J4, J6-J7); FLAG (J5 vs Sec 3.4 rebuild option as WARNING); FLAG (repair mechanism DEFERRED_TO_GATE1C) |
 
 ---
 
@@ -980,3 +980,65 @@ irreducible ambiguities -- none contradict the 10 accepted principles.
 | Gate 1A C1.2, C1.3, C2.2 | Gate 1A Store Contract boundaries |
 | D02 Q7, Q12 | D02 research findings (AList/OpenList) |
 | D03 Q3, Q5 | D03 research findings (rclone/fsspec) |
+---
+
+## 10. Rework Adversarial Attack (Gate 1B REWORK — Foreman cross-check)
+
+> This section records the independent adversarial attack on the reworked
+> A/B/C documents. Worker D was dispatched via Bridge but failed due to
+> task file size; Foreman performed the cross-check directly. No subagent
+> used.
+
+### 10.1 Rework scenario verdicts
+
+| Scenario | Attack | Verdict | Evidence |
+|---|---|---|---|
+| D1 | Two files with identical content_hash → does system wrongly inherit resource_id? | PASS | R3 requires continuity context (MISSING candidate in horizon). Copy at new path with no MISSING candidate → NEW_RESOURCE. (GATE1B-DOMAIN-MODEL.md Sec 2.2 R3, line 398-414) |
+| D2 | Same path, old deleted, new same size → auto MATCH? | PASS | R4 step 3: same path + same size + mtime differs → UNRESOLVED (was MATCHED). Same path + same size alone MUST NOT confirm identity. (GATE1B-DOMAIN-MODEL.md Sec 2.2 R4, line 443) |
+| D3 | PARTIAL Snapshot, old resource unobserved → Canonical MISSING? | PASS | PARTIAL/STALE/SUSPICIOUS: prior canonical resources keep previous presence/lifecycle. Only UNOBSERVED marker recorded. (GATE1B-SNAPSHOT-COMPLETENESS.md Sec 4.5, line 215-472) |
+| D4 | WEAK_FAILURE_VISIBILITY Collector, success → destructive-safe COMPLETE? | PASS | C-9a: weak/unknown assurance → SUSPICIOUS. Destructive BLOCKED. Only STRONG_FAILURE_VISIBILITY can reach COMPLETE. (GATE1B-SNAPSHOT-COMPLETENESS.md C-9a, line 370) |
+| D5 | Removal Validation: Kernel re-list/refresh/Provider API? | PASS | V2b: Kernel MUST NOT touch Provider. Validation evidence from Collector-submitted snapshots only. (GATE1B-SAFE-RECONCILE.md Sec 1.3.2 V2, line 282) |
+| D6 | Journal append-only vs repair rewrite contradiction? | PASS | J6: canonical Journal history NEVER rewritten. Repair via corrective append or derived-projection rebuild only. (GATE1B-SAFE-RECONCILE.md J6, line 559) |
+| D7 | Concurrent Snapshot A/B, timing changes → different Canonical State? | PASS | IO1-IO7: Kernel-owned admission sequence. Older input cannot overwrite newer. STALE_INPUT for out-of-order. CAS is enforcement, not ordering. (GATE1B-SAFE-RECONCILE.md Sec 2.6, line 441-477) |
+| D8 | Move + Update: Consumer knows both occurred? | PASS | Ordered pair: path-change (RENAME/MOVE) then UPDATE, same generation. Both auditable as distinct events. (GATE1B-SAFE-RECONCILE.md Sec 1.2 rule 4, line 642) |
+
+### 10.2 Cross-document consistency checks
+
+| Check | Result | Evidence |
+|---|---|---|
+| Identity=UNRESOLVED → Reconcile≠MATCHED | PASS | Worker C Sec 1.2 rule 2: UNRESOLVED → CONFLICT |
+| PARTIAL → no Canonical MISSING | PASS | Worker B Sec 4.5 + Worker C Sec 1.2 rule 5 |
+| WEAK Collector → no CONFIRMED_REMOVED | PASS | Worker B C-9a → SUSPICIOUS → additive-only |
+| Canonical state = Journal scope | PASS | Worker C Blocker F: Journal records only ResourcePresence transitions |
+| Input ordering = Kernel-owned, CAS = enforcement | PASS | Worker C IO1-IO7, IO6 explicit |
+
+### 10.3 Subagent wrapper check
+
+| Document | Subagent Ledger present? | self-run subagent references? | Result |
+|---|---|---|---|
+| GATE1B-DOMAIN-MODEL.md | No (renamed to Worker Self-Check) | No | PASS |
+| GATE1B-SNAPSHOT-COMPLETENESS.md | No (renamed to Worker Self-Check) | No | PASS |
+| GATE1B-SAFE-RECONCILE.md | No (renamed to Worker Scenario Matrix) | No | PASS |
+| GATE1B-ADVERSARIAL-CASES.md | No (renamed to Worker Self-Check) | No | PASS |
+
+### 10.4 Gate 1D reference check
+
+| Document | Gate 1D references? | POST_MVP/DEFERRED_UNSCHEDULED used? | Result |
+|---|---|---|---|
+| GATE1B-DOMAIN-MODEL.md | No | Yes (Identity v2, cross-root dedup, batch propagation) | PASS |
+| GATE1B-SNAPSHOT-COMPLETENESS.md | No | Yes (corroboration mechanism) | PASS |
+| GATE1B-SAFE-RECONCILE.md | No | Yes (explicit route statement) | PASS |
+| GATE1B-ADVERSARIAL-CASES.md | No | N/A (this section) | PASS |
+
+### 10.5 Rework summary
+
+| Verdict | Count |
+|---|---|
+| PASS | 8 (D1-D8) + 5 (cross-doc) + 4 (subagent) + 4 (Gate 1D) = 21 |
+| WARNING | 0 |
+| VIOLATION | 0 |
+
+All rework blockers (A1-A5, B, C, D, E, F, G, H, I) resolved.
+All 12 Golden Cases satisfied.
+No subagent references remain.
+No Gate 1D references remain.
