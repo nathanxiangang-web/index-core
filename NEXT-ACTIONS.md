@@ -2,138 +2,140 @@
 
 ## Current phase
 
-**Gate 1B — Core Semantics Rework**
-
-Execution owner:
-
-**Codex**
+**Gate 1C — Persistence / Query / Collector Boundary**
 
 Architecture / acceptance owner:
 
 **ChatGPT Architect**
 
+Execution owner:
+
+**Codex**
+
 Active task:
 
-**Issue #37 — [CODEX][GATE-1B] Core Semantics Rework**
+**Issue #40 — [CODEX][GATE-1C] Persistence, Query & Collector Contracts**
 
 ## Immediate objective
 
-Produce one internally consistent Gate 1B architecture package that answers:
-
-> When is an observed object the same canonical resource, when is input safe enough to affect absence/removal semantics, and how does canonical truth change deterministically without accidental identity corruption or deletion?
+Turn the accepted Gate 1A/1B semantics into implementation-facing contracts that are precise enough for Gate 2 PoC without coupling the Domain to PostgreSQL or to a specific Collector.
 
 ## Codex work package
 
-Codex should start from current `main`, read Issue #37 and reuse correct material from legacy PR #35 only as reference.
+Start from current remote `main` and read Issue #40.
 
-The next clean branch is:
+Create:
 
-`architecture/gate1b-core-semantics-codex`
+`architecture/gate1c-implementation-contracts`
 
-### Identity
+### PostgreSQL Store
+
+Define the persistence representation for:
+
+- ResourceRoot + lifecycle
+- CanonicalResource + logical REMOVED tombstone
+- RemovalEvidenceState
+- Snapshot metadata/evidence required by accepted semantics
+- per-root Generation
+- serialized per-root admission/applied-input ordering state
+- applied snapshot identity / idempotency tracking
+- append-only Canonical Change Journal
+- correctness indexes/constraints
+
+### Transaction boundary
+
+Freeze exact transaction behavior so one reconcile atomically:
+
+1. checks generation/order preconditions
+2. applies canonical changes
+3. appends ordered journal events
+4. advances generation
+5. records applied snapshot/admission state
+6. commits all-or-nothing
+
+CAS/locking enforce ordering; database timing must not define it.
+
+### Query Contract
+
+Define the minimum provider-neutral read surface for future consumers:
+
+- roots
+- active resources
+- resource lookup
+- hierarchy/path resolution
+- explicit tombstone/history access
+- generation/status
+- Change Journal cursor/sequence consumption
+
+Consumers receive no canonical write path.
+
+### Change Journal persistence
+
 Freeze:
-- provider-qualified stable identity evidence
-- hash as fingerprint, not identity
-- conservative fallback when provider ID/hash are absent
-- rename/move continuity
-- same-path replacement handling
-- directory-move v1 behavior
-- continuity horizon vs removal safety
 
-### Completeness
-Freeze:
-- Snapshot acceptance states
-- provider-neutral freshness evidence
-- Collector failure-visibility/completeness assurance
-- destructive-safe qualification
-- PARTIAL/STALE/SUSPICIOUS unknown-coverage semantics
+- sequence scope
+- relation to generation
+- intra-generation event ordering
+- append-only guarantees
+- corrective events
+- projection catch-up semantics
 
-### Reconcile / failure
-Freeze:
-- add/update/rename/move
-- unknown coverage vs canonical missing
-- removal evidence lifecycle
-- conflict/unresolved behavior
-- failure preservation of prior truth
-- removal validation boundary without Kernel provider traversal
+### Collector Adapter Contract
 
-### Change Journal
-Freeze:
-- semantic events
-- append-only/canonical-wins repair semantics
-- distinction from provider delta and snapshot diff
-- MOVE/RENAME + UPDATE semantic result
+Map AList/OpenList and rclone to the accepted normalized contracts:
 
-### Ordering
-Freeze:
-- Kernel-owned per-root accepted input ordering
-- duplicate replay idempotency
-- out-of-order old input behavior
-- CAS as Store enforcement, not ordering policy
+- traversal
+- failure visibility assurance
+- freshness evidence
+- identity assurance
+- optional hashes
+- skipped scopes/errors
+- root/scope mapping
+- operational complexity
+- license boundary
 
-### Root lifecycle
-Freeze:
-- disjoint root ownership
-- root_id immutability
-- NEW / ACTIVE / DEPRECATED / DELETED or equivalent
-- logical retirement and historical retention
+Codex provides the evidence matrix and ADR recommendation.
 
-## Required adversarial cases
+ChatGPT Architect makes the final architecture acceptance/selection.
 
-Before opening the PR, Codex must verify the design against:
+## Required consistency checks
 
-- identical-content copy
-- same-path/same-size replacement
-- stable provider ID vs unqualified provider ID
-- long-gap rename/move
-- directory move
-- partial scan
-- silent truncation suspicion
-- weak error-visibility Collector
-- permission-denied subtree
-- stale input
-- duplicate replay
-- out-of-order input
-- concurrent same-root inputs
-- root delete/recreate
-- Journal/canonical disagreement
-- MOVE/RENAME + UPDATE in one accepted input
+Before PR, prove:
 
-## Explicitly deferred to Gate 1C
+- every Gate 1B state has an unambiguous persistence representation
+- PARTIAL/STALE/SUSPICIOUS cannot advance removal evidence in transaction flow
+- confirmed removal tombstone + journal event commit atomically
+- duplicate replay is idempotent
+- stale/out-of-order input cannot overwrite newer truth
+- MOVE/RENAME + UPDATE journal ordering is preserved
+- DELETED root cannot reconcile
+- IDs cannot be reused
+- Consumer cannot mutate canonical truth
+- Collector-specific fields do not leak into Kernel Domain
 
-- PostgreSQL tables/indexes/constraints/migrations
-- exact transaction implementation
-- exact Query API shape
-- journal physical persistence/event schema
-- final Collector ADR / selection
+## Forbidden in Gate 1C
 
-## Explicitly deferred post-MVP
+- CloudSite integration
+- UI
+- product MVP implementation
+- Scanner Resume
+- native delta / true incremental
+- new gate names
+- silent change to Gate 1B semantics
+- license-incompatible donor code copying
 
-### Scanner Resume
-- durable scanner
-- checkpoint
-- resume
-- bounded concurrency
-
-### Incremental
-- native delta
-- provider cursor
-- dirty scope
-- incremental hints
-
-## Gate 1B exit condition
+## Gate 1C exit condition
 
 ChatGPT Architect must be able to answer:
 
-1. What evidence can establish canonical identity?
-2. What evidence can never establish identity by itself?
-3. When does rename/move preserve identity?
-4. When must matching remain UNRESOLVED/CONFLICT?
-5. What input can authorize canonical absence/removal?
-6. How is incomplete coverage prevented from changing prior truth?
-7. What makes removal confirmation independent and safe?
-8. What semantic events enter Change Journal?
-9. How are duplicate/concurrent/out-of-order inputs deterministic?
-10. How are roots retired/recreated without identity reuse?
+1. How is every accepted Domain state represented in PostgreSQL?
+2. What exact transaction boundary preserves previous truth?
+3. How are generation and admission ordering enforced?
+4. How is the journal sequenced and replayed?
+5. What can Consumers read?
+6. What can Consumers never write?
+7. How does a Collector prove normalized freshness/failure/identity assurance?
+8. Which initial Collector adapter should Gate 2 validate, and why?
+9. Can the Collector be replaced without rewriting Kernel semantics?
 
-Only after Architect ACCEPT may Gate 1C begin.
+Only then may Gate 2 PoC begin.
