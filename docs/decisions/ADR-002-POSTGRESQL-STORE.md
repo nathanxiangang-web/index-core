@@ -5,7 +5,8 @@
 > Date: 2026-09-24. Gate: 1C.
 > Related (FROZEN): `docs/architecture/GATE1C-POSTGRESQL-STORE.md` (A),
 > `docs/architecture/GATE1C-TRANSACTION-BOUNDARY.md` (B),
-> `docs/architecture/GATE1C-QUERY-CONTRACT.md` (C),
+> `docs/architecture/GATE1C-QUERY-CONTRACT.md` (C).
+> Related (PARTIAL_FOR_ARCH_REVIEW, PR #43 D/E round-1 rework):
 > `docs/architecture/GATE1C-JOURNAL-PERSISTENCE.md` (D).
 > Upstream: Gate 1A Store Interface; Gate 1B Domain/Reconcile/Completeness.
 
@@ -29,7 +30,9 @@ froze the semantics that persistence must realize:
 - root lifecycle and root-level-only DELETED tombstone semantics.
 
 Gate 1C A/B/C (FROZEN, PR #43 Final Freeze Decision) fixed the concrete schema,
-transaction boundary, and read-only Query Contract; D fixes Journal persistence.
+transaction boundary, and read-only Query Contract. D proposes the Journal
+persistence contract and is still **PARTIAL_FOR_ARCH_REVIEW** (PR #43 D/E
+round-1 rework); this ADR does not treat D as frozen.
 This ADR records **why PostgreSQL is the PoC Store** and what that commits us to.
 
 ---
@@ -37,7 +40,8 @@ This ADR records **why PostgreSQL is the PoC Store** and what that commits us to
 ## Decision
 
 Use **PostgreSQL** as the Store realization for the Gate 2 PoC, implementing the
-FROZEN A/B/C/D contracts, with these concrete commitments:
+FROZEN A/B/C contracts and the D Journal-persistence contract (currently
+`PARTIAL_FOR_ARCH_REVIEW`), with these concrete commitments:
 
 1. **Isolation:** `READ COMMITTED` with explicit row locks / CAS; per-root
    serialization (`SELECT ... FOR UPDATE` or advisory lock) as the recommended
@@ -137,7 +141,8 @@ FROZEN A/B/C/D contracts, with these concrete commitments:
 ## Evidence
 
 - FROZEN `GATE1C-POSTGRESQL-STORE.md`, `GATE1C-TRANSACTION-BOUNDARY.md`,
-  `GATE1C-QUERY-CONTRACT.md`, `GATE1C-JOURNAL-PERSISTENCE.md`.
+  `GATE1C-QUERY-CONTRACT.md`; `GATE1C-JOURNAL-PERSISTENCE.md` (D,
+  `PARTIAL_FOR_ARCH_REVIEW`).
 - Gate 1B `GATE1B-DOMAIN-MODEL.md`, `GATE1B-SAFE-RECONCILE.md`,
   `GATE1B-SNAPSHOT-COMPLETENESS.md`, `GATE1B-ADVERSARIAL-CASES.md`.
 - Gate 1A `GATE1A-STORE-QUERY-CONTRACT-SKELETON.md`,

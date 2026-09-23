@@ -3,7 +3,8 @@
 > Implementation-facing contract for the persistence, sequencing, consumption,
 > and repair of the Canonical Change Journal.
 > Produced by the Codex Executor (Worker) for ChatGPT Architect review.
-> Status: **PARTIAL_FOR_ARCH_REVIEW** (deliverable D).
+> Status: **PARTIAL_FOR_ARCH_REVIEW** (deliverable D; PR #43 D/E round-1
+> rework applied: D1 rebuild/checkpoint split, D2 lifecycle concurrency domain).
 > Baseline: remote `main` = `6a131f17657807d9aee2921be1f286ceaff784e4`.
 > Depends on the FROZEN contracts `GATE1C-POSTGRESQL-STORE.md` (A),
 > `GATE1C-TRANSACTION-BOUNDARY.md` (B), `GATE1C-QUERY-CONTRACT.md` (C) and the
@@ -154,14 +155,36 @@ Sec 1.5, U4).
   transition. When such a transition commits inside a reconcile transaction,
   the event carries that reconcile's post-application generation, exactly like
   resource events.
-- If a lifecycle transition is applied by a dedicated lifecycle operation rather
-  than a catalog reconcile, it MUST still commit in one transaction with the
-  generation/state change it represents, and it MUST be assigned
-  `event_seq`/`intra_generation_seq` by the same rules (Sec 3, Sec 6). It MUST
-  NOT be emitted outside a committed transaction.
+- A **dedicated root-lifecycle operation** (an explicit deprecate/delete action
+  that is not a catalog reconcile) MUST enter the **same per-root
+  concurrency-control domain** as a reconcile. It MUST NOT introduce a second
+  ordering or locking mechanism:
+  - It MUST acquire the **same per-root serialization/version guard** as a
+    reconcile for the target `root_id` (B Sec 1.1 `A1`, Sec 1.2 `R1`, Sec 2.2).
+  - It MUST validate the **expected canonical generation** under that guard
+    (B `R11`) so a stale lifecycle computation cannot commit over a newer one.
+  - It MUST be rejected when `lifecycle_state = 'DELETED'` (B `R4`); it MUST NOT
+    bypass the committed/active `DELETED` guard.
+  - When the lifecycle transition is a canonical state change (it produces
+    `root-deprecated`/`root-deleted`), it MUST, in that **same transaction**,
+    atomically mutate the root lifecycle, advance the canonical generation, and
+    append the Journal event — the atomic unit of A `M5` / B `T-AT1`.
+  - Consequently a reconcile and a lifecycle operation for the same root are
+    serialized with respect to each other: a stale reconcile MUST NOT commit
+    work on top of a lifecycle transition that committed first (and vice versa).
+- Either path MUST be assigned `event_seq`/`intra_generation_seq` by the same
+  rules (Sec 3, Sec 6) and MUST NOT be emitted outside a committed transaction.
 
 > `PROPOSED` This closes the generation-attribution gap A left open for
 > lifecycle events; it adds no new event type. `INFERENCE`.
+>
+> `PROPOSED` (PR #43 D/E review round 1, D2) — dedicated lifecycle operations
+> reuse B's per-root serialization/version guard and generation validation rather
+> than defining their own ordering. This is required because "atomic transaction"
+> alone does not serialize a lifecycle op against a concurrent reconcile: without
+> the shared per-root guard, a stale reconcile could commit on top of a committed
+> `root-deleted` (or a delete could interleave a reconcile's in-flight
+> generation). `INFERENCE`.
 
 ---
 
@@ -275,17 +298,34 @@ the consuming cursor semantics (`JC1`–`JC8`). D closes the protocol.
 3. **Inclusive-boundary re-read:** if a consumer re-reads from
    `last_seen_event_seq` (inclusive), it MUST deduplicate by (`root_id`,
    `event_seq`); duplicates are permitted, gaps are not (C `JC3`).
-4. **Rebuild (from scratch):** choose a per-root floor (0 = beginning, or a
-   caller-chosen `event_seq`) and replay forward; the result is a new projection
-   instance, not an edit of canonical data.
-5. **New root:** a root absent from the cursor vector starts from its beginning
-   or a caller-chosen floor (C `JC7`).
-6. **Isolation:** because each root is independent (A `C-J*`, U1/U2), projections
+4. **Rebuild (from scratch):** a true from-scratch rebuild replays **only** from
+   the root's Journal origin (`event_seq = 0`, i.e. strictly before that root's
+   first event). The result is a new projection instance, not an edit of
+   canonical data.
+5. **Checkpoint resume (NOT a from-scratch rebuild):** replaying from a non-zero
+   `event_seq` floor is permitted **only** as a resume from a persistent
+   **checkpoint**. A checkpoint MUST carry (a) the projection state it represents
+   and (b) the exact per-root cursor `event_seq` that state corresponds to; the
+   resume replays strictly after that cursor. A non-zero floor **without** a
+   matching checkpoint MUST be **rejected**. It MUST NOT be treated as, labeled,
+   or exported as a complete rebuild, because the projection would silently omit
+   every event before the floor (a partial result masquerading as complete).
+6. **New root:** a root absent from the cursor vector starts from its beginning
+   (`event_seq = 0`) or from a matching checkpoint; a non-zero floor without a
+   matching checkpoint is rejected by the same rule (step 5; C `JC7`).
+7. **Isolation:** because each root is independent (A `C-J*`, U1/U2), projections
    catch up per root and MUST NOT assume any cross-root ordering.
 
 > `DERIVED` The vector-cursor and rebuild semantics are frozen by C `JC1`–`JC8`;
 > the step protocol above is `PROPOSED` and closes the Gate 1B
 > `DEFERRED_TO_GATE1C` item. `INFERENCE`.
+>
+> `PROPOSED` (PR #43 D/E review round 1, D1) — the origin/checkpoint split is the
+> Worker's closure of the "choose a floor and replay" ambiguity: a rebuild is
+> **only** from `event_seq = 0`; every non-zero start is a **checkpoint resume**
+> and REQUIRES the matching checkpoint state + cursor. There is no code path or
+> API that presents a non-zero floor without a matching checkpoint as a valid
+> rebuild. `INFERENCE`.
 
 ---
 
@@ -344,6 +384,9 @@ the consuming cursor semantics (`JC1`–`JC8`). D closes the protocol.
 | JD8 | Projection catch-up with a per-root cursor vector | Each root resumes from `last_seen + 1`; no gaps; a root absent from the vector starts from its floor; no cross-root ordering assumed. |
 | JD9 | Projection disagrees with canonical | Projection rebuilds from the Journal; canonical Journal and canonical Inventory are never edited. |
 | JD10 | `event_id` observed out of commit order across roots | Consumer MUST NOT use `event_id` as a cursor; per-root `event_seq` vectors lose no event. |
+| JD11 | Rebuild requested from a non-zero `event_seq` floor with **no** matching checkpoint | **REJECTED** — it is not a valid rebuild. A non-zero floor is only a checkpoint resume; without the checkpoint state + matching cursor the projection would silently omit all earlier events. |
+| JD12 | Projection resumes from a persisted checkpoint (base projection state + matching per-root cursor) | Replay resumes strictly after the checkpoint cursor; the reconstructed state equals a full from-origin (`event_seq = 0`) replay of the same committed history. |
+| JD13 | A dedicated root-lifecycle op and a reconcile target the same root concurrently | Both enter the same per-root serialization/version guard; the later one validates the committed generation / `DELETED` state and either applies on top or is rejected — no stale commit over the lifecycle transition, no second ordering system. |
 
 ---
 
@@ -354,6 +397,6 @@ the consuming cursor semantics (`JC1`–`JC8`). D closes the protocol.
 | `intra_generation_seq` exact allocation algorithm (Kernel transition enumeration) | `PROPOSED` | Sec 6 fixes scoping/contiguity; the Kernel-side enumeration implementation is a Gate 2 choice under the frozen semantics. |
 | Append-only trigger vs role-only enforcement | `CANDIDATE` | Sec 7.2 requires role revocation; the trigger is optional defense-in-depth. |
 | Corrective-event `resource-*` type selection policy | `PROPOSED` | Sec 8 fixes mechanism/constraint; the semantic choice rule follows Kernel repair logic (Gate 2). |
-| Projection rebuild checkpoint storage | `CANDIDATE` | Sec 9 fixes the protocol; whether cursors are persisted in a table or derived is implementation. |
+| Projection rebuild checkpoint storage | `CANDIDATE` | Sec 9 fixes the protocol; whether cursors/checkpoints are persisted in a table or derived is implementation. A non-zero resume MUST have a matching checkpoint (state + cursor); the storage form is the choice. |
 | Lifecycle event emitted by a dedicated lifecycle op vs a catalog reconcile | `PROPOSED` | Sec 5.1 requires one atomic transaction either way. |
 | Journal retention / archival | `DEFERRED` | Not required for Gate 2 PoC; canonical Journal remains authoritative. |

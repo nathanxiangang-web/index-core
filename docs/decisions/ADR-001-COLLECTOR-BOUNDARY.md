@@ -39,7 +39,10 @@ forbids selecting by feature count.
 ## Decision
 
 1. **Initial Collector adapter: rclone**, wrapped behind the adapter contract
-   (process / RC boundary; no rclone source linked into the Kernel).
+   (process / RC boundary; no rclone source linked into the Kernel). Its
+   `STRONG_FAILURE_VISIBILITY` is **conditional on the traversal mode actually
+   used**, and its `snapshot_identity` defaults to the deterministic digest
+   (per-object `IDer` ids are NOT revision tokens) — see Rationale and E Sec 2.4.
 2. **AList/OpenList: supported boundary adapter** for deployments that already
    run AList/OpenList, used through an independent-process / public-API boundary
    with a separate license review (AGPL-3.0).
@@ -57,8 +60,8 @@ forbids selecting by feature count.
 | Criterion | rclone | AList/OpenList | Effect |
 |-----------|--------|----------------|--------|
 | License | **MIT** | **AGPL-3.0** | rclone usable directly as a boundary; AList needs strict isolation + legal review. |
-| Failure visibility (gate) | can declare **STRONG** (typed + propagate) | **WEAK** (silent swallow) | rclone can yield a trustworthy success signal; AList successes degrade to `SUSPICIOUS`. |
-| Provider identity | DRIVER_DEPENDENT (`IDer`, 38 backends) | DRIVER_DEPENDENT (AList) / **UNAVAILABLE** (OpenList) | rclone no worse; OpenList strictly weaker. |
+| Failure visibility (gate) | can declare **STRONG in the traversal mode actually used** (conditional; typed + propagate) | **WEAK** (silent swallow) | Where the mode propagates errors, rclone yields a trustworthy success signal; AList successes degrade to `SUSPICIOUS`. `STRONG` is NOT claimed for every backend/mode (E3). |
+| Provider identity | DRIVER_DEPENDENT (`IDer`, 38 backends) — a **per-object** id, NOT a revision token | DRIVER_DEPENDENT (AList) / **UNAVAILABLE** (OpenList) | rclone no worse; OpenList strictly weaker. For all candidates the identity defaults to the deterministic digest (E1). |
 | Optional hash | DRIVER_DEPENDENT (68 backends) | DRIVER_DEPENDENT | tie; `hash` stays optional either way. |
 | Completeness | PARTIAL (contract-level + error propagation) | PARTIAL (no proof) | tie at the contract ceiling; Kernel decides. |
 | Operations | single binary / RC daemon | long-running service + admin token | rclone simpler to isolate. |
@@ -87,25 +90,36 @@ contract-fit gates are license and failure visibility — both favor rclone.
 
 - Kernel semantics stay Collector-agnostic; swapping adapters does not reopen
   Gate 1B/1C.
-- A trustworthy (STRONG) failure-visibility signal is available for the PoC, so
-  completeness decisions are evidence-based.
+- A trustworthy `STRONG` failure-visibility signal is available **where the
+  chosen traversal mode propagates errors**, so completeness decisions are
+  evidence-based.
 - No AGPL contamination risk in the initial path.
 
 **Negative / risks**
 
 - rclone still cannot prove provider-complete traversal; the Kernel must rely on
   evidence + C-9/C-9a.
-- rclone identity/hash are DRIVER_DEPENDENT; some providers yield no
-  `provider_object_id`, so `snapshot_identity` falls back to a versioned
-  deterministic digest.
+- `STRONG_FAILURE_VISIBILITY` is **conditional on the traversal mode**; the
+  adapter MUST declare the visibility class per mode rather than as a blanket
+  property (E3).
+- rclone identity/hash are DRIVER_DEPENDENT; per-object `IDer` ids are NOT
+  revision tokens, so `snapshot_identity` uses the versioned deterministic digest
+  by default (E1). A native revision token is admitted only where a provider
+  documents a whole-scope revision.
+- rclone returns no structured skipped set (logs only), so `skipped_scopes` is
+  UNKNOWN (absent/`NULL`) rather than confirmed-empty and cannot by itself
+  satisfy C-9 (E3).
 - RC requires an `rclone rcd` daemon or CLI invocation; the adapter owns that
   operational choice.
 
 **Follow-ups**
 
-- Per-adapter `snapshot_identity` mapping (digest vs native token).
+- Per-adapter `snapshot_identity` mapping (digest by default; native token only
+  under the E1 whole-scope-revision gate).
 - Per-provider `provider_identity_assurance` evidence.
-- `skipped_scopes` population strategy (rclone logs, not structured).
+- Per-mode `STRONG` failure-visibility declaration (not a blanket claim).
+- `skipped_scopes` population strategy (rclone logs, not structured); UNKNOWN
+  stays absent/`NULL` until confirmed.
 
 ---
 
@@ -115,7 +129,8 @@ contract-fit gates are license and failure visibility — both favor rclone.
 |-------------|----------------------|
 | Collector reports evidence; Kernel decides (Gate 1A B4) | Adapter never sets `complete=true`; Kernel owns acceptance. |
 | Optional `provider_object_id`/`hash` (INV-011) | Preserved; no provider excluded. |
-| `snapshot_identity` = (`kind`,`namespace`,`version`,`value`), no wall-clock | Adapter maps native token or versioned deterministic digest. |
+| `snapshot_identity` = (`kind`,`namespace`,`version`,`value`), no wall-clock | Adapter maps a documented whole-scope revision token, else a versioned deterministic digest over entry set + decision-relevant evidence; per-object ids are not tokens (E1/E2). |
+| `scope_shrink_corroboration` is not self-declared | Kernel/evaluation-owned; the adapter supplies only raw normalized evidence (E4). |
 | Root visibility / scope disjointness (Gate 1B) | Adapter owns `root_id -> scope`; `scope_descriptor` opaque to Kernel. |
 | No Collector field leaks into Kernel Domain | Normalized enums only (Sec 2.3/AR3–AR9 of E). |
 | No new gate; no silent Gate 1B change | This ADR adds no Kernel semantics. |

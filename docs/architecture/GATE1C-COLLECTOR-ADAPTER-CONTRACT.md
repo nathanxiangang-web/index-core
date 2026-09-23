@@ -4,7 +4,9 @@
 > frozen IndexCore Snapshot / Evidence contracts, plus the Architect-facing
 > contract-fit evidence for the initial adapter selection.
 > Produced by the Codex Executor (Worker) for ChatGPT Architect review.
-> Status: **PARTIAL_FOR_ARCH_REVIEW** (deliverable E).
+> Status: **PARTIAL_FOR_ARCH_REVIEW** (deliverable E; PR #43 D/E round-1
+> rework applied: E1 identity gate, E2 digest canonicalization, E3
+> skipped_scopes UNKNOWN, E4 Kernel-owned shrink corroboration).
 > Baseline: remote `main` = `6a131f17657807d9aee2921be1f286ceaff784e4`.
 > Depends on `GATE1A-COLLECTOR-CONTRACT-SKELETON.md`,
 > `GATE1B-SNAPSHOT-COMPLETENESS.md`, `GATE1B-DOMAIN-MODEL.md` and the FROZEN
@@ -96,6 +98,27 @@ reports status + evidence and the Kernel decides (`GATE1B-SNAPSHOT-COMPLETENESS.
 `DERIVED` / `FACT` (`GATE1B-SNAPSHOT-COMPLETENESS.md`;
 `GATE1B-DOMAIN-MODEL.md`).
 
+#### 2.3.1 `skipped_scopes`: UNKNOWN is not confirmed-empty (PR #43 D/E review round 1, E3)
+
+Adapters such as AList/OpenList cannot expose a structured skip set, and rclone
+returns skips only as logs. "Skip visibility is UNKNOWN" MUST NOT be serialized
+as an empty list: that would fabricate positive evidence of "no skips".
+
+Encoding (no new Kernel field; uses the existing `skipped_scopes` evidence, which
+is nullable in A Sec 3.5):
+
+| Adapter state | Encoding | Meaning |
+|---------------|----------|---------|
+| adapter can establish nothing was skipped | concrete empty value (`[]`) | **confirmed no skips** |
+| adapter cannot observe skips at all | absent / `NULL` / declared UNKNOWN | **UNKNOWN skip visibility** |
+| adapter observed skips | non-empty list of prefixes + reasons | skips present |
+
+The frozen completeness gate C-9 requires `skipped_scopes` **empty** as a
+positive condition; `null`/absent (UNKNOWN) MUST NOT satisfy it — only a
+confirmed empty value does. Missing/unknown skip evidence therefore degrades
+exactly like missing evidence, not like a clean scan. `DERIVED` (Gate 1B
+C-5/C-9); `FACT`.
+
 ### 2.4 `snapshot_identity` the adapter MUST feed (frozen)
 
 The adapter maps a concrete source to the frozen identity
@@ -107,6 +130,78 @@ wall-clock, admission timing, or DB timing (`GATE1C-POSTGRESQL-STORE.md` `C-AS*`
 > `DERIVED` A path is a **matching key**, not stable identity; rename changes
 > name and move changes parent. The adapter may not present a mutable path as a
 > stable revision token. `FACT` (INV-010; D02).
+
+#### 2.4.1 `REVISION_TOKEN` admission gate (PR #43 D/E review round 1, E1)
+
+A `provider_object_id` (or any per-object/provider ID) is **identity evidence for
+one resource**, NOT a revision token for the whole scanned scope. A stable
+object/folder ID normally stays constant while that object's content changes, so
+using it as `snapshot_identity` would let an actually-changed scope reuse the same
+identity and silently produce a **false IO3 NO-OP** (`C-AS3`).
+
+`REVISION_TOKEN` MUST therefore NOT be produced from an object/folder ID
+(AList `id`, OpenList, rclone `IDer`, S3 `ETag`, a cloud object id, ...) unless
+the provider **explicitly documents** that the token represents the **entire
+scanned revision/snapshot** of the scope and changes whenever any relevant state
+within that scope changes. Absent such documented proof, the adapter MUST emit
+the `DETERMINISTIC_DIGEST` form. A per-object ID MAY still appear in
+`provider_object_id` / IdentityEvidence; it just MUST NOT be the identity.
+
+`FACT` (frozen `C-AS*` + IO3); `DERIVED` (the object-id vs revision-token
+distinction, E1).
+
+#### 2.4.2 `DETERMINISTIC_DIGEST` canonicalization (PR #43 D/E review round 1, E2)
+
+The digest is versioned (`snapshot_identity_version`) and taken over the
+**normalized, reconcile-decision-relevant, immutable** Snapshot evidence. It MUST
+cover at least:
+
+1. the **normalized `SnapshotEntry` set** (each entry's normalized immutable
+   fields; the entry set itself, not mutable paths as identity), and
+2. the **normalized traversal/completeness inputs that can change the Kernel's
+   classification or reconcile decision** — at minimum `traversal_status`,
+   normalized `error_summary`, `skipped_scopes` (including its UNKNOWN vs
+   confirmed-empty distinction, Sec 2.3.1), `freshness_evidence`, and the
+   `collector_completeness_assurance` class.
+
+It MUST exclude wall-clock, admission timing, and DB timing (frozen). This rule
+exists because the same entry set can be observed first as PARTIAL/SUSPICIOUS and
+later as COMPLETE: if the digest covered entries only, the first (zero-mutation)
+application would record identity@G and a later, stronger observation at the same
+generation would be wrongly collapsed to an IO3 NO-OP, so the Kernel could never
+re-evaluate removal eligibility.
+
+> `PROPOSED` (E2) — for the digest form the canonicalization rule-set id is the
+> `snapshot_identity_namespace` (A Sec 3.8). Changing this rule set is a new
+> `snapshot_identity_version`, hence a distinct identity (`C-AS1`); old and new
+> digests never collapse.
+>
+> `DERIVED` The native `REVISION_TOKEN` path MUST also preserve the E2 guarantee:
+> two submissions whose reconcile evidence is materially different MUST NOT
+> collapse into the same IO3 identity. If the native token alone cannot guarantee
+> this, the adapter MUST use the deterministic digest. `FACT` (IO3 correctness,
+> E2).
+
+### 2.5 `scope_shrink_corroboration` is Kernel/evaluation-owned (PR #43 D/E review round 1, E4)
+
+`scope_shrink_corroboration` (Gate 1B Sec 3.1.3; persisted in A Sec 3.5 as
+`NONE`/`CORROBORATED`/`CONTRADICTED`) requires a **later, independently admitted
+observation** plus prior canonical context. A single Collector scan MUST NOT
+self-declare it.
+
+- The adapter provides only the **raw normalized scan evidence** (entry set +
+  traversal/completeness evidence, Sec 2.4.2); it never sets
+  `CORROBORATED`/`CONTRADICTED` and exposes no such field.
+- The **Kernel/evaluation** derives the signal from independent admitted
+  observations using the adapter-provided normalized evidence, and persists it on
+  / equivalent to the Snapshot being evaluated (as frozen in A), matching Gate 1B
+  Sec 3.1.3: same root/scope, fresh evidence, no errors/skips,
+  `STRONG_FAILURE_VISIBILITY`.
+- The significant-shrink threshold value is a Gate 1C/runtime config
+  (`D-DEFER-7`), not a Collector concern.
+
+`DERIVED` (Gate 1B Sec 3.1.3, C-7/C-9; A Sec 3.7). The adapter boundary stays
+neutral: no provider-specific Kernel field is introduced. `FACT`.
 
 ---
 
@@ -139,7 +234,7 @@ Candidates (from accepted D02/D03): **AList**, **OpenList**, **rclone**,
 | 5 | optional hash | DRIVER_DEPENDENT (content hash when present) | DRIVER_DEPENDENT | DRIVER_DEPENDENT (68 backends; real content hash) | weak (metadata hash) | DRIVER_DEPENDENT |
 | 6 | skipped-scope / error evidence | **NOT AVAILABLE** | **NOT AVAILABLE** | logged, **not structured** | best (`on_error=callable`) | DRIVER_DEPENDENT |
 | 7 | ResourceRoot / scope mapping | mount path unique; `provider`=driver name | same, no `id` | remote path; entry embeds no root | `fsid` fs-level | provider+account+scope |
-| 8 | snapshot_identity mapping | value mostly path (id driver-dependent) | only path | value = id (partial) / digest | only name(path) | possible native revision token |
+| 8 | snapshot_identity mapping | digest (object `id` is NOT a revision token) | digest (no `id` at all) | digest (object `IDer` is NOT a revision token) | digest over `name` + evidence | `REVISION_TOKEN` only where the provider documents a whole-scope revision |
 | 9 | operational complexity | service + admin token | same | single binary / RC daemon | Python lib + external backend packages | per-provider integration |
 | 10 | license boundary | **AGPL-3.0** | **AGPL-3.0** | **MIT** | BSD-3-Clause | provider-dependent |
 
@@ -237,9 +332,14 @@ makes failure visibility a **gate**, not a scored nicety.
 - **fsspec:** best of the four — per-path callbacks, but sync/async
   inconsistency (`d03/W-C-...`).
 
-`DERIVED` `skipped_scopes` may be empty or incomplete; the Kernel treats
-incompleteness as evidence, not as a guarantee
-(`GATE1A-COLLECTOR-CONTRACT-SKELETON.md`; `GATE1B-SNAPSHOT-COMPLETENESS.md`).
+`DERIVED` For every candidate above, skip visibility is **UNKNOWN** in the
+missing case (AList/OpenList: not observable; rclone: logged, not structured;
+fsspec: only where callbacks are configured). Per Sec 2.3.1 this MUST be encoded
+as absent/`NULL`, never as an empty `skipped_scopes`; it therefore does NOT
+satisfy the C-9 "`skipped_scopes` empty" positive condition. `skipped_scopes` may
+be empty or incomplete; the Kernel treats incompleteness as evidence, not as a
+guarantee (`GATE1A-COLLECTOR-CONTRACT-SKELETON.md`;
+`GATE1B-SNAPSHOT-COMPLETENESS.md`).
 
 ### 5.7 ResourceRoot / scope mapping
 
@@ -252,19 +352,24 @@ incompleteness as evidence, not as a guarantee
 
 ### 5.8 `snapshot_identity` mapping feasibility
 
-- AList/OpenList: only a **path-based matching key** is universally available;
-  `id` is driver-dependent (AList) or unavailable (OpenList) — cannot serve as a
-  universal `value`.
-- rclone: `value` can be a native id where `IDer` exists, else a deterministic
-  digest; `ListR` exposes no token and `ChangeNotifier` no replay token
+- AList/OpenList: only a path-based **matching key** is universally available;
+  `id` is driver-dependent (AList) or unavailable (OpenList). Even when present,
+  `id` is a **per-object** identifier, not a revision token for the scanned scope
+  (Sec 2.4.1) — it MUST NOT be the identity.
+- rclone: `IDer` gives a per-object `id` on 38 backends (empty for local; absent
+  for S3/WebDAV). That `id` is **not** a whole-scope revision token; `ListR`
+  exposes no token and `ChangeNotifier` no replay token (`d03/W-D-...`). Absent a
+  documented scope-level revision, `value` MUST be the deterministic digest.
+- fsspec: only `name`/path — digest form.
+- direct-provider: a native revision token is usable **only** if the provider
+  documents it as a whole-scope revision/snapshot token; S3 `versionID` is not
+  exposed through `IDer` and is per-object, so it is not implicitly a token
   (`d03/W-D-...`).
-- fsspec: only `name`/path.
-- direct-provider: possibly a native revision token, but S3 `versionID` is not
-  exposed through `IDer` (`d03/W-D-...`).
 
-`INFERENCE` A universal `value` for path-based providers is a **versioned
-deterministic digest** over normalized content; native tokens are an
-optimization where a provider guarantees stability.
+`DERIVED`/`INFERENCE` The universal `value` for these adapters is a **versioned
+deterministic digest** over the normalized entry set + decision-relevant evidence
+(Sec 2.4.2). A native `REVISION_TOKEN` is an optimization admitted only under the
+E1 gate; per-object IDs stay in `provider_object_id` / IdentityEvidence.
 
 ### 5.9 Operational complexity
 
@@ -305,10 +410,11 @@ derived from Sec 2 and do not add Kernel concepts.
 | AR4 | freshness evidence | one of the normalized enum values; no provider switches leak |
 | AR5 | provider identity assurance + scope | `STABLE_WITHIN_SCOPE`/`UNVERIFIED`/`UNSTABLE`/`UNAVAILABLE`; scope iff id present |
 | AR6 | optional `hash` + `hash_algorithm` | only when available; never fabricated |
-| AR7 | `skipped_scopes` (may be empty) | best effort; incompleteness is evidence |
+| AR7 | `skipped_scopes` (confirmed-empty vs UNKNOWN) | best effort; UNKNOWN encoded as absent/`NULL`, never as empty; incompleteness is evidence (Sec 2.3.1) |
 | AR8 | `ResourceRoot` scope mapping | adapter owns `root_id -> remote scope`; `scope_descriptor` stays opaque |
 | AR9 | `snapshot_identity` tuple | `kind`+`namespace`+`version`+`value` per Sec 2.4; no wall-clock |
 | AR10 | no Kernel mutation | adapter only reports; Kernel decides |
+| AR11 | no `scope_shrink_corroboration` self-declaration | Kernel/evaluation-owned; the adapter supplies only raw normalized evidence (Sec 2.5) |
 
 `DERIVED` AR10 is forced by the frozen write prohibition (C Sec 6) and the
 Collector/Kernel boundary (Gate 1A). `FACT`.
@@ -325,8 +431,13 @@ Collector/Kernel boundary (Gate 1A). `FACT`.
 1. **License (gate):** MIT — no AGPL isolation burden, directly usable as a
    process/RC boundary. AList/OpenList are AGPL-3.0 and would require strict
    isolation + separate legal review.
-2. **Failure visibility (gate):** can declare `STRONG` (typed errors propagate),
-   so successes are not auto-degraded to `SUSPICIOUS` (C-9a). AList/OpenList are
+2. **Failure visibility (gate, conditional):** can declare `STRONG` **in the
+   traversal mode the adapter actually uses** — i.e. only where that mode
+   propagates typed errors and preserves the evidence the frozen completeness
+   gate needs (C-9/C-9a). `STRONG` is NOT a blanket property of every rclone
+   backend/mode; the adapter MUST declare the visibility class per mode and MUST
+   NOT claim `STRONG` where errors can still be swallowed. Where it does hold,
+   successes are not auto-degraded to `SUSPICIOUS` (C-9a). AList/OpenList are
    `WEAK` (silent swallow), which structurally blocks treating a reported success
    as trustworthy.
 3. **Identity/hash:** DRIVER_DEPENDENT, exactly like AList — so rclone is **not**
@@ -367,6 +478,7 @@ decisive contract-fit difference is the combination of **license** and
 | optional provider id/hash preserved | Sec 2.1, AR5–AR6 |
 | selection not by feature count | Sec 3 evaluation method, Sec 8 rejected alternatives |
 | Architect-facing ADR recommendation | Sec 7 + `ADR-001-COLLECTOR-BOUNDARY.md` |
+| PR #43 D/E round-1 fixes (E1–E4) | Sec 2.4.1 (object id ≠ revision token), Sec 2.4.2 (digest canonicalization), Sec 2.3.1 (skipped_scopes UNKNOWN), Sec 2.5 (shrink corroboration Kernel-owned) |
 
 ---
 
@@ -379,9 +491,13 @@ decisive contract-fit difference is the combination of **license** and
 | EC3 | Provider id absent | `provider_object_id` omitted; `provider_identity_assurance=UNAVAILABLE`; no failure. |
 | EC4 | Provider id present | `provider_identity_assurance=STABLE_WITHIN_SCOPE` (or weaker); `provider_object_id_scope` present. |
 | EC5 | Rename observed | Adapter does not present the new path as a stable identity; identity/`snapshot_identity` mapping unaffected by path. |
-| EC6 | `snapshot_identity` derivation | `kind`/`namespace`/`version`/`value` produced without wall-clock/admission/DB timing. |
+| EC6 | `snapshot_identity` derivation | `kind`/`namespace`/`version`/`value` produced without wall-clock/admission/DB timing; `REVISION_TOKEN` only under the E1 gate, else `DETERMINISTIC_DIGEST` over entry set + decision-relevant evidence (Sec 2.4). |
 | EC7 | Root scope mapping | Each entry carries its `root_ref`; the adapter owns `root_id -> scope`; `scope_descriptor` opaque to Kernel. |
 | EC8 | Cache returned data | Freshness normalized (`CACHED_FRESH`/`STALE`/`UNKNOWN`); no provider switch leaks. |
+| EC9 | Provider object id present but no documented whole-scope revision token | `value` MUST NOT be the object id; use `DETERMINISTIC_DIGEST`; the object id stays in `provider_object_id`/IdentityEvidence. No false IO3 NO-OP when the scope changed (E1). |
+| EC10 | Same generation, identical entries, first observation PARTIAL then a stronger COMPLETE observation | The two observations MUST NOT collapse to the same IO3 identity (the digest includes decision-relevant evidence); the later one is reconciled, not treated as a NO-OP (E2). |
+| EC11 | Adapter cannot observe skips (AList/OpenList; rclone logs-only) | `skipped_scopes` encoded as absent/`NULL` (UNKNOWN), never empty; C-9's "empty" positive condition is NOT satisfied (E3). |
+| EC12 | A scope shrink is observed, then a later independent admitted observation confirms it | The adapter sets no corroboration field; the Kernel/evaluation derives `CORROBORATED` from the independent observation and persists it on the evaluated Snapshot (E4, Gate 1B Sec 3.1.3). |
 
 ---
 
@@ -389,8 +505,9 @@ decisive contract-fit difference is the combination of **license** and
 
 | Item | Tag | Note |
 |------|-----|------|
-| Final initial-adapter selection | `PROPOSED` | `ADR-001` recommendation; binding only after Architect review. |
-| Concrete `snapshot_identity` mapping per adapter | `PROPOSED` | digests vs native tokens; per-provider stability declaration needed. |
-| `skipped_scopes` population strategy when only logs exist | `CANDIDATE` | rclone: parse logs or track skips in the adapter. |
+| Final initial-adapter selection | `PROPOSED` | `ADR-001` recommendation; binding only after Architect review and after the E1/E2/E3 identity/completeness fixes are accepted. |
+| Concrete `snapshot_identity` mapping per adapter | `PROPOSED` | default is the versioned deterministic digest (Sec 2.4.2); `REVISION_TOKEN` only where the provider documents a whole-scope revision (E1). |
+| `skipped_scopes` population strategy when only logs exist | `CANDIDATE` | rclone: parse logs or track skips in the adapter; UNKNOWN stays absent/`NULL` until confirmed (E3). |
+| `scope_shrink_corroboration` derivation + persistence | `DERIVED` (Kernel-owned) | Kernel/evaluation derives from independent admitted observations (Sec 2.5); the adapter never sets it. |
 | `provider_identity_assurance` evidence per provider | `CANDIDATE` | required only where an id is claimed. |
 | `adapter_generation` (incremental) | `DEFERRED` | post-MVP; not part of the PoC contract. |
