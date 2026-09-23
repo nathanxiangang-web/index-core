@@ -2,50 +2,117 @@
 
 ## Current phase
 
-**Gate 2 — PoC — ARCHITECT ACCEPTED**
+**Gate 3 — MVP Alpha / Standalone Runtime & Scale**
 
 Architecture / acceptance owner: **ChatGPT Architect**
 
 Execution owner: **Codex**
 
-Status: **AWAITING ARCHITECT NEXT-PHASE PLANNING** — no new phase has been
-assigned yet. Do not start new work without an Architect phase decision.
+Status: **AUTHORIZED / IN PROGRESS**
 
-## Gate 2 — ACCEPTED
+Active execution issue:
 
-PR #46 received **ARCHITECT FINAL ACCEPTANCE — Gate 2 PoC** at final verification
-head `846a270`, and is authorized to merge to `main`; Issue #44 closes on that
-merge.
+**#47 — [CODEX][GATE-3] Standalone Alpha Runtime & Scale**
 
-- PostgreSQL Store — PASS
-- Transaction Boundary — PASS
-- Kernel Evaluation — PASS
-- Safe Reconcile — PASS
-- Change Journal / J6 — PASS
-- Query Contract — PASS
-- V1/V2 Fixture PoC — PASS
-- rclone additive-only — PASS
+Executor branch:
 
-`FROZEN_CONTRACT_CHANGES: NONE`
+**`alpha/gate3-runtime`**
 
-## Next step (pending Architect)
+Baseline:
 
-The next phase is not yet defined. Wait for the Architect to plan the next phase
-and open its single execution issue. Until then, this status closeout is the only
-authorized change (status documents only; no code / architecture semantics).
+**`main@410050d0b084d999063cde1a4be8d2051fbcb88f`** (Gate 2 merged and closed).
 
-## Gate 2 artifacts
+## Gate 3 objective
 
-- Code and tests on branch `poc/gate2-indexcore` (PR #46, head `846a270`).
-- Verification report: `docs/gate2/GATE2-POC-VERIFICATION-REPORT.md`.
+Turn the Architect-accepted Gate-2 Kernel PoC into a standalone, restartable,
+deployable MVP Alpha without weakening any frozen Gate-1 semantics.
 
-## Forbidden (until a new Architect phase authorizes otherwise)
+Required shape:
 
-- CloudSite integration
-- UI
-- Scanner Resume
-- native delta / true incremental
-- destructive-safe provider COMPLETE
-- new gate names
-- silent change to Gate 1B/1C semantics
-- license-incompatible donor code copying
+```text
+real source / rclone / AList-OpenList adapter
+        ↓
+Collector Runtime
+        ↓
+DRAFT Snapshot + entries
+        ↓
+SUBMITTED
+        ↓
+Coordinator admit/resume + ProcessHead
+        ↓
+PostgreSQL Canonical Inventory + Journal
+        ↓
+read-only Query Service
+        ↓
+HTTP /v1
+```
+
+## Architect-locked decisions
+
+- one Go binary: `indexcore`;
+- Go 1.27.x + PostgreSQL 18.x + pgx/v5;
+- explicit `indexcore migrate`; `serve` does not silently auto-migrate;
+- single active write-orchestration daemon per DB in Gate 3;
+- different roots may progress concurrently inside the daemon;
+- HTTP transport uses `net/http` and is read-only;
+- HTTP default bind is loopback; no auth system in Gate 3;
+- root reconcile policy comes from persisted root config, not test-only injected config;
+- rclone remains external and additive-safe;
+- real AList/OpenList integration is a Gate-3 exit requirement, but remains a Collector Adapter;
+- >=20,000 resources must be validated against real PostgreSQL;
+- 100,000 resources is exploratory, not a hard acceptance threshold.
+
+## Work order
+
+Follow Issue #47 P0-P11 in order, with staged commits on one branch.
+
+Recommended checkpoints inside the same branch/PR:
+
+1. **Runtime foundation:** P0-P4
+2. **Real source + Query transport:** P5-P7
+3. **Scale / packaging / E2E:** P8-P11
+
+Do not invent sub-gates or additional PRs.
+
+## Required carry-forward regression
+
+The full Gate-2 suite must remain green throughout Gate 3.
+
+Do not weaken:
+
+- per-root absolute FIFO;
+- generation semantics;
+- safe removal;
+- Kernel-owned IO3 identity;
+- append-only Journal;
+- read-only Consumer boundary;
+- path ambiguity;
+- root lifecycle tombstones;
+- rclone UNKNOWN-skip non-destructive behavior.
+
+## Explicitly forbidden in Gate 3
+
+- CloudSite integration;
+- product UI/admin frontend;
+- auth/account/tenant system;
+- Scanner Resume / traversal checkpoint;
+- provider-native delta / true incremental;
+- destructive-safe provider COMPLETE without separately accepted evidence;
+- multi-daemon writer / HA / distributed leases;
+- Redis / Kafka / MQ;
+- Search/Catalog/media/AI;
+- downloader / 115 integration;
+- Kubernetes;
+- silent changes to Gate 1B/1C semantics;
+- license-incompatible code copying.
+
+## Review handoff
+
+Open one PR only:
+
+`alpha/gate3-runtime -> main`
+
+Do not merge.
+
+When P0-P11 are complete, use the status template in Issue #47 and stop for
+ChatGPT Architect review.
