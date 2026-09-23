@@ -149,6 +149,12 @@ Constraints:
   `DELETED -> NEW` (GATE1B Sec 10.2). Enforcement is application-layer and/or a
   DB trigger; `CANDIDATE`.
 - `C-R3` (PROPOSED): `current_generation >= 0`, `latest_admission_seq >= 0`.
+- `C-R4` (`DERIVED`, Architect, PR #43 review round 3): root lifecycle
+  `DELETED` is a **ROOT-level tombstone only**. It MUST NOT cascade
+  `resource_presence='REMOVED'` onto the root's resources and MUST NOT emit
+  `resource-removed` for them. Each resource keeps its last committed presence
+  (it may still be `PRESENT`). Root deletion emits at most the root-level
+  `root-deleted` journal event. `FACT` (Architect; Gate 1B Sec 10.3).
 
 ### 3.2 T2 `index_generation` — Generation
 
@@ -383,7 +389,7 @@ Constraints: `C-SE1` PK (`snapshot_id`, `entry_local_id`).
 | `snapshot_id` | `uuid` | NO | FK -> `index_snapshot`. |
 | `admitted_at` | `timestamptz` | NO | |
 | `status` | `text` | NO | CHECK IN (`PENDING`,`APPLIED`,`NOOP`,`REJECTED`,`STALE_INPUT`,`FAILED`). |
-| `applied_generation` | `bigint` | YES | Set when `APPLIED`. |
+| `applied_generation` | `bigint` | YES | Set when `APPLIED`; the canonical generation AFTER this application completes (== the unchanged `current_generation` when the application caused no mutation; == the new generation when it did). |
 | `claimed_by` | `text` | YES | Worker/claim id currently processing this input (`PROPOSED`). |
 | `claimed_at` | `timestamptz` | YES | Claim time (`PROPOSED`). |
 | `lease_expires_at` | `timestamptz` | YES | Reclaimable after this time (`PROPOSED`). |
@@ -433,8 +439,13 @@ Constraints:
 `DERIVED` semantic (IO3) / `PROPOSED` shape.
 
 This table is an **append-only application history**, NOT a single latest row.
-The same `snapshot_identity` MAY be applied again at a HIGHER canonical
-generation (a re-reconcile); each successful application appends one row.
+The same `snapshot_identity` MAY be applied again after the canonical generation
+advanced (a re-reconcile); each successful application appends one row.
+
+> `DERIVED` (Gate 1B frozen; Architect, PR #43 review round 3) — a reconcile
+> produces a NEW generation ONLY if it actually mutates canonical state. A
+> zero-mutation re-reconcile keeps the `current_generation`, yet is still recorded
+> as an application for that generation. `FACT`.
 
 | Column | Type | Null | Notes |
 |--------|------|------|-------|
@@ -444,7 +455,7 @@ generation (a re-reconcile); each successful application appends one row.
 | `snapshot_identity_version` | `text` | NO | Version of the identity algorithm/contract (required for the digest form; token-scheme version for the token form). Part of the identity. |
 | `snapshot_identity_value` | `text` | NO | The revision token string or the digest hex. |
 | `snapshot_id` | `uuid` | NO | The snapshot applied in this application. |
-| `applied_generation` | `bigint` | NO | Generation produced by this application. |
+| `applied_generation` | `bigint` | NO | **Canonical generation AFTER this application completes** (post-application generation). If the application mutated canonical state, it is the NEW generation; if it caused no mutation, it is the UNCHANGED `current_generation`. |
 | `applied_admission_seq` | `bigint` | NO | Admission input that produced it. |
 | `applied_at` | `timestamptz` | NO | |
 
@@ -453,7 +464,8 @@ Constraints:
 - `C-AS1` UNIQUE (`root_id`, `snapshot_identity_kind`,
   `snapshot_identity_namespace`, `snapshot_identity_version`,
   `snapshot_identity_value`, `applied_generation`) — the same logical identity is
-  applied at most ONCE per generation; a new generation appends a new row.
+  recorded at most ONCE per post-application generation; each later application
+  (at a higher generation) appends a new row.
 - `C-AS2` (`DERIVED`, PR #43 review round 2): the table is **append-only
   application history**. A row is NEVER UPDATEd to a newer generation (no
   upsert-latest); history is retained for audit/replay.
@@ -461,7 +473,10 @@ Constraints:
   exists with the identity tuple (`root_id`, kind, namespace, version, value) AND
   `applied_generation = current_generation`, it is a NO-OP. Otherwise (no row, or
   all matching rows have `applied_generation < current_generation`) the input is
-  reconciled normally against the current generation.
+  reconciled normally against the current generation. A zero-mutation reconcile
+  MUST still append a row whose `applied_generation` equals the (unchanged)
+  `current_generation`, so the NEXT identical collection at that generation is a
+  NO-OP.
 
 > `DERIVED` (Architect decision, PR #43 review #3) — the `snapshot_identity`
 > contract is provider-neutral and MUST NOT include wall-clock, admission timing,
@@ -478,10 +493,13 @@ Constraints:
 > this contract later; A/B fix the key semantics now. `FACT` (Architect, PR #43
 > review round 2).
 
-> `DERIVED` (Architect, PR #43 review round 2) — identity match alone does NOT
-> imply NO-OP. Identical content (same identity) collected after the canonical
-> generation advanced from G to G+1 MUST be reconciled again; only the
-> identity + unchanged-generation case is a NO-OP. `FACT`.
+> `DERIVED` (Architect, PR #43 review round 2 / round 3) — identity match alone
+> does NOT imply NO-OP. Identical content (same identity) collected after the
+> canonical generation advanced MUST be reconciled again; only the
+> identity + unchanged-generation case is a NO-OP. Crucially, a re-reconcile
+> produces a NEW generation only if it actually mutates canonical state (Gate 1B
+> frozen); a zero-mutation re-reconcile keeps the generation and still records the
+> application for that generation. `FACT`.
 
 ### 3.9 T9 `index_journal_event` — Canonical Change Journal (append-only)
 
@@ -601,7 +619,7 @@ Constraints:
 | Journal | 7 event types | `index_journal_event.event_type` | `DERIVED` |
 | Journal | intra-generation ordering | `intra_generation_seq` | `DERIVED` |
 | Admission ordering | IO1 sequence + absolute per-root FIFO head-of-line | `index_admission` (`admission_seq`, `status`); `head_seq` = min `PENDING` | `DERIVED` |
-| Idempotency | snapshot identity (kind+namespace+version+value); append-only application history per generation | `index_applied_snapshot` | `DERIVED` |
+| Idempotency | snapshot identity (kind+namespace+version+value); append-only application history per post-application generation | `index_applied_snapshot` | `DERIVED` |
 | Removal policy | grace/horizon/thresholds | `index_root_config` | `CANDIDATE` |
 | Conflict result | UNRESOLVED/CONFLICT records | `index_reconcile_result.conflicts` | `DERIVED` |
 
@@ -625,6 +643,8 @@ Sec 1-3 and Sec 10).
 | Admission is absolute per-root FIFO | only `head_seq` (min `PENDING` `admission_seq`) may be claimed/processed/committed; higher sequences blocked (`C-A5`) | `DERIVED` |
 | Idempotency identity is complete and generation-scoped | identity = (kind, namespace, version, value); append-only history per `applied_generation`; NO-OP only at same generation (`C-AS1`..`C-AS3`) | `DERIVED` |
 | Journal has NO cross-root total order | per-root `event_seq` ordering only; `event_id` opaque; all-roots reads define no canonical global order | `DERIVED` |
+| Generation advances only on real canonical mutation | zero-mutation re-reconcile keeps `current_generation`; a row is still recorded for IO3 (`C-AS3`) | `DERIVED` |
+| Root `DELETED` does not cascade resource tombstones | root-level only; children keep last committed presence; no bulk `resource-removed` (`C-R4`) | `DERIVED` |
 
 ---
 
@@ -726,8 +746,10 @@ atomicity and ordering. It does not define the transaction itself.
 | G11 | Same immutable snapshot content collected twice at different `observed_at` | Both scans map to the SAME `snapshot_identity` (`kind` + `namespace` + `version` + `value`). `observed_at` MUST NOT enter the identity. Whether the second application is a NO-OP depends ONLY on generation: same identity + unchanged `current_generation` -> `NOOP` (`C-AS3`); same identity but `current_generation` advanced -> normal re-reconcile (see G14). |
 | G12 | A path is repeatedly impersonated before the old MISSING resource is removed | Each imposter gets a distinct new `resource_id`; at any instant multiple `PRESENT` rows MAY share the path, each addressable by `resource_id` and distinguished by `removal_evidence_state`. Persistence never collapses them into one row, and path resolution reports the ambiguity. |
 | G13 | A lower `admission_seq` is being processed (claimed, lease NOT expired); a higher `admission_seq` is available | The higher input MUST NOT be claimed, processed, or committed; `head_seq` (min `PENDING`) blocks it until it reaches a terminal status (`C-A5`). No leapfrog even while the head is actively in flight. |
-| G14 | Same `snapshot_identity` re-collected after canonical advanced G -> G+1 | NOT a NO-OP: reconcile normally against G+1, bump to G+2, and APPEND a new `index_applied_snapshot` row with `applied_generation = G+2` (history retained; the earlier row is never UPDATEd to the new generation). |
+| G14 | Same `snapshot_identity` re-collected after canonical advanced G -> G+1, and the re-reconcile DOES mutate canonical state | NOT a NO-OP: apply the mutation, bump G+1 -> G+2, and APPEND a new `index_applied_snapshot` row with `applied_generation = G+2` (history retained; the earlier row is never UPDATEd). |
 | G15 | Two identities that differ only in `snapshot_identity_namespace` or `snapshot_identity_version` | They are DISTINCT identities (kind + namespace + version + value all enter uniqueness); neither collapses into the other, and each may be applied independently. |
+| G16 | Same `snapshot_identity` re-collected after canonical advanced G -> G+1, and the re-reconcile causes NO canonical mutation | The generation MUST NOT advance (stays G+1); a row is still APPENDED with `applied_generation = G+1` (identity + post-application generation), so the NEXT identical collection at G+1 is a NO-OP (`C-AS3`). |
+| G17 | Root transitions to `DELETED` while some child resources are `PRESENT` | Only the ROOT is tombstoned: `index_root.lifecycle_state='DELETED'` and at most a `root-deleted` journal event. Child resources keep their last committed presence (some remain `PRESENT`); NO bulk `resource_presence='REMOVED'` and NO `resource-removed` events (`C-R4`). |
 
 > Resolution of G7 (Architect, PR #43 review #5): the earlier note posed this as an
 > `UNKNOWN`. The Architect ruled that `UNIQUE(root_id, canonical_path)` is invalid

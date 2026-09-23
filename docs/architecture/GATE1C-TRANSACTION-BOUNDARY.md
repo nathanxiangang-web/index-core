@@ -195,8 +195,8 @@ UPDATE index_root
 |------|----------|
 | Compute `snapshot_identity` | Frozen provider-neutral contract (doc A Sec 3.8): the tuple (`kind`, `namespace`, `version`, `value`) from a stable adapter/native revision token OR a versioned deterministic digest. No wall-clock/admission/DB timing. |
 | Look up `index_applied_snapshot` by identity tuple | If a row exists with the SAME identity AND `applied_generation = current_generation` -> NO-OP. |
-| Identity matched but canonical advanced | If matching rows exist but ALL have `applied_generation < current_generation` -> NORMAL reconcile against the newer generation (NOT a no-op); on success APPEND a new row with the new generation. |
-| No matching identity | Normal reconcile; on success APPEND a row with the resulting generation. |
+| Identity matched but canonical advanced | If matching rows exist but ALL have `applied_generation < current_generation` -> NORMAL reconcile against the newer generation (NOT a no-op). On success APPEND a row whose `applied_generation` is the POST-application generation: the NEW generation if the reconcile actually mutated canonical state, else the UNCHANGED `current_generation`. |
+| No matching identity | Normal reconcile; on success APPEND a row whose `applied_generation` is the POST-application generation (the new generation if it mutated, else the unchanged `current_generation`). |
 | NO-OP | No canonical write, no journal event, no generation bump. Set `index_admission.status='NOOP'`. |
 | History | Rows are NEVER UPDATEd to a newer generation; each application appends a new row (no upsert-latest). |
 
@@ -208,9 +208,13 @@ UPDATE index_root
 > `C-AS1`). Identical observed content at a different `observed_at` yields the
 > SAME identity. Adapter E maps concrete sources later. `FACT`.
 
-> `DERIVED` (Architect, PR #43 review round 2) — identity match alone does NOT
-> imply NO-OP. If canonical advanced while the same content was re-collected,
-> reconcile again at the newer generation and append history (doc A G14). `FACT`.
+> `DERIVED` (Architect, PR #43 review round 2 / round 3) — identity match alone
+> does NOT imply NO-OP. If canonical advanced while the same content was
+> re-collected, reconcile again at the newer generation and append history
+> (doc A G14). But a re-reconcile produces a NEW generation ONLY if it actually
+> mutates canonical state (Gate 1B frozen); a ZERO-mutation re-reconcile keeps the
+> generation, yet still records the application at the unchanged `current_generation`
+> so the NEXT identical collection is a NO-OP (doc A G16, `C-AS3`). `FACT`.
 
 ---
 
@@ -277,7 +281,7 @@ Definitions:
 | 1 — Identity UNRESOLVED | no canonical mutation; conflict into `index_reconcile_result`; continue other entries; commit the rest | `DERIVED` |
 | 2 — Snapshot PARTIAL | additive-only writes; MUST NOT touch `removal_evidence_state`/`missing_since`/`consecutive_complete_missing`; no `resource-removed`; commit | `DERIVED` |
 | 3 — internal error | `ROLLBACK`; set `index_admission.status='FAILED'` in a later tx (T-AT5); no durable canonical mutation | `DERIVED` |
-| 4 — same snapshot replay | NO-OP only if the same identity was already applied at the SAME `current_generation`; if canonical advanced, reconcile again and append history (Sec 3) | `DERIVED` (PR #43 review round 2) |
+| 4 — same snapshot replay | NO-OP only if the same identity was already applied at the SAME `current_generation`; if canonical advanced, reconcile again and append history (Sec 3). A ZERO-mutation re-reconcile does NOT bump the generation but still records the application at the unchanged `current_generation` (so the next identical collection is a NO-OP) | `DERIVED` (PR #43 review round 3) |
 | 5 — stale generation | CAS returns 0 rows -> `ROLLBACK`; retry (reload+recompute) or abort per policy | `DERIVED` |
 | 6 — concurrent same-root | per-root serialization + absolute ascending `admission_seq` (`head_seq` only); exactly one commits per generation; no leapfrog over an in-flight head | `DERIVED` (PR #43 review round 2) |
 | 7 — commit failure | `ROLLBACK`; previous truth preserved | `DERIVED` |
@@ -355,8 +359,9 @@ Definitions:
 | T9 | Two different roots reconcile concurrently | Both commit independently; no global ordering token is consulted; consumers use a per-root cursor vector (doc A Sec 3.9). |
 | T10 | Older `PENDING` stranded while a newer input arrives | The newer MUST NOT commit over the older; the older is reclaimed (T-AT6) or becomes `STALE_INPUT` (IO4, T-AT7). |
 | T11 | A lower `admission_seq` is mid-flight (claimed, lease unexpired); a higher input is present | The higher input is NOT selected/claimable; R2 selects only `head_seq`. No leapfrog (RC1/RC4, T-AT8). |
-| T12 | Same `snapshot_identity` re-collected after canonical advanced G -> G+1 | NOT a NO-OP: reconcile at G+1, APPEND a new `index_applied_snapshot` row (`applied_generation = G+1`); the earlier row is retained (doc A G14). |
+| T12 | Same `snapshot_identity` re-collected after canonical advanced G -> G+1 | NOT a NO-OP: reconcile against G+1. If it MUTATES canonical state, bump G+1 -> G+2 and APPEND a row (`applied_generation = G+2`); if it causes NO mutation, keep G+1 and still APPEND a row (`applied_generation = G+1`, post-application generation). Either way the earlier row is retained and never UPDATEd (doc A G14, G16). |
 | T13 | All-roots journal read request | Per-root ordering is guaranteed; no cross-root canonical order is asserted or relied upon (doc A Sec 3.9, doc C Sec 5). |
+| T14 | Root transitions to `DELETED` while child resources are still `PRESENT` | ROOT-level tombstone only: `index_root.lifecycle_state='DELETED'` (at most a `root-deleted` journal event). Child resources keep their last committed presence (some remain `PRESENT`); NO bulk `resource_presence='REMOVED'` and NO `resource-removed` events. Further reconcile of that root is rejected by R4 (doc A G17, `C-R4`). |
 
 ---
 

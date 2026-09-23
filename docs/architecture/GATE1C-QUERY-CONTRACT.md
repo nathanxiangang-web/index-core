@@ -173,7 +173,7 @@ unique winner. `FACT`.
 | V4 | `list_roots` default filter: `ACTIVE` (and `NEW`). | `DERIVED` | Architect acceptance, PR #43 review round 2; GATE1B Sec 10.4 |
 | V5 | `DEPRECATED` roots are returned only with `options.include_deprecated = true`. | `DERIVED` | Architect acceptance, PR #43 review round 2 |
 | V6 | `DELETED` roots are returned only with `options.include_deleted = true`; their resources remain readable (retained partition) when explicitly requested. | `DERIVED` | Architect acceptance, PR #43 review round 2; GATE1B Sec 10.3 |
-| V7 | A DELETED root still reports its last committed generation and tombstoned resources for audit. | `DERIVED` | Architect acceptance, PR #43 review round 2; GATE1B Sec 10.3 |
+| V7 | A DELETED root still reports its last committed generation and its resources at their last committed presence (some MAY still be `PRESENT`, because root deletion is a ROOT-level tombstone and does NOT cascade) for audit. | `DERIVED` | Architect acceptance, PR #43 review round 3; GATE1B Sec 10.3 |
 | V8 | A resource reappearing after removal is a NEW `resource_id` (fresh ADD); queries never merge it with the prior tombstone. | `DERIVED` | GATE1B-SAFE-RECONCILE Sec 1.3.4 |
 | V9 | `resolve_path` returns ALL live matches and sets `ambiguous=true` when a path holds overlapping `PRESENT` resources (R8 imposter); it never fabricates uniqueness. | `DERIVED` | PR #43 review #5; doc A `C-C3a` |
 
@@ -308,7 +308,7 @@ unique winner. `FACT`.
 | QC4 | `read_journal(cursor_vector)` resuming per root | no gaps within a root; ordered by `event_seq` |
 | QC5 | Consumer attempts any mutation | no such operation exists (compile-time absence) |
 | QC6 | `list_roots` default | ACTIVE (+NEW); no DEPRECATED/DELETED |
-| QC7 | `list_roots(include_deleted=true)` | DELETED roots visible with tombstoned resources readable |
+| QC7 | `list_roots(include_deleted=true)` | DELETED roots visible; their resources readable at their last committed presence (some remain `PRESENT`); NO cascade tombstone |
 | QC8 | ResourceView inspection | contains no `removal_evidence_state` / `missing_since` |
 | QC9 | Concurrent reconcile in progress | consumer read sees the prior committed generation, never a half-commit |
 | QC10 | Projection stale vs canonical | consumer rebuilds from Journal; canonical unchanged |
@@ -316,6 +316,7 @@ unique winner. `FACT`.
 | QC12 | `resolve_path` for a path holding an old MISSING-but-PRESENT resource and a new imposter | returns BOTH matches with `ambiguous=true`; never a silent single winner |
 | QC13 | Two roots produce journal events concurrently; consumer uses a per-root cursor vector | every committed event is read exactly once per root; no reliance on `event_id` order |
 | QC14 | `read_journal(scope=all_roots)` with a per-root cursor vector | returns each root's events in `event_seq` order; NO cross-root canonical order is asserted or relied upon |
+| QC15 | Root deleted while child resources were `PRESENT` | children stay `PRESENT` (root deletion is ROOT-level only, NO cascade tombstone); excluded from default reads, but readable via the root's retained partition / explicit request |
 
 ---
 
