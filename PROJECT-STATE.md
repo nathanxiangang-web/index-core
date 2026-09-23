@@ -4,7 +4,7 @@
 
 ## Last updated
 
-2026-09-23
+2026-09-24
 
 ## Main branch
 
@@ -12,7 +12,9 @@ Always verify the current remote `main` before execution.
 
 Latest accepted architecture milestone:
 
-`9291ac0706af6d584684498d75b714c408b9ffbe`
+Gate 1B accepted at `9291ac0706af6d584684498d75b714c408b9ffbe`.
+Gate 1C accepted at PR #43 head `7a3b32f` (ARCHITECT FINAL ACCEPTANCE — Gate 1C
+CLOSED); PR #43 is authorized to merge to `main`.
 
 ## Execution model
 
@@ -36,17 +38,20 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
-**Gate 1C — Persistence / Query / Collector Boundary**
+**Gate 2 — PoC**
+
+Gate 1C is **CLOSED** (ARCHITECT FINAL ACCEPTANCE on PR #43); PR #43 is
+authorized to merge to `main`, and Issue #40 closes on that merge.
 
 Status:
 
-**READY TO START**
+**READY TO START (Gate 2 PoC)**
 
 Active execution issue:
 
-**#40 — [CODEX][GATE-1C] Persistence, Query & Collector Contracts**
+**a new Gate 2 issue to be opened by the Architect**
 
-No CloudSite integration or product MVP implementation is authorized yet.
+No CloudSite integration or UI is authorized yet.
 
 ## Accepted architecture
 
@@ -99,16 +104,48 @@ Key frozen semantics:
 - roots are disjoint partitions; root_id is never reused
 - DELETED roots are logical tombstones retained for history/audit
 
-## Current Gate 1C scope
+### Gate 1C — Persistence / Query / Collector Boundary
 
-Freeze implementation-facing architecture required by Gate 2 PoC:
+Status: **ACCEPTED** (ARCHITECT FINAL ACCEPTANCE — Gate 1C CLOSED, PR #43,
+final verification head `7a3b32f`)
 
-1. PostgreSQL Store realization
-2. exact transaction boundary / locking / CAS semantics
-3. minimal read-only Query Contract
-4. Canonical Change Journal persistence / sequence semantics
-5. Collector Adapter Contract
-6. Architect-reviewed initial Collector recommendation / ADR
+Accepted contracts (`docs/architecture/`, all **FROZEN**):
+
+- `GATE1C-POSTGRESQL-STORE.md` (A — PostgreSQL Store Contract)
+- `GATE1C-TRANSACTION-BOUNDARY.md` (B — Transaction Boundary)
+- `GATE1C-QUERY-CONTRACT.md` (C — Query Contract)
+- `GATE1C-JOURNAL-PERSISTENCE.md` (D — Canonical Change Journal Persistence)
+- `GATE1C-COLLECTOR-ADAPTER-CONTRACT.md` (E — Collector Adapter Contract)
+
+Accepted decisions (`docs/decisions/`, both **ACCEPTED**):
+
+- `ADR-001-COLLECTOR-BOUNDARY.md` — initial Collector: rclone, additive-only
+  Gate 2 role; NOT destructive-safe COMPLETE; COMPLETE/removal validated with
+  controlled Snapshot V1/V2 fixtures.
+- `ADR-002-POSTGRESQL-STORE.md` — PostgreSQL as the Store realization behind the
+  Store Interface.
+
+Key frozen Gate 1C semantics:
+
+- per-root `event_seq` is the authoritative Journal cursor; no cross-root canonical order
+- absolute per-root FIFO admission; generation advances only on real canonical mutation
+- structured `snapshot_identity` (kind/namespace/version/value); append-only application history
+- final IO3 identity is finalized after Kernel evaluation and includes Kernel-derived decision evidence (e.g. `scope_shrink_corroboration`)
+- `scope_shrink_corroboration` is set once by the Kernel on `SUBMITTED -> EVALUATED`, then immutable
+- J6 Journal repair may append a corrective event with no canonical mutation / no generation advance, and remains permitted on a `DELETED` root
+- `completeness_flag` is a non-authoritative Collector hint; Kernel `acceptance_state` is authoritative
+- rclone RC cannot establish confirmed-no-skips; `skipped_scopes` stays UNKNOWN (never `[]`) without a positive completeness signal
+
+## Gate 1C scope (CLOSED)
+
+All six Gate 1C deliverables are delivered, Architect-accepted, and frozen:
+
+1. PostgreSQL Store realization — FROZEN (A)
+2. exact transaction boundary / locking / CAS semantics — FROZEN (B)
+3. minimal read-only Query Contract — FROZEN (C)
+4. Canonical Change Journal persistence / sequence semantics — FROZEN (D)
+5. Collector Adapter Contract — FROZEN (E)
+6. Architect-reviewed initial Collector recommendation / ADR — ACCEPTED (ADR-001)
 
 ## Gate 1C must preserve
 
@@ -123,10 +160,11 @@ Freeze implementation-facing architecture required by Gate 2 PoC:
 
 ## Explicitly deferred after Gate 1
 
-### Gate 2 PoC
+### Gate 2 PoC — AUTHORIZED by Gate 1C closure
 - Snapshot -> PostgreSQL Inventory
-- v1/v2 reconcile validation
-- first selected Collector adapter validation
+- controlled Snapshot V1/V2 fixtures for COMPLETE/removal Kernel semantics
+- first selected Collector adapter validation (rclone, additive-only)
+- destructive COMPLETE deferred until a provider proves positive completeness evidence
 
 ### Post-MVP Scanner Resume
 - durable scanner
@@ -140,6 +178,7 @@ Freeze implementation-facing architecture required by Gate 2 PoC:
 
 ## Implementation status
 
-**NO PRODUCT MVP CODE**
+**NO PRODUCT MVP CODE YET**
 
-Gate 2 remains blocked until Gate 1C is ChatGPT Architect-accepted.
+Gate 1C is ChatGPT Architect-accepted (PR #43, Gate 1C CLOSED); **Gate 2 PoC is
+unblocked**.
