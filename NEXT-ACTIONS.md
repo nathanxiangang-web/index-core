@@ -2,127 +2,170 @@
 
 ## Current phase
 
-**Gate 3 — MVP Alpha / Standalone Runtime & Scale**
+**Gate 4 — Reference Consumer Integration**
 
 Architecture / acceptance owner: **ChatGPT Architect**
 
 Execution owner: **Codex**
 
-Status: **ARCHITECT ACCEPTED / READY_TO_MERGE** (final verification head
-`055402da83235e6dc5f88f45206378fb210a7672`)
+Status: **AUTHORIZED / IN PROGRESS**
 
 Active execution issue:
 
-**#47 — [CODEX][GATE-3] Standalone Alpha Runtime & Scale**
+**#50 — [CODEX][GATE-4] Reference Consumer Integration**
 
-Executor branch:
+Authoritative IndexCore baseline:
 
-**`alpha/gate3-runtime`**
+**`main@f7edc518dfc99a43cfc464e332e6fe3bfcda601c`** (Gate 3 merged and closed).
 
-Baseline:
+## Gate 4 objective
 
-**`main@410050d0b084d999063cde1a4be8d2051fbcb88f`** (Gate 2 merged and closed).
-
-## Gate 3 objective
-
-Turn the Architect-accepted Gate-2 Kernel PoC into a standalone, restartable,
-deployable MVP Alpha without weakening any frozen Gate-1 semantics.
-
-Required shape:
+Validate that a brand-new Consumer can use IndexCore cleanly through the public
+read-only HTTP contract without inheriting CloudSite history or IndexCore internals.
 
 ```text
-real source / rclone / AList-OpenList adapter
-        ↓
-Collector Runtime
-        ↓
-DRAFT Snapshot + entries
-        ↓
-SUBMITTED
-        ↓
-Coordinator admit/resume + ProcessHead
-        ↓
-PostgreSQL Canonical Inventory + Journal
-        ↓
-read-only Query Service
-        ↓
-HTTP /v1
+Browser
+   ↓
+Reference Web
+   ↓ server-side
+IndexCore HTTP /v1
+   ↓
+Canonical Inventory / Journal
 ```
 
-## Architect-locked decisions
+## Repository decision
 
-- one Go binary: `indexcore`;
-- Go 1.27.x + PostgreSQL 18.x + pgx/v5;
-- explicit `indexcore migrate`; `serve` does not silently auto-migrate;
-- single active write-orchestration daemon per DB in Gate 3;
-- different roots may progress concurrently inside the daemon;
-- HTTP transport uses `net/http` and is read-only;
-- HTTP default bind is loopback; no auth system in Gate 3;
-- root reconcile policy comes from persisted root config, not test-only injected config;
-- rclone remains external and additive-safe;
-- real AList/OpenList integration is a Gate-3 exit requirement, but remains a Collector Adapter;
-- >=20,000 resources must be validated against real PostgreSQL;
-- 100,000 resources is exploratory, not a hard acceptance threshold.
+Create a separate repository:
+
+**`nathanxiangang-web/indexcore-reference-web`**
+
+This repository is:
+
+- disposable;
+- an integration/reference client;
+- not CloudSite 2;
+- not the formal successor product;
+- not a long-term compatibility promise.
+
+Do not put the Reference Web inside the IndexCore repository.
+
+## Technology lock
+
+Reference Web:
+
+- Next.js + TypeScript;
+- App Router;
+- server components / route handlers where appropriate;
+- server-side `INDEXCORE_BASE_URL`;
+- no separate FastAPI service;
+- no database / ORM;
+- no Redis;
+- no auth framework;
+- lightweight UI only.
+
+## Required Consumer coverage
+
+Exercise all frozen Query operations over HTTP:
+
+- Q1 get_root;
+- Q2 list_roots;
+- Q3 get_resource;
+- Q4 list_resources hierarchy;
+- Q5 resolve_path and ambiguity;
+- Q6 list_active_resources;
+- Q7 list_removed;
+- Q8 read_journal;
+- Q9 get_root_status.
+
+Minimum pages:
+
+- `/` status summary;
+- `/roots`;
+- `/roots/[rootId]` hierarchy + pagination;
+- `/resources/[resourceId]`;
+- `/resolve`;
+- `/removed`;
+- `/journal`.
+
+## Boundary rules
+
+Reference Web must have:
+
+- 0 direct PostgreSQL access;
+- 0 IndexCore Go imports;
+- 0 AList/OpenList access;
+- 0 rclone dependency;
+- 0 CloudSite runtime/code dependency;
+- 0 application database;
+- 0 canonical mutation path.
+
+The browser must not call IndexCore directly.
+
+## CloudSite policy
+
+CloudSite 1.0 is now **Legacy / Frozen Product**.
+
+Allowed:
+
+- critical security/operational maintenance when separately requested;
+- historical UX/product-requirement research.
+
+Not part of Gate 4:
+
+- IndexCore integration into CloudSite;
+- CloudSite V2 refactor continuation;
+- migration of CloudSite SQLite models into IndexCore;
+- copying CloudSite backend/frontend wholesale.
 
 ## Work order
 
-Follow Issue #47 P0-P11 in order, with staged commits on one branch.
+Follow Issue #50 P0-P10.
 
-Recommended checkpoints inside the same branch/PR:
+Recommended execution sequence:
 
-1. **Runtime foundation:** P0-P4
-2. **Real source + Query transport:** P5-P7
-3. **Scale / packaging / E2E:** P8-P11
+1. create/reference repo + config + typed client;
+2. Q1-Q9 pages and error states;
+3. real IndexCore E2E + stale-cursor UX;
+4. boundary proof;
+5. write `docs/gate4/GATE4-REFERENCE-CONSUMER-REPORT.md` in IndexCore;
+6. stop for Architect review.
 
-Do not invent sub-gates or additional PRs.
+If the Reference Web finds a missing capability, classify it first as:
 
-## Required carry-forward regression
+```text
+IndexCore responsibility
+Consumer responsibility
+Future product responsibility
+Out of scope
+```
 
-The full Gate-2 suite must remain green throughout Gate 3.
+Do **not** silently expand IndexCore.
 
-Do not weaken:
+## Explicitly forbidden in Gate 4
 
-- per-root absolute FIFO;
-- generation semantics;
-- safe removal;
-- Kernel-owned IO3 identity;
-- append-only Journal;
-- read-only Consumer boundary;
-- path ambiguity;
-- root lifecycle tombstones;
-- rclone UNKNOWN-skip non-destructive behavior.
-
-## Explicitly forbidden in Gate 3
-
-- CloudSite integration;
-- product UI/admin frontend;
-- auth/account/tenant system;
-- Scanner Resume / traversal checkpoint;
-- provider-native delta / true incremental;
-- destructive-safe provider COMPLETE without separately accepted evidence;
-- multi-daemon writer / HA / distributed leases;
-- Redis / Kafka / MQ;
-- Search/Catalog/media/AI;
-- downloader / 115 integration;
-- Kubernetes;
-- silent changes to Gate 1B/1C semantics;
-- license-incompatible code copying.
+- CloudSite integration/migration;
+- formal successor product;
+- login/register/auth/user/admin;
+- search engine/catalog;
+- favorites/history/playback;
+- shares;
+- preview/player/Office;
+- download gateway / 302 product behavior;
+- 115 downloader;
+- AI;
+- CMS;
+- write APIs into IndexCore;
+- direct browser-to-IndexCore public exposure;
+- direct IndexCore PostgreSQL access;
+- silent changes to Gate 1B/1C or Gate-3 accepted runtime semantics.
 
 ## Review handoff
 
-One PR only:
+Gate 4 requires:
 
-`alpha/gate3-runtime -> main` (PR #49)
+- one implementation PR in `indexcore-reference-web`;
+- one findings/report PR in `index-core` if needed for the final Gate-4 report.
 
-Gate 3 MVP Alpha has received **ARCHITECT FINAL ACCEPTANCE** at head
-`055402da83235e6dc5f88f45206378fb210a7672` (`FROZEN_CONTRACT_CHANGES: NONE`); all
-twelve Gate-3 matrix areas are PASS.
+The Worker does not merge either PR.
 
-Remaining sequence:
-
-1. administrative closeout commit (status docs only — no code changes);
-2. Architect bookkeeping-diff verification;
-3. PR #49 merge authorization, merge to `main`, close Issue #47.
-
-No further implementation work is authorized. **Gate 4 is not yet authorized**;
-do not begin CloudSite integration or any deferred item until the Architect opens
-the next stage.
+Use Issue #50 final status template and stop for ChatGPT Architect review.
