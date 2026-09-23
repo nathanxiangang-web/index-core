@@ -12,7 +12,6 @@ import (
 )
 
 func newQueryReader(st *postgres.Store) query.Reader {
-	// Consumers receive only the query.Reader interface, never *postgres.Store (B5).
 	return postgres.NewQueryReader(st.Pool())
 }
 
@@ -75,24 +74,23 @@ func TestQueryRemovedHiddenByDefault(t *testing.T) {
 		keeper = append(keeper, e)
 	}
 	insertSubmittedSnapshot(t, st, ctx, "d1000000-0000-0000-0000-000000000001", v1)
-	processSnapshot(t, st, ctx, "d1000000-0000-0000-0000-000000000001", v1, cfg)
+	processSnapshot(t, st, ctx, "d1000000-0000-0000-0000-000000000001", cfg)
 	a := requirePresent(t, st, ctx, "/a.txt")
+
 	insertSubmittedSnapshot(t, st, ctx, "d1000000-0000-0000-0000-000000000002", keeper)
-	processSnapshot(t, st, ctx, "d1000000-0000-0000-0000-000000000002", keeper, cfg)
-	keeper3 := append([]domain.SnapshotEntry{}, keeper...)
-	keeper3[0] = entryWithProviderID("k1.txt", "/", "PK-k1.txt", "hk-k1-v2", 99, mt.Add(time.Hour))
-	insertSubmittedSnapshot(t, st, ctx, "d1000000-0000-0000-0000-000000000003", keeper3)
-	processSnapshot(t, st, ctx, "d1000000-0000-0000-0000-000000000003", keeper3, cfg)
+	processSnapshot(t, st, ctx, "d1000000-0000-0000-0000-000000000002", cfg)
+	insertSubmittedSnapshot(t, st, ctx, "d1000000-0000-0000-0000-000000000003", keeper)
+	processSnapshot(t, st, ctx, "d1000000-0000-0000-0000-000000000003", cfg)
 
 	qr := newQueryReader(st)
-	def, err := qr.GetResource(ctx, a.ResourceID, false)
+	def, err := qr.GetResource(ctx, a.ResourceID, query.ReadOptions{})
 	if err != nil {
 		t.Fatalf("get resource: %v", err)
 	}
 	if def != nil {
 		t.Fatalf("REMOVED tombstone must be hidden by default, got %+v", def)
 	}
-	withRemoved, err := qr.GetResource(ctx, a.ResourceID, true)
+	withRemoved, err := qr.GetResource(ctx, a.ResourceID, query.ReadOptions{IncludeRemoved: true})
 	if err != nil {
 		t.Fatalf("get resource includeRemoved: %v", err)
 	}
@@ -118,7 +116,7 @@ func TestQueryResolvePathAmbiguity(t *testing.T) {
 		t.Fatalf("insert 2: %v", err)
 	}
 	qr := newQueryReader(st)
-	res, err := qr.ResolvePath(ctx, pipeRoot, path, false)
+	res, err := qr.ResolvePath(ctx, pipeRoot, path, query.ReadOptions{})
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -136,7 +134,7 @@ func TestQueryPaginationStaleCursor(t *testing.T) {
 
 	v1 := []domain.SnapshotEntry{qEntry("a.txt", "ha", 1, mt), qEntry("b.txt", "hb", 2, mt)}
 	insertSubmittedSnapshot(t, st, ctx, "d2000000-0000-0000-0000-000000000001", v1)
-	processSnapshot(t, st, ctx, "d2000000-0000-0000-0000-000000000001", v1, cfg)
+	processSnapshot(t, st, ctx, "d2000000-0000-0000-0000-000000000001", cfg)
 
 	page1, err := qr.ListActivePage(ctx, pipeRoot, nil, 1)
 	if err != nil {
@@ -148,7 +146,7 @@ func TestQueryPaginationStaleCursor(t *testing.T) {
 
 	v2 := []domain.SnapshotEntry{qEntry("a.txt", "ha", 1, mt), qEntry("b.txt", "hb", 2, mt), qEntry("c.txt", "hc", 3, mt)}
 	insertSubmittedSnapshot(t, st, ctx, "d2000000-0000-0000-0000-000000000002", v2)
-	processSnapshot(t, st, ctx, "d2000000-0000-0000-0000-000000000002", v2, cfg)
+	processSnapshot(t, st, ctx, "d2000000-0000-0000-0000-000000000002", cfg)
 
 	if _, err := qr.ListActivePage(ctx, pipeRoot, page1.Next, 1); err != query.ErrStaleCursor {
 		t.Fatalf("cursor from a stale generation must return STALE_CURSOR, got %v", err)
@@ -164,10 +162,10 @@ func TestQueryReadJournalByCursor(t *testing.T) {
 
 	v1 := []domain.SnapshotEntry{qEntry("a.txt", "ha", 1, mt)}
 	insertSubmittedSnapshot(t, st, ctx, "d3000000-0000-0000-0000-000000000001", v1)
-	processSnapshot(t, st, ctx, "d3000000-0000-0000-0000-000000000001", v1, cfg)
+	processSnapshot(t, st, ctx, "d3000000-0000-0000-0000-000000000001", cfg)
 	v2 := []domain.SnapshotEntry{qEntry("b.txt", "hb", 2, mt)}
 	insertSubmittedSnapshot(t, st, ctx, "d3000000-0000-0000-0000-000000000002", v2)
-	processSnapshot(t, st, ctx, "d3000000-0000-0000-0000-000000000002", v2, cfg)
+	processSnapshot(t, st, ctx, "d3000000-0000-0000-0000-000000000002", cfg)
 
 	all, err := qr.ReadJournal(ctx, pipeRoot, 0, 10)
 	if err != nil {

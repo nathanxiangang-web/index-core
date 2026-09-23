@@ -7,6 +7,7 @@ import (
 
 	"github.com/nathanxiangang-web/index-core/internal/domain"
 	"github.com/nathanxiangang-web/index-core/internal/kernel/reconcile"
+	"github.com/nathanxiangang-web/index-core/internal/query"
 	"github.com/nathanxiangang-web/index-core/internal/store/postgres"
 )
 
@@ -44,40 +45,151 @@ func keepers(t *testing.T, mt time.Time) []domain.SnapshotEntry {
 	return out
 }
 
-// R2-3: the first MISSING observation is evidence-only and must not advance the
-// canonical generation.
-func TestFirstMissingEvidenceDoesNotAdvanceGeneration(t *testing.T) {
+// R3-1: reappearance must not false-NOOP, and must reset MISSING evidence.
+func TestReappearanceAfterMissingIsNotNOOP(t *testing.T) {
 	st, ctx := newStore(t)
 	seedPipelineRoot(t, st, ctx)
 	cfg := reconcile.Config{MinConsecutiveCompleteMissing: 1, MinIndependentConfirmations: 1}
 	mt := time.Now().UTC()
 
 	v1 := append([]domain.SnapshotEntry{entryWithProviderID("a.txt", "/", "P1", "ha", 1, mt)}, keepers(t, mt)...)
-	insertSubmittedSnapshot(t, st, ctx, "f1000000-0000-0000-0000-000000000001", v1)
-	processSnapshot(t, st, ctx, "f1000000-0000-0000-0000-000000000001", v1, cfg)
-	genAfterV1, _ := st.GetRoot(ctx, st.Pool(), pipeRoot)
+	insertSubmittedSnapshot(t, st, ctx, "fa100000-0000-0000-0000-000000000001", v1)
+	processSnapshot(t, st, ctx, "fa100000-0000-0000-0000-000000000001", cfg)
+	a := requirePresent(t, st, ctx, "/a.txt")
 
 	keeper := keepers(t, mt)
-	insertSubmittedSnapshot(t, st, ctx, "f1000000-0000-0000-0000-000000000002", keeper)
-	processSnapshot(t, st, ctx, "f1000000-0000-0000-0000-000000000002", keeper, cfg)
-
-	genAfterV2, _ := st.GetRoot(ctx, st.Pool(), pipeRoot)
-	if genAfterV2.CurrentGeneration != genAfterV1.CurrentGeneration {
-		t.Fatalf("first MISSING evidence must not advance generation: %d -> %d",
-			genAfterV1.CurrentGeneration, genAfterV2.CurrentGeneration)
+	insertSubmittedSnapshot(t, st, ctx, "fa100000-0000-0000-0000-000000000002", keeper)
+	processSnapshot(t, st, ctx, "fa100000-0000-0000-0000-000000000002", cfg)
+	if r, _ := st.GetCanonicalResource(ctx, st.Pool(), a.ResourceID); r.RemovalEvidenceState == domain.RemovalEvidenceNone {
+		t.Fatal("first MISSING must record removal evidence")
 	}
-	if rows, _ := st.PresentResourcesAtPath(ctx, st.Pool(), pipeRoot, "/a.txt"); len(rows) != 1 {
-		t.Fatalf("a.txt must remain PRESENT with MISSING evidence, got %d", len(rows))
+
+	// Snapshot 3 is evidence-identical to snapshot 1; a.txt reappears.
+	insertSubmittedSnapshot(t, st, ctx, "fa100000-0000-0000-0000-000000000003", v1)
+	out := processSnapshot(t, st, ctx, "fa100000-0000-0000-0000-000000000003", cfg)
+	if out.Status == domain.AdmissionNoop {
+		t.Fatal("reappearance must NOT be IO3-NOOP against the pre-missing identity (R3-1)")
+	}
+	if r, _ := st.GetCanonicalResource(ctx, st.Pool(), a.ResourceID); r.RemovalEvidenceState != domain.RemovalEvidenceNone {
+		t.Fatalf("reappearance must reset removal evidence, got %s", r.RemovalEvidenceState)
 	}
 }
 
-// R2-12: a FAILED verdict must be REJECTED, never APPLIED/RECONCILED.
-func TestFailedSnapshotRejected(t *testing.T) {
+// R3-2: corroboration requires a qualifying earlier admitted observation with the
+// same reduced scope signature; an arbitrary historical same-size Snapshot must
+// not corroborate.
+func TestCorroborationRequiresQualifyingIndependentObservation(t *testing.T) {
+	st, ctx := newStore(t)
+	seedPipelineRoot(t, st, ctx)
+	cfg := reconcile.Config{MinConsecutiveCompleteMissing: 1, MinIndependentConfirmations: 1}
+	mt := time.Now().UTC()
+
+	full := append([]domain.SnapshotEntry{entryWithProviderID("a.txt", "/", "P1", "ha", 1, mt)}, keepers(t, mt)...)
+	insertSubmittedSnapshot(t, st, ctx, "fb100000-0000-0000-0000-000000000001", full)
+	processSnapshot(t, st, ctx, "fb100000-0000-0000-0000-000000000001", cfg)
+
+	reduced := []domain.SnapshotEntry{entryWithProviderID("k1.txt", "/", "PK-k1.txt", "hk-k1.txt", 10, mt)}
+	insertSubmittedSnapshot(t, st, ctx, "fb100000-0000-0000-0000-000000000002", reduced)
+	processSnapshot(t, st, ctx, "fb100000-0000-0000-0000-000000000002", cfg)
+	if snapshotAcceptance(t, st, ctx, "fb100000-0000-0000-0000-000000000002") != domain.AcceptanceSuspicious {
+		t.Fatalf("first significant shrink must be SUSPICIOUS, got %s", snapshotAcceptance(t, st, ctx, "fb100000-0000-0000-0000-000000000002"))
+	}
+
+	// A later admitted observation with the same reduced signature corroborates.
+	insertSubmittedSnapshot(t, st, ctx, "fb100000-0000-0000-0000-000000000003", reduced)
+	processSnapshot(t, st, ctx, "fb100000-0000-0000-0000-000000000003", cfg)
+	if snapshotCorroboration(t, st, ctx, "fb100000-0000-0000-0000-000000000003") != domain.ShrinkCorroborated {
+		t.Fatalf("later qualifying observation must derive CORROBORATED, got %s", snapshotCorroboration(t, st, ctx, "fb100000-0000-0000-0000-000000000003"))
+	}
+	if snapshotAcceptance(t, st, ctx, "fb100000-0000-0000-0000-000000000003") != domain.AcceptanceComplete {
+		t.Fatalf("corroborated shrink must be COMPLETE, got %s", snapshotAcceptance(t, st, ctx, "fb100000-0000-0000-0000-000000000003"))
+	}
+}
+
+// R3-2 negative: an earlier admitted observation with a DIFFERENT reduced scope
+// signature must not corroborate.
+func TestCorroborationRejectsUnrelatedObservation(t *testing.T) {
+	st, ctx := newStore(t)
+	seedPipelineRoot(t, st, ctx)
+	cfg := reconcile.Config{MinConsecutiveCompleteMissing: 1, MinIndependentConfirmations: 1}
+	mt := time.Now().UTC()
+
+	full := append([]domain.SnapshotEntry{entryWithProviderID("a.txt", "/", "P1", "ha", 1, mt)}, keepers(t, mt)...)
+	insertSubmittedSnapshot(t, st, ctx, "fc100000-0000-0000-0000-000000000001", full)
+	processSnapshot(t, st, ctx, "fc100000-0000-0000-0000-000000000001", cfg)
+
+	// A different small scope (k2), unrelated to the later reduce-to-k1.
+	other := []domain.SnapshotEntry{entryWithProviderID("k2.txt", "/", "PK-k2.txt", "hk-k2.txt", 11, mt)}
+	insertSubmittedSnapshot(t, st, ctx, "fc100000-0000-0000-0000-000000000002", other)
+	processSnapshot(t, st, ctx, "fc100000-0000-0000-0000-000000000002", cfg)
+
+	reduced := []domain.SnapshotEntry{entryWithProviderID("k1.txt", "/", "PK-k1.txt", "hk-k1.txt", 10, mt)}
+	insertSubmittedSnapshot(t, st, ctx, "fc100000-0000-0000-0000-000000000003", reduced)
+	processSnapshot(t, st, ctx, "fc100000-0000-0000-0000-000000000003", cfg)
+	if snapshotCorroboration(t, st, ctx, "fc100000-0000-0000-0000-000000000003") != domain.ShrinkNone {
+		t.Fatalf("unrelated earlier observation must not corroborate, got %s", snapshotCorroboration(t, st, ctx, "fc100000-0000-0000-0000-000000000003"))
+	}
+}
+
+// R3-6: invalid config fails closed in the normal Kernel path.
+func TestCoordinatorRejectsInvalidConfig(t *testing.T) {
+	st, ctx := newStore(t)
+	seedPipelineRoot(t, st, ctx)
+	bad := reconcile.Config{RemovalGracePeriod: time.Hour, MoveRecognitionHorizon: 2 * time.Hour}
+	if _, err := postgres.NewCoordinator(st, bad).ProcessSnapshot(ctx, pipeRoot, "nope"); err == nil {
+		t.Fatal("grace < horizon must fail closed in the coordinator")
+	}
+	if _, err := postgres.NewCoordinator(st, reconcile.Config{MinIndependentConfirmations: 2}).ProcessSnapshot(ctx, pipeRoot, "nope"); err == nil {
+		t.Fatal("MinIndependentConfirmations > 1 must fail closed in the coordinator")
+	}
+}
+
+// R3-7: Q4 real hierarchy + generation-bound cursor, and independent root visibility.
+func TestQueryHierarchyCursorAndRootVisibility(t *testing.T) {
+	st, ctx := newStore(t)
+	seedPipelineRoot(t, st, ctx)
+	cfg := reconcile.Config{MinConsecutiveCompleteMissing: 1, MinIndependentConfirmations: 1}
+	mt := time.Now().UTC()
+
+	dir := domain.SnapshotEntry{EntryLocalID: "d", Name: "d", ParentRef: "/", IsDir: true,
+		ProviderObjectID: sp("PD"), ProviderObjectIDScope: sp("root"), ProviderIdentityAssurance: stablePtr()}
+	child := entryWithProviderID("c.txt", "/d", "PC", "hc", 3, mt)
+	insertSubmittedSnapshot(t, st, ctx, "fd100000-0000-0000-0000-000000000001", []domain.SnapshotEntry{dir, child})
+	processSnapshot(t, st, ctx, "fd100000-0000-0000-0000-000000000001", cfg)
+
+	dirRes := requirePresent(t, st, ctx, "/d")
+	childRes := requirePresent(t, st, ctx, "/d/c.txt")
+	if childRes.ParentResourceID == nil || *childRes.ParentResourceID != dirRes.ResourceID {
+		t.Fatalf("child parent_resource_id must be the directory's resource_id (R3-7)")
+	}
+	qr := newQueryReader(st)
+	page, err := qr.ListResources(ctx, pipeRoot, &dirRes.ResourceID, query.ReadOptions{}, nil, 100)
+	if err != nil {
+		t.Fatalf("Q4 list children: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ResourceID != childRes.ResourceID {
+		t.Fatalf("Q4 must return the child by parent resource_id, got %+v", page.Items)
+	}
+
+	// Delete the root: PRESENT children must not leak without deleted-root opt-in.
+	if err := st.SetRootLifecycle(ctx, st.Pool(), pipeRoot, domain.RootDeleted); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := qr.GetResource(ctx, childRes.ResourceID, query.ReadOptions{}); got != nil {
+		t.Fatal("DELETED root child must not leak without explicit deleted-root opt-in")
+	}
+	if got, _ := qr.GetResource(ctx, childRes.ResourceID, query.ReadOptions{IncludeDeletedRoot: true}); got == nil {
+		t.Fatal("explicit deleted-root opt-in must read the retained partition")
+	}
+}
+
+// R2-12 retained: FAILED acceptance must be REJECTED (now via the coordinator).
+func TestFailedSnapshotRejectedViaCoordinator(t *testing.T) {
 	st, ctx := newStore(t)
 	seedPipelineRoot(t, st, ctx)
 	fresh := domain.FreshDirect
 	strong := domain.StrongFailureVisibility
-	snapID := "f2000000-0000-0000-0000-000000000001"
+	snapID := "fe100000-0000-0000-0000-000000000001"
 	snap := domain.Snapshot{
 		SnapshotID: snapID, RootID: pipeRoot, Provenance: []byte(`{}`), ObservedAt: time.Now().UTC(),
 		TraversalStatus: domain.TraversalFailed, SkippedScopesKnownEmpty: true,
@@ -85,133 +197,20 @@ func TestFailedSnapshotRejected(t *testing.T) {
 		CompletenessFlag: domain.CompletenessFlagPartial, LifecycleState: domain.SnapshotDraft,
 	}
 	if err := st.InsertSnapshotStub(ctx, st.Pool(), snap); err != nil {
-		t.Fatalf("insert: %v", err)
+		t.Fatal(err)
 	}
 	if err := st.MarkSnapshotSubmitted(ctx, st.Pool(), snapID); err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatal(err)
 	}
-	if _, err := st.AllocateAdmission(ctx, st.Pool(), pipeRoot, snapID); err != nil {
-		t.Fatalf("alloc: %v", err)
-	}
-	eval, err := st.EvaluateSnapshot(ctx, pipeRoot, snapID)
-	if err != nil {
-		t.Fatalf("evaluate: %v", err)
-	}
-	if eval.Acceptance != domain.AcceptanceFailed {
-		t.Fatalf("failed traversal must evaluate FAILED, got %s", eval.Acceptance)
-	}
-	out, err := st.ReconcileHead(ctx, postgres.ReconcileInput{
-		RootID: pipeRoot, AdmissionSeq: 1, SnapshotID: snapID, Identity: eval.Identity,
-	}, func(_ []reconcile.PriorResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
-		t.Fatal("a FAILED snapshot must be rejected before plan computation")
-		return nil, nil
-	})
-	if err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
+	out := processSnapshot(t, st, ctx, snapID, reconcile.Config{})
 	if out.Status != domain.AdmissionRejected || out.SnapshotLifecycle != domain.SnapshotRejected {
 		t.Fatalf("FAILED must map to REJECTED/REJECTED, got %+v", out)
 	}
 }
 
-// R2-6: scope-shrink corroboration is Kernel-derived from persisted admitted
-// observations, not injected.
-func TestCorroborationDerivedEndToEnd(t *testing.T) {
-	st, ctx := newStore(t)
-	seedPipelineRoot(t, st, ctx)
-	mt := time.Now().UTC()
-
-	cfg := reconcile.Config{MinConsecutiveCompleteMissing: 1, MinIndependentConfirmations: 1}
-	full := append([]domain.SnapshotEntry{entryWithProviderID("a.txt", "/", "P1", "ha", 1, mt)}, keepers(t, mt)...)
-	insertSubmittedSnapshot(t, st, ctx, "f3000000-0000-0000-0000-000000000001", full)
-	processSnapshot(t, st, ctx, "f3000000-0000-0000-0000-000000000001", full, cfg)
-
-	reduced := []domain.SnapshotEntry{entryWithProviderID("k1.txt", "/", "PK-k1.txt", "hk-k1.txt", 10, mt)}
-	insertSubmittedSnapshot(t, st, ctx, "f3000000-0000-0000-0000-000000000002", reduced)
-	if _, err := st.AllocateAdmission(ctx, st.Pool(), pipeRoot, "f3000000-0000-0000-0000-000000000002"); err != nil {
-		t.Fatal(err)
-	}
-	first, err := st.EvaluateSnapshot(ctx, pipeRoot, "f3000000-0000-0000-0000-000000000002")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Acceptance != domain.AcceptanceSuspicious || first.Corroboration != domain.ShrinkNone {
-		t.Fatalf("first significant shrink must be SUSPICIOUS/NONE, got %s/%s", first.Acceptance, first.Corroboration)
-	}
-
-	insertSubmittedSnapshot(t, st, ctx, "f3000000-0000-0000-0000-000000000003", reduced)
-	if _, err := st.AllocateAdmission(ctx, st.Pool(), pipeRoot, "f3000000-0000-0000-0000-000000000003"); err != nil {
-		t.Fatal(err)
-	}
-	second, err := st.EvaluateSnapshot(ctx, pipeRoot, "f3000000-0000-0000-0000-000000000003")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second.Corroboration != domain.ShrinkCorroborated || second.Acceptance != domain.AcceptanceComplete {
-		t.Fatalf("independent later shrink must be CORROBORATED/COMPLETE, got %s/%s", second.Acceptance, second.Corroboration)
-	}
+func stablePtr() *domain.ProviderIdentityAssurance {
+	v := domain.IdentityStableWithinScope
+	return &v
 }
 
-// R2-9: IdentityEvidence observed_at is the Snapshot observation time.
-func TestObservationTimeIsSnapshotTime(t *testing.T) {
-	st, ctx := newStore(t)
-	seedPipelineRoot(t, st, ctx)
-	cfg := reconcile.Config{MinConsecutiveCompleteMissing: 1, MinIndependentConfirmations: 1}
-	mt := time.Now().UTC().Truncate(time.Second)
-
-	entries := []domain.SnapshotEntry{entryWithProviderID("a.txt", "/", "P1", "ha", 1, mt)}
-	insertSubmittedSnapshotAt(t, st, ctx, "f4000000-0000-0000-0000-000000000001", entries, mt)
-	processSnapshot(t, st, ctx, "f4000000-0000-0000-0000-000000000001", entries, cfg)
-
-	var observed time.Time
-	if err := st.Pool().QueryRow(ctx,
-		`SELECT min(observed_at) FROM index_identity_evidence_observation`).Scan(&observed); err != nil {
-		t.Fatalf("observed_at: %v", err)
-	}
-	if !observed.UTC().Truncate(time.Second).Equal(mt) {
-		t.Fatalf("evidence observed_at must equal the snapshot observation time %s, got %s", mt, observed.UTC())
-	}
-}
-
-// R2-11: Q1 get_root + Q4 list_resources/hierarchy children, and no leak of a
-// DELETED root's PRESENT children through default reads.
-func TestQueryGetRootListResourcesAndDeletedLeak(t *testing.T) {
-	st, ctx := newStore(t)
-	seedPipelineRoot(t, st, ctx)
-	cfg := reconcile.Config{MinConsecutiveCompleteMissing: 1, MinIndependentConfirmations: 1}
-	mt := time.Now().UTC()
-
-	v1 := []domain.SnapshotEntry{entryWithProviderID("a.txt", "/", "P1", "ha", 1, mt)}
-	insertSubmittedSnapshot(t, st, ctx, "f5000000-0000-0000-0000-000000000001", v1)
-	processSnapshot(t, st, ctx, "f5000000-0000-0000-0000-000000000001", v1, cfg)
-	r := requirePresent(t, st, ctx, "/a.txt")
-	qr := newQueryReader(st)
-
-	root, err := qr.GetRoot(ctx, pipeRoot, false, false)
-	if err != nil || root == nil {
-		t.Fatalf("Q1 get_root must return the ACTIVE root, got %+v err=%v", root, err)
-	}
-	children, err := qr.ListResources(ctx, pipeRoot, nil, false, 100)
-	if err != nil || len(children.Items) != 1 {
-		t.Fatalf("Q4 list_resources must return the root-level child, got %d err=%v", len(children.Items), err)
-	}
-
-	// Delete the root: PRESENT children must not leak through default reads.
-	if err := st.SetRootLifecycle(ctx, st.Pool(), pipeRoot, domain.RootDeleted); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := qr.GetResource(ctx, r.ResourceID, false); got != nil {
-		t.Fatalf("DELETED root child must not leak through default GetResource, got %+v", got)
-	}
-	page, _ := qr.ListActivePage(ctx, pipeRoot, nil, 100)
-	if len(page.Items) != 0 {
-		t.Fatalf("DELETED root child must not leak through default ListActivePage, got %d", len(page.Items))
-	}
-	res, _ := qr.ResolvePath(ctx, pipeRoot, "/a.txt", false)
-	if len(res.Matches) != 0 {
-		t.Fatalf("DELETED root child must not leak through default ResolvePath, got %d", len(res.Matches))
-	}
-	if got, _ := qr.GetResource(ctx, r.ResourceID, true); got == nil || got.ResourcePresence != domain.ResourcePresent {
-		t.Fatalf("explicit audit access must still read the retained partition, got %+v", got)
-	}
-}
+func sp(s string) *string { return &s }

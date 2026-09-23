@@ -12,7 +12,6 @@ import (
 
 const pipeRoot = "cccccccc-0000-0000-0000-000000000001"
 
-// seedPipelineRoot creates the fixture root.
 func seedPipelineRoot(t *testing.T, st *postgres.Store, ctx context.Context) {
 	t.Helper()
 	if err := st.CreateRoot(ctx, st.Pool(), pipeRoot, []byte(`{}`), domain.RootActive); err != nil {
@@ -20,8 +19,6 @@ func seedPipelineRoot(t *testing.T, st *postgres.Store, ctx context.Context) {
 	}
 }
 
-// insertSubmittedSnapshot inserts a SUBMITTED, COMPLETE, strongly-assured
-// snapshot with the given entries and returns the entries with snapshot ids set.
 func insertSubmittedSnapshot(t *testing.T, st *postgres.Store, ctx context.Context, snapID string, entries []domain.SnapshotEntry) []domain.SnapshotEntry {
 	t.Helper()
 	fresh := domain.FreshDirect
@@ -50,36 +47,42 @@ func insertSubmittedSnapshot(t *testing.T, st *postgres.Store, ctx context.Conte
 
 func int64p(v int64) *int64 { return &v }
 
-// processSnapshot runs the full frozen pipeline end to end: Kernel evaluation
-// (acceptance + final DETERMINISTIC_DIGEST), admission, Stage-2 reconcile. No
-// identity or acceptance verdict is injected (B4), and IdentityEvidence is
-// appended automatically inside the transaction (B3).
-func processSnapshot(t *testing.T, st *postgres.Store, ctx context.Context, snapID string,
-	entries []domain.SnapshotEntry, cfg reconcile.Config) (postgres.ReconcileOutcome, domain.SnapshotIdentity) {
+func processSnapshot(t *testing.T, st *postgres.Store, ctx context.Context, snapID string, cfg reconcile.Config) postgres.ReconcileOutcome {
 	t.Helper()
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("invalid config: %v", err)
-	}
-	// Stage-1 admission MUST precede evaluation so "independently admitted"
-	// is truthful (R2-5).
-	seq, err := st.AllocateAdmission(ctx, st.Pool(), pipeRoot, snapID)
+	out, err := postgres.NewCoordinator(st, cfg).ProcessSnapshot(ctx, pipeRoot, snapID)
 	if err != nil {
-		t.Fatalf("allocate admission: %v", err)
+		t.Fatalf("process snapshot %s: %v", snapID, err)
 	}
-	eval, err := st.EvaluateSnapshot(ctx, pipeRoot, snapID)
-	if err != nil {
-		t.Fatalf("evaluate snapshot %s: %v", snapID, err)
+	return out
+}
+
+func snapshotAcceptance(t *testing.T, st *postgres.Store, ctx context.Context, snapID string) domain.AcceptanceState {
+	t.Helper()
+	var a string
+	if err := st.Pool().QueryRow(ctx, `SELECT acceptance_state FROM index_snapshot WHERE snapshot_id=$1::uuid`, snapID).Scan(&a); err != nil {
+		t.Fatalf("acceptance: %v", err)
 	}
-	out, err := st.ReconcileHead(ctx, postgres.ReconcileInput{
-		RootID: pipeRoot, AdmissionSeq: seq, SnapshotID: snapID, Identity: eval.Identity,
-	}, func(prior []reconcile.PriorResource, snap domain.Snapshot, gen int64) (*postgres.Plan, error) {
-		res := reconcile.Reconcile(prior, entries, eval.Acceptance, cfg, time.Now().UTC(), snapID)
-		return st.PlanFromResult(pipeRoot, snapID, snap.ObservedAt, res), nil
-	})
-	if err != nil {
-		t.Fatalf("reconcile %s: %v", snapID, err)
+	return domain.AcceptanceState(a)
+}
+
+func snapshotCorroboration(t *testing.T, st *postgres.Store, ctx context.Context, snapID string) domain.ScopeShrinkCorroboration {
+	t.Helper()
+	var c string
+	if err := st.Pool().QueryRow(ctx, `SELECT scope_shrink_corroboration FROM index_snapshot WHERE snapshot_id=$1::uuid`, snapID).Scan(&c); err != nil {
+		t.Fatalf("corroboration: %v", err)
 	}
-	return out, eval.Identity
+	return domain.ScopeShrinkCorroboration(c)
+}
+
+func appliedIdentity(t *testing.T, st *postgres.Store, ctx context.Context, snapID string) string {
+	t.Helper()
+	var v string
+	if err := st.Pool().QueryRow(ctx,
+		`SELECT snapshot_identity_value FROM index_applied_snapshot WHERE root_id=$1::uuid AND snapshot_id=$2::uuid
+		  ORDER BY applied_generation DESC LIMIT 1`, pipeRoot, snapID).Scan(&v); err != nil {
+		t.Fatalf("applied identity: %v", err)
+	}
+	return v
 }
 
 func countIdentityEvidence(t *testing.T, st *postgres.Store, ctx context.Context, rootID string) int {
@@ -105,8 +108,6 @@ func entryWithProviderID(name, pathParent, provID, hash string, size int64, mt t
 	}
 }
 
-// TestPipelineLearnsProviderContinuity shows provider-id continuity learned from
-// snapshot 1 is used automatically by snapshot 2, with NO manual DB seeding (B3).
 func TestPipelineLearnsProviderContinuity(t *testing.T) {
 	st, ctx := newStore(t)
 	seedPipelineRoot(t, st, ctx)
@@ -118,7 +119,7 @@ func TestPipelineLearnsProviderContinuity(t *testing.T) {
 		entryWithProviderID("b.txt", "/", "P2", "hb", 2, mt),
 	}
 	insertSubmittedSnapshot(t, st, ctx, "c1000000-0000-0000-0000-000000000001", v1)
-	out1, id1 := processSnapshot(t, st, ctx, "c1000000-0000-0000-0000-000000000001", v1, cfg)
+	out1 := processSnapshot(t, st, ctx, "c1000000-0000-0000-0000-000000000001", cfg)
 	if out1.Status != domain.AdmissionApplied || out1.AppliedGeneration != 1 {
 		t.Fatalf("snapshot 1 must APPLY at generation 1, got %+v", out1)
 	}
@@ -126,21 +127,19 @@ func TestPipelineLearnsProviderContinuity(t *testing.T) {
 		t.Fatalf("snapshot 1 must append 2 IdentityEvidence observations automatically, got %d", n)
 	}
 
-	// Snapshot 2: a.txt content changed but provider id is stable (learned from S1).
 	mt2 := mt.Add(time.Hour)
 	v2 := []domain.SnapshotEntry{
 		entryWithProviderID("a.txt", "/", "P1", "ha2", 9, mt2),
 		entryWithProviderID("b.txt", "/", "P2", "hb", 2, mt),
 	}
 	insertSubmittedSnapshot(t, st, ctx, "c1000000-0000-0000-0000-000000000002", v2)
-	out2, id2 := processSnapshot(t, st, ctx, "c1000000-0000-0000-0000-000000000002", v2, cfg)
+	out2 := processSnapshot(t, st, ctx, "c1000000-0000-0000-0000-000000000002", cfg)
 	if out2.Status != domain.AdmissionApplied {
 		t.Fatalf("snapshot 2 must APPLY, got %+v", out2)
 	}
-	if id1.Equal(id2) {
+	if appliedIdentity(t, st, ctx, "c1000000-0000-0000-0000-000000000001") == appliedIdentity(t, st, ctx, "c1000000-0000-0000-0000-000000000002") {
 		t.Fatal("changed content must yield a different final IO3 identity")
 	}
-	// a.txt must have been matched by provider continuity (no extra resource added).
 	present, err := st.ListCanonicalPresent(ctx, st.Pool(), pipeRoot)
 	if err != nil {
 		t.Fatalf("list present: %v", err)
@@ -153,16 +152,12 @@ func TestPipelineLearnsProviderContinuity(t *testing.T) {
 	}
 }
 
-// TestPipelineRemovalIndependenceEndToEnd verifies removal confirmation requires
-// a later independent admitted snapshot (B2).
 func TestPipelineRemovalIndependenceEndToEnd(t *testing.T) {
 	st, ctx := newStore(t)
 	seedPipelineRoot(t, st, ctx)
 	cfg := reconcile.Config{MinConsecutiveCompleteMissing: 1, MinIndependentConfirmations: 1, RemovalGracePeriod: 0}
 	mt := time.Now().UTC()
 
-	// Keepers keep later snapshots non-empty AND keep the drop non-significant
-	// (an empty scope triggers C-8, and a >=50% drop triggers C-7 SUSPICIOUS).
 	v1 := []domain.SnapshotEntry{entryWithProviderID("a.txt", "/", "P1", "ha", 1, mt)}
 	keeper := []domain.SnapshotEntry{}
 	for i, name := range []string{"k1.txt", "k2.txt", "k3.txt", "k4.txt", "k5.txt"} {
@@ -171,21 +166,16 @@ func TestPipelineRemovalIndependenceEndToEnd(t *testing.T) {
 		keeper = append(keeper, e)
 	}
 	insertSubmittedSnapshot(t, st, ctx, "c2000000-0000-0000-0000-000000000001", v1)
-	processSnapshot(t, st, ctx, "c2000000-0000-0000-0000-000000000001", v1, cfg)
+	processSnapshot(t, st, ctx, "c2000000-0000-0000-0000-000000000001", cfg)
 
-	// Snapshot 2 omits a.txt: first MISSING only, resource must still be PRESENT.
 	insertSubmittedSnapshot(t, st, ctx, "c2000000-0000-0000-0000-000000000002", keeper)
-	processSnapshot(t, st, ctx, "c2000000-0000-0000-0000-000000000002", keeper, cfg)
+	processSnapshot(t, st, ctx, "c2000000-0000-0000-0000-000000000002", cfg)
 	if rows, _ := st.PresentResourcesAtPath(ctx, st.Pool(), pipeRoot, "/a.txt"); len(rows) != 1 {
 		t.Fatalf("first MISSING must NOT remove the resource, got %d PRESENT", len(rows))
 	}
 
-	// Snapshot 3 is a later, independent COMPLETE observation with identical
-	// provider content. It must still confirm removal: its evaluated identity
-	// differs from snapshot 2 because the Kernel-derived removal decision context
-	// differs (R2-4), not because the files changed.
 	insertSubmittedSnapshot(t, st, ctx, "c2000000-0000-0000-0000-000000000003", keeper)
-	processSnapshot(t, st, ctx, "c2000000-0000-0000-0000-000000000003", keeper, cfg)
+	processSnapshot(t, st, ctx, "c2000000-0000-0000-0000-000000000003", cfg)
 	if rows, _ := st.PresentResourcesAtPath(ctx, st.Pool(), pipeRoot, "/a.txt"); len(rows) != 0 {
 		t.Fatalf("independent confirmation must remove the resource, got %d PRESENT", len(rows))
 	}

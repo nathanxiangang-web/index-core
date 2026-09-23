@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -72,6 +73,7 @@ func (s *Store) applyTransition(ctx context.Context, tx pgx.Tx, rootID string, g
 			r.ContentHash = tr.Entry.ContentHash
 			r.HashAlgorithm = tr.Entry.HashAlgorithm
 			r.ContentType = tr.Entry.ContentType
+			r.ParentResourceID = s.resolveParentID(ctx, tx, rootID, reconcile.PathDir(p))
 		}
 		return s.InsertCanonicalResource(ctx, tx, r)
 
@@ -97,7 +99,13 @@ func (s *Store) applyTransition(ctx context.Context, tx pgx.Tx, rootID string, g
 			n := tr.Entry.Name
 			name = &n
 		}
-		return s.UpdateResourcePath(ctx, tx, tr.ResourceID, tr.NewPath, tr.Prior.ParentResourceID, name, generation)
+		// MOVE/RENAME maintain the derived hierarchy parent (R3-7); a same-parent
+		// RENAME keeps the prior parent.
+		parentID := tr.Prior.ParentResourceID
+		if tr.NewPath != nil {
+			parentID = s.resolveParentID(ctx, tx, rootID, reconcile.PathDir(*tr.NewPath))
+		}
+		return s.UpdateResourcePath(ctx, tx, tr.ResourceID, tr.NewPath, parentID, name, generation)
 
 	case reconcile.KindResetRemovalEvidence:
 		return s.ResetRemovalEvidence(ctx, tx, tr.ResourceID, generation)
@@ -121,6 +129,42 @@ func (s *Store) applyTransition(ctx context.Context, tx pgx.Tx, rootID string, g
 		return s.ConfirmRemoval(ctx, tx, tr.ResourceID, generation)
 	}
 	return nil
+}
+
+// resolveParentID deterministically resolves a child's parent resource id from
+// its parent path: exactly one PRESENT directory at that path yields its id;
+// none or an ambiguous overlap yields nil (R3-7, R8-safe).
+func (s *Store) resolveParentID(ctx context.Context, q Querier, rootID, parentPath string) *string {
+	if parentPath == "" || parentPath == "/" || parentPath == "." {
+		return nil
+	}
+	var id string
+	err := q.QueryRow(ctx,
+		`SELECT resource_id::text FROM index_canonical_resource
+		  WHERE root_id = $1::uuid AND canonical_path = $2 AND resource_presence = 'PRESENT' AND is_dir = true
+		  ORDER BY resource_id LIMIT 2`, rootID, parentPath).Scan(&id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return nil
+	}
+	// Reject ambiguous parents (multiple PRESENT dirs at the same path).
+	rows, qerr := q.Query(ctx,
+		`SELECT count(*) FROM index_canonical_resource
+		  WHERE root_id = $1::uuid AND canonical_path = $2 AND resource_presence = 'PRESENT' AND is_dir = true`,
+		rootID, parentPath)
+	if qerr != nil {
+		return nil
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var n int
+		if err := rows.Scan(&n); err != nil || n != 1 {
+			return nil
+		}
+	}
+	return &id
 }
 
 func eventTypeFor(k reconcile.Kind) (domain.EventType, bool) {

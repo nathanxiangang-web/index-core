@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,8 +14,7 @@ import (
 
 const defaultPageSize = 100
 
-// QueryReader is the consumer-facing read-only facade. It holds only a pool and
-// exposes no mutating Store method or Pool() accessor (doc C W2/W3, B5).
+// QueryReader is the consumer-facing read-only facade (doc C W2/W3, B5).
 type QueryReader struct {
 	pool *pgxpool.Pool
 }
@@ -46,8 +46,8 @@ func (qr *QueryReader) ListRoots(ctx context.Context, includeDeprecated, include
 	return out, rows.Err()
 }
 
-// GetRoot returns a single root honoring the frozen visibility defaults (Q1).
-func (qr *QueryReader) GetRoot(ctx context.Context, rootID string, includeDeprecated, includeDeleted bool) (*query.RootView, error) {
+// GetRoot returns a single root honoring the independent visibility opts (Q1).
+func (qr *QueryReader) GetRoot(ctx context.Context, rootID string, opts query.ReadOptions) (*query.RootView, error) {
 	v, err := scanRoot(qr.pool.QueryRow(ctx, rootSelect+` WHERE root_id = $1::uuid`, rootID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -55,22 +55,15 @@ func (qr *QueryReader) GetRoot(ctx context.Context, rootID string, includeDeprec
 	if err != nil {
 		return nil, err
 	}
-	switch v.LifecycleState {
-	case domain.RootDeprecated:
-		if !includeDeprecated {
-			return nil, nil
-		}
-	case domain.RootDeleted:
-		if !includeDeleted {
-			return nil, nil
-		}
+	if !rootVisible(v.LifecycleState, opts) {
+		return nil, nil
 	}
 	return &v, nil
 }
 
-// RootStatus returns root lifecycle/generation plus the applied high-water mark,
-// read in ONE read-only consistent transaction (CR1, R2-11).
-func (qr *QueryReader) RootStatus(ctx context.Context, rootID string) (query.RootStatus, error) {
+// RootStatus returns root status, honoring root visibility (Q9). The two reads
+// run in ONE read-only consistent transaction (CR1, R3-7).
+func (qr *QueryReader) RootStatus(ctx context.Context, rootID string, opts query.ReadOptions) (query.RootStatus, error) {
 	tx, err := qr.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return query.RootStatus{}, err
@@ -90,6 +83,9 @@ func (qr *QueryReader) RootStatus(ctx context.Context, rootID string) (query.Roo
 		return query.RootStatus{}, err
 	}
 	st.LifecycleState = domain.RootLifecycleState(lifecycle)
+	if !rootVisible(st.LifecycleState, opts) {
+		return query.RootStatus{}, ErrNotFound
+	}
 	var applied *int64
 	if err := tx.QueryRow(ctx,
 		`SELECT max(admission_seq) FROM index_admission WHERE root_id = $1::uuid AND status = 'APPLIED'`,
@@ -101,65 +97,36 @@ func (qr *QueryReader) RootStatus(ctx context.Context, rootID string) (query.Roo
 }
 
 // GetResource returns a resource unless it is a REMOVED tombstone and
-// includeRemoved is false (doc C V1/V2). Default reads do not leak children of a
-// DEPRECATED/DELETED root; explicit history access (includeRemoved) may (R2-11).
-func (qr *QueryReader) GetResource(ctx context.Context, resourceID string, includeRemoved bool) (*query.ResourceView, error) {
+// opts.IncludeRemoved is false, and hides children of non-visible roots unless
+// the corresponding root opt-in is set (R3-7).
+func (qr *QueryReader) GetResource(ctx context.Context, resourceID string, opts query.ReadOptions) (*query.ResourceView, error) {
 	v, err := scanResource(qr.pool.QueryRow(ctx,
-		resourceSelect+` WHERE c.resource_id = $1::uuid AND `+rootVisibility(includeRemoved), resourceID))
+		resourceSelect+` WHERE c.resource_id = $1::uuid AND `+rootVisibilityClause(opts), resourceID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if v.ResourcePresence == domain.ResourceRemoved && !includeRemoved {
+	if v.ResourcePresence == domain.ResourceRemoved && !opts.IncludeRemoved {
 		return nil, nil
 	}
 	return &v, nil
 }
 
-// ListResources returns the hierarchy children of a parent (root scope when
-// parentResourceID is nil) (Q4).
-func (qr *QueryReader) ListResources(ctx context.Context, rootID string, parentResourceID *string, includeRemoved bool, limit int) (query.ResourcePage, error) {
-	if limit <= 0 {
-		limit = defaultPageSize
+// ListResources returns hierarchy children of a parent (root scope when
+// parentResourceID is nil) with generation-bound pagination (Q4, R3-7).
+func (qr *QueryReader) ListResources(ctx context.Context, rootID string, parentResourceID *string, opts query.ReadOptions, cur *query.Cursor, limit int) (query.ResourcePage, error) {
+	presence := `c.resource_presence = 'PRESENT'`
+	if opts.IncludeRemoved {
+		presence = `c.resource_presence IN ('PRESENT','REMOVED')`
 	}
-	presence := domain.ResourcePresent
-	if includeRemoved {
-		// still default to PRESENT children unless the caller wants removed too;
-		// Q4 is the live hierarchy surface.
-		presence = domain.ResourcePresent
-	}
-	q := resourceSelect + ` WHERE c.root_id = $1::uuid AND c.resource_presence = $2 AND ` + rootVisibility(includeRemoved)
-	args := []any{rootID, string(presence)}
-	if parentResourceID == nil {
-		q += ` AND c.parent_resource_id IS NULL`
-	} else {
-		q += ` AND c.parent_resource_id = $3::uuid`
-		args = append(args, *parentResourceID)
-	}
-	q += ` ORDER BY COALESCE(c.canonical_path,''), c.resource_id::text LIMIT ` + placeholders(len(args)+1)
-	args = append(args, limit)
-
-	rows, err := qr.pool.Query(ctx, q, args...)
-	if err != nil {
-		return query.ResourcePage{}, err
-	}
-	defer rows.Close()
-	page := query.ResourcePage{}
-	for rows.Next() {
-		v, err := scanResource(rows)
-		if err != nil {
-			return query.ResourcePage{}, err
-		}
-		page.Items = append(page.Items, v)
-	}
-	return page, rows.Err()
+	return qr.listPageInternal(ctx, rootID, parentResourceID, presence, rootVisibilityClause(opts), cur, limit)
 }
 
 // ResolvePath returns ALL live resources at a path with explicit ambiguity
-// (doc C V9, QC12), read in ONE read-only consistent transaction (CR1, R2-11).
-func (qr *QueryReader) ResolvePath(ctx context.Context, rootID, path string, includeRemoved bool) (query.PathResolution, error) {
+// (doc C V9, QC12), read in ONE read-only consistent transaction (CR1, R3-7).
+func (qr *QueryReader) ResolvePath(ctx context.Context, rootID, path string, opts query.ReadOptions) (query.PathResolution, error) {
 	tx, err := qr.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return query.PathResolution{}, err
@@ -167,29 +134,29 @@ func (qr *QueryReader) ResolvePath(ctx context.Context, rootID, path string, inc
 	defer tx.Rollback(ctx)
 
 	var res query.PathResolution
-	collect := func(presence domain.ResourcePresence) error {
+	presences := []domain.ResourcePresence{domain.ResourcePresent}
+	if opts.IncludeRemoved {
+		presences = append(presences, domain.ResourceRemoved)
+	}
+	for _, presence := range presences {
 		rows, err := tx.Query(ctx,
 			resourceSelect+` WHERE c.root_id = $1::uuid AND c.canonical_path = $2 AND c.resource_presence = $3 AND `+
-				rootVisibility(includeRemoved)+` ORDER BY c.resource_id`,
+				rootVisibilityClause(opts)+` ORDER BY c.resource_id`,
 			rootID, path, string(presence))
 		if err != nil {
-			return err
+			return query.PathResolution{}, err
 		}
-		defer rows.Close()
 		for rows.Next() {
 			v, err := scanResource(rows)
 			if err != nil {
-				return err
+				rows.Close()
+				return query.PathResolution{}, err
 			}
 			res.Matches = append(res.Matches, v)
 		}
-		return rows.Err()
-	}
-	if err := collect(domain.ResourcePresent); err != nil {
-		return query.PathResolution{}, err
-	}
-	if includeRemoved {
-		if err := collect(domain.ResourceRemoved); err != nil {
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
 			return query.PathResolution{}, err
 		}
 	}
@@ -199,19 +166,18 @@ func (qr *QueryReader) ResolvePath(ctx context.Context, rootID, path string, inc
 
 // ListActivePage returns PRESENT resources with generation-bound pagination.
 func (qr *QueryReader) ListActivePage(ctx context.Context, rootID string, cur *query.Cursor, limit int) (query.ResourcePage, error) {
-	return qr.listPage(ctx, rootID, cur, limit, domain.ResourcePresent, false)
+	return qr.listPageInternal(ctx, rootID, nil, `c.resource_presence = 'PRESENT'`, rootVisibilityClause(query.ReadOptions{}), cur, limit)
 }
 
-// ListRemovedPage returns REMOVED tombstones (explicit history; audit access may
-// read the retained partition of a DELETED root).
+// ListRemovedPage returns REMOVED tombstones (explicit history).
 func (qr *QueryReader) ListRemovedPage(ctx context.Context, rootID string, cur *query.Cursor, limit int) (query.ResourcePage, error) {
-	return qr.listPage(ctx, rootID, cur, limit, domain.ResourceRemoved, true)
+	opts := query.ReadOptions{IncludeRemoved: true, IncludeDeprecatedRoot: true, IncludeDeletedRoot: true}
+	return qr.listPageInternal(ctx, rootID, nil, `c.resource_presence = 'REMOVED'`, rootVisibilityClause(opts), cur, limit)
 }
 
-// listPage reads the generation and rows inside ONE read-only REPEATABLE READ
-// transaction, so a page can never mix generation G metadata with G+1 rows
-// (doc C CR1/P2/P3, B5).
-func (qr *QueryReader) listPage(ctx context.Context, rootID string, cur *query.Cursor, limit int, presence domain.ResourcePresence, allowHiddenRoots bool) (query.ResourcePage, error) {
+// listPageInternal reads the generation and rows inside ONE read-only REPEATABLE
+// READ transaction; the cursor is generation-bound (CR1/P2/P3, R3-7).
+func (qr *QueryReader) listPageInternal(ctx context.Context, rootID string, parentID *string, presencePredicate, rootVisibility string, cur *query.Cursor, limit int) (query.ResourcePage, error) {
 	if limit <= 0 {
 		limit = defaultPageSize
 	}
@@ -233,18 +199,24 @@ func (qr *QueryReader) listPage(ctx context.Context, rootID string, cur *query.C
 		return query.ResourcePage{}, query.ErrStaleCursor
 	}
 
-	base := resourceSelect + ` WHERE c.root_id = $1::uuid AND c.resource_presence = $2 AND ` + rootVisibility(allowHiddenRoots)
-	var rows pgx.Rows
-	if cur != nil && cur.HasAfter {
-		rows, err = tx.Query(ctx, base+`
-		  AND (COALESCE(c.canonical_path, ''), c.resource_id::text) > ($3::text, $4::text)
-		  ORDER BY COALESCE(c.canonical_path, ''), c.resource_id::text
-		  LIMIT $5`, rootID, string(presence), cur.AfterPath, cur.AfterResourceID, limit)
+	args := []any{rootID}
+	where := `c.root_id = $1::uuid AND ` + presencePredicate + ` AND ` + rootVisibility
+	if parentID == nil {
+		where += ` AND c.parent_resource_id IS NULL`
 	} else {
-		rows, err = tx.Query(ctx, base+`
-		  ORDER BY COALESCE(c.canonical_path, ''), c.resource_id::text
-		  LIMIT $3`, rootID, string(presence), limit)
+		args = append(args, *parentID)
+		where += fmt.Sprintf(` AND c.parent_resource_id = $%d::uuid`, len(args))
 	}
+	if cur != nil && cur.HasAfter {
+		args = append(args, cur.AfterPath, cur.AfterResourceID)
+		where += fmt.Sprintf(` AND (COALESCE(c.canonical_path,''), c.resource_id::text) > ($%d::text, $%d::text)`,
+			len(args)-1, len(args))
+	}
+	args = append(args, limit)
+	q := resourceSelect + ` WHERE ` + where +
+		` ORDER BY COALESCE(c.canonical_path,''), c.resource_id::text LIMIT ` + fmt.Sprintf(`$%d`, len(args))
+
+	rows, err := tx.Query(ctx, q, args...)
 	if err != nil {
 		return query.ResourcePage{}, err
 	}
@@ -267,10 +239,7 @@ func (qr *QueryReader) listPage(ctx context.Context, rootID string, cur *query.C
 		if last.CanonicalPath != nil {
 			p = *last.CanonicalPath
 		}
-		page.Next = &query.Cursor{
-			RootID: rootID, Generation: currentGeneration,
-			HasAfter: true, AfterPath: p, AfterResourceID: last.ResourceID,
-		}
+		page.Next = &query.Cursor{RootID: rootID, Generation: currentGeneration, HasAfter: true, AfterPath: p, AfterResourceID: last.ResourceID}
 	}
 	return page, nil
 }
@@ -315,25 +284,27 @@ const resourceSelect = `SELECT c.resource_id::text, c.root_id::text, c.canonical
 	       c.introduced_at_generation, c.last_confirmed_generation
 	  FROM index_canonical_resource c`
 
-// rootVisibility filters out resources whose root is DEPRECATED/DELETED unless
-// audit access (allowHiddenRoots) is requested (R2-11).
-func rootVisibility(allowHiddenRoots bool) string {
-	if allowHiddenRoots {
-		return `EXISTS (SELECT 1 FROM index_root r WHERE r.root_id = c.root_id)`
+// rootVisibilityClause builds a root-visibility predicate from the independent
+// read options (R3-7). Values are fixed literals (no injection).
+func rootVisibilityClause(opts query.ReadOptions) string {
+	pred := `r.lifecycle_state IN ('NEW','ACTIVE')`
+	if opts.IncludeDeprecatedRoot {
+		pred += ` OR r.lifecycle_state = 'DEPRECATED'`
 	}
-	return `EXISTS (SELECT 1 FROM index_root r WHERE r.root_id = c.root_id AND r.lifecycle_state IN ('NEW','ACTIVE'))`
+	if opts.IncludeDeletedRoot {
+		pred += ` OR r.lifecycle_state = 'DELETED'`
+	}
+	return `EXISTS (SELECT 1 FROM index_root r WHERE r.root_id = c.root_id AND (` + pred + `))`
 }
 
-func placeholders(n int) string {
-	switch n {
-	case 1:
-		return "$1"
-	case 2:
-		return "$2"
-	case 3:
-		return "$3"
+func rootVisible(lc domain.RootLifecycleState, opts query.ReadOptions) bool {
+	switch lc {
+	case domain.RootDeprecated:
+		return opts.IncludeDeprecatedRoot
+	case domain.RootDeleted:
+		return opts.IncludeDeletedRoot
 	default:
-		return "$4"
+		return true
 	}
 }
 

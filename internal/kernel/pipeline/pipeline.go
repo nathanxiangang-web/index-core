@@ -1,18 +1,12 @@
-// Package pipeline is a thin Kernel coordinator that wires the frozen P3 stages
-// in the correct ownership order for one submitted Snapshot:
-//
-//	SUBMITTED -> Stage-1 admission_seq -> Kernel evaluation -> final identity ->
-//	Stage-2 reconcile
-//
-// The final IO3 identity is computed after evaluation and includes Kernel-derived
-// decision evidence (scope-shrink corroboration and the removal-decision context)
-// so semantically identical raw entry sets that drive different reconcile
-// decisions cannot collapse into one identity (doc A Sec 3.8, R2-4/R2-6).
+// Package pipeline evaluates one admitted Snapshot into the Kernel-owned
+// acceptance verdict and final IO3 identity. It is invoked by the safe Kernel
+// coordinator under the per-root serialization domain, so the decision is
+// computed against the canonical truth being reconciled.
 package pipeline
 
 import (
 	"sort"
-	"strings"
+	"time"
 
 	"github.com/nathanxiangang-web/index-core/internal/domain"
 	"github.com/nathanxiangang-web/index-core/internal/kernel/completeness"
@@ -38,24 +32,21 @@ type Evidence struct {
 	UsedCache         bool
 	EntryCount        int64
 	PriorPresent      int64
-	// Corroboration is the Kernel-derived significance corroboration from later
-	// independent admitted observations. It must be derived by the Kernel before
-	// calling Evaluate, never supplied by an adapter/caller verdict (R2-6).
+	// Corroboration is the Kernel-derived significance corroboration from a
+	// qualifying earlier independently admitted observation (R2-6/R3-2).
 	Corroboration domain.ScopeShrinkCorroboration
 }
 
 // Evaluate runs completeness evaluation and final-digest identity computation.
-// prior is the canonical inventory enriched with identity evidence; it is needed
-// to derive the removal-decision context in the digest.
-func Evaluate(entries []domain.SnapshotEntry, prior []reconcile.PriorResource, ev Evidence) Result {
+// prior is the canonical inventory enriched with identity evidence; cfg/now are
+// needed to derive the removal-decision context with the SAME identity resolution
+// reconcile uses (R3-1).
+func Evaluate(entries []domain.SnapshotEntry, prior []reconcile.PriorResource, ev Evidence, cfg reconcile.Config, now time.Time) Result {
 	skippedUnknown := ev.SkippedScopes == nil && !ev.SkippedKnownEmpty
 	corroboration := ev.Corroboration
 	if corroboration == "" {
 		corroboration = domain.ShrinkNone
 	}
-
-	// entry_count is derived from the normalized entries, never trusted from
-	// metadata (R2-10).
 	derivedCount := int64(len(entries))
 
 	var corrPtr *domain.ScopeShrinkCorroboration
@@ -85,45 +76,10 @@ func Evaluate(entries []domain.SnapshotEntry, prior []reconcile.PriorResource, e
 		Freshness:                string(normalizeFreshness(ev.Freshness)),
 		Assurance:                string(normalizeAssurance(ev.Assurance)),
 		ScopeShrinkCorroboration: string(corroboration),
-		RemovalDecisionContext:   RemovalDecisionContext(entries, prior),
+		RemovalDecisionContext:   reconcile.RemovalDecisionContext(prior, entries, cfg, now),
 	})
 
 	return Result{Acceptance: acceptance, Identity: id, Corroboration: corroboration}
-}
-
-// RemovalDecisionContext canonicalizes the Kernel-owned removal-decision state of
-// prior resources absent from the current entries. It includes only decision
-// booleans/states (never snapshot_id, admission_seq, or timing), so a first
-// absence and a later independent confirmation of the same raw entry set produce
-// different evaluated identities (R2-4).
-func RemovalDecisionContext(entries []domain.SnapshotEntry, prior []reconcile.PriorResource) string {
-	observed := make(map[string]bool, len(entries))
-	for _, e := range entries {
-		observed[reconcile.EntryPath(e)] = true
-	}
-	var lines []string
-	for i := range prior {
-		p := &prior[i]
-		if p.ResourcePresence != domain.ResourcePresent {
-			continue
-		}
-		if observed[deref(p.CanonicalPath)] {
-			continue
-		}
-		firstSet := "0"
-		if p.MissingFirstSnapshotID != nil && *p.MissingFirstSnapshotID != "" {
-			firstSet = "1"
-		}
-		lines = append(lines, strings.Join([]string{
-			"absent",
-			"rid=" + p.ResourceID,
-			"state=" + string(p.RemovalEvidenceState),
-			"consec=" + itoa(int(p.ConsecutiveCompleteMissing)),
-			"first=" + firstSet,
-		}, "|"))
-	}
-	sort.Strings(lines)
-	return strings.Join(lines, "\n")
 }
 
 func toDigestEntries(entries []domain.SnapshotEntry) []identity.Entry {
@@ -143,6 +99,22 @@ func toDigestEntries(entries []domain.SnapshotEntry) []identity.Entry {
 			de.ProviderAssurance = string(*e.ProviderIdentityAssurance)
 		}
 		out = append(out, de)
+	}
+	return out
+}
+
+// RawScopeSignature is a deterministic signature of a normalized entry set used
+// to prove a reduced scope was independently observed (R3-2). It is derived from
+// actual entries, never from untrusted Snapshot metadata counts.
+func RawScopeSignature(entries []domain.SnapshotEntry) string {
+	lines := make([]string, 0, len(entries))
+	for _, e := range entries {
+		lines = append(lines, e.ParentRef+"\x00"+e.Name+"\x00"+deref(e.ContentHash)+"\x00"+deref(e.HashAlgorithm))
+	}
+	sort.Strings(lines)
+	out := ""
+	for _, l := range lines {
+		out += l + "\n"
 	}
 	return out
 }
@@ -184,26 +156,4 @@ func deref(s *string) string {
 		return ""
 	}
 	return *s
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		b[i] = '-'
-	}
-	return string(b[i:])
 }
