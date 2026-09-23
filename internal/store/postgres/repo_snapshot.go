@@ -62,9 +62,9 @@ func (s *Store) SetSnapshotEvaluated(ctx context.Context, q Querier, snapshotID 
 // GetSnapshot loads T5 index_snapshot.
 func (s *Store) GetSnapshot(ctx context.Context, q Querier, snapshotID string) (domain.Snapshot, error) {
 	var (
-		snap                                          domain.Snapshot
-		traversal, completeness, lifecycle            string
-		freshness, assurance, corroboration, accept   *string
+		snap                                        domain.Snapshot
+		traversal, completeness, lifecycle          string
+		freshness, assurance, corroboration, accept *string
 	)
 	err := q.QueryRow(ctx,
 		`SELECT snapshot_id::text, root_id::text, provenance, observed_at, started_at, finished_at,

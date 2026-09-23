@@ -12,9 +12,9 @@ const (
 type RemovalEvidenceState string
 
 const (
-	RemovalEvidenceNone                        RemovalEvidenceState = "NONE"
-	RemovalEvidenceMissingConfirmedByComplete  RemovalEvidenceState = "MISSING_CONFIRMED_BY_COMPLETE_SNAPSHOT"
-	RemovalEvidenceCandidate                   RemovalEvidenceState = "REMOVAL_CANDIDATE"
+	RemovalEvidenceNone                       RemovalEvidenceState = "NONE"
+	RemovalEvidenceMissingConfirmedByComplete RemovalEvidenceState = "MISSING_CONFIRMED_BY_COMPLETE_SNAPSHOT"
+	RemovalEvidenceCandidate                  RemovalEvidenceState = "REMOVAL_CANDIDATE"
 )
 
 // RootLifecycleState (doc A T1, C-R2). DELETED is a root-level-only tombstone (C-R4).

@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 
-
 	"github.com/nathanxiangang-web/index-core/internal/domain"
 )
 
@@ -62,8 +61,8 @@ func (s *Store) queryCanonical(ctx context.Context, q Querier, where string, arg
 	var out []domain.CanonicalResource
 	for rows.Next() {
 		var (
-			r                        domain.CanonicalResource
-			presence, removalState   string
+			r                      domain.CanonicalResource
+			presence, removalState string
 		)
 		if err := rows.Scan(&r.ResourceID, &r.RootID, &r.IntroducedAtGeneration, &r.LastConfirmedGeneration,
 			&presence, &removalState, &r.MissingSince, &r.ConsecutiveCompleteMissing,
