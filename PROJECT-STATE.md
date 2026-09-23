@@ -10,18 +10,9 @@
 
 Always verify the current remote `main` before execution.
 
-Governance transition commit:
+Latest accepted architecture milestone:
 
-`24a084c51f88a2eafd4ec7d30569963192619f96`
-
-Accepted content includes:
-
-- project blueprint v0.1
-- context governance
-- PostgreSQL-first persistence decision
-- D01 / D02 / D03 accepted research
-- Gate 1A responsibility boundary and contract skeleton
-- removal of the experimental subagent workflow
+`33e2e63440eb87afae7a572e22e296b3ee2c701b`
 
 ## Execution model
 
@@ -30,6 +21,8 @@ ChatGPT Architect
        ↓
 Codex Executor
        ↓
+branch + docs/code/tests
+       ↓
 Pull Request
        ↓
 ChatGPT Architect Review
@@ -37,111 +30,112 @@ ChatGPT Architect Review
 main
 ```
 
-The previous Foreman + Worker A/B/C/D topology is retired.
+The previous GLM Foreman + Worker A/B/C/D topology is retired.
 
 The experimental subagent topology is retired.
 
 ## Current phase
 
-**Gate 1B — Core Semantics**
+**Gate 1C — Persistence / Query / Collector Boundary**
 
 Status:
 
-**REWORK / CONSOLIDATION**
-
-No product implementation is authorized.
+**READY TO START**
 
 Active execution issue:
 
-**#37 — [CODEX][GATE-1B] Core Semantics Rework**
+**#40 — [CODEX][GATE-1C] Persistence, Query & Collector Contracts**
 
-Legacy PR #35 and legacy Worker Issues #29-#33 are superseded by #37 and must not drive new work.
+No CloudSite integration or product MVP implementation is authorized yet.
 
-## Latest accepted architecture phase
+## Accepted architecture
 
-**Gate 1A — Responsibility Boundary & Contract Skeleton**
+### Gate 1A — Responsibility Boundary & Contract Skeleton
 
-Status:
+Status: **ACCEPTED**
 
-**ACCEPTED**
+Accepted:
+- Collector / Kernel / Store / Consumer boundaries
+- Canonical Inventory as the single resource truth
+- Collector supplies normalized observations/evidence only
+- Kernel owns identity/completeness/reconcile/journal semantics
+- Store persists behind a Store Interface
+- Consumer is read-only against canonical truth
 
-Accepted documents:
+### Gate 1B — Core Semantics
 
-- `docs/architecture/GATE1A-RESPONSIBILITY-BOUNDARY.md`
-- `docs/architecture/GATE1A-COLLECTOR-CONTRACT-SKELETON.md`
-- `docs/architecture/GATE1A-STORE-QUERY-CONTRACT-SKELETON.md`
-- `docs/architecture/GATE1A-BOUNDARY-ATTACK-REPORT.md`
+Status: **ACCEPTED**
 
-## Gate 1A frozen boundaries
+Accepted commit:
 
-### Collector
-Owns traversal/pagination/provider-error capture/SnapshotEntry production/normalized evidence.
+`33e2e63440eb87afae7a572e22e296b3ee2c701b`
 
-Does not own canonical identity, final completeness acceptance, confirmed removal, canonical generation, Canonical Change Journal or direct Canonical Inventory mutation.
+Accepted contracts:
 
-### Kernel
-Owns Canonical Inventory, identity continuity, Snapshot acceptance, completeness safety, Safe Reconcile, root/generation semantics and Canonical Change Journal semantics.
+- `docs/architecture/GATE1B-DOMAIN-MODEL.md`
+- `docs/architecture/GATE1B-SNAPSHOT-COMPLETENESS.md`
+- `docs/architecture/GATE1B-SAFE-RECONCILE.md`
+- `docs/architecture/GATE1B-ADVERSARIAL-CASES.md`
 
-### Store
-Persists Kernel-defined Domain state and supplies atomic commit / rollback / concurrency protection behind the Store Interface.
+Key frozen semantics:
 
-### Consumer
-Reads canonical/query state and owns projections; cannot mutate Canonical Inventory or redefine truth.
-
-## Gate 1B scope
-
-Freeze:
-
-1. Domain Model
-2. Stable Identity v1
-3. Snapshot Contract core fields/evidence
-4. Completeness acceptance semantics
-5. Safe Reconcile
-6. Failure Model
-7. Canonical Change Journal semantics
-8. deterministic per-root input ordering
-9. root ownership/lifecycle semantics
-
-## Gate 1B Architect rework requirements
-
-The current Gate 1B design must correct:
-
-- hash is evidence, not identity
-- same path/size is not sufficient identity proof
+- hash is evidence/fingerprint, not canonical identity
 - provider IDs require stability qualification before strong use
-- rename/move continuity horizon must be compatible with removal safety
-- directory-move v1 semantics must be frozen or conservatively unsupported
-- PARTIAL/STALE/SUSPICIOUS absence must not mutate prior canonical truth
-- freshness evidence must be provider-neutral
-- Collector failure-visibility/completeness assurance must be explicit
-- Kernel must not re-traverse providers for removal validation
-- canonical lifecycle state vs removal-control state must be unambiguous
-- Journal append-only semantics must not conflict with repair
-- MOVE/RENAME + UPDATE semantic result must be frozen
-- per-root accepted input ordering must be deterministic
-- no Gate 1D
-- no subagent/Foreman/4-worker workflow in formal docs
+- path/size alone cannot prove identity
+- incomplete coverage cannot create canonical absence/removal evidence
+- freshness and failure visibility are provider-neutral evidence
+- significant shrink is non-destructive until independently corroborated
+- Kernel never re-traverses Provider for completeness/removal validation
+- CanonicalResource separates ResourcePresence from RemovalEvidenceState
+- confirmed removal is a logical REMOVED tombstone
+- Canonical Change Journal is append-only and canonical-wins on disagreement
+- MOVE/RENAME + UPDATE has deterministic same-generation event ordering
+- same-root input admission is serialized before reconcile work
+- duplicate/out-of-order inputs cannot overwrite newer canonical truth
+- roots are disjoint partitions; root_id is never reused
+- DELETED roots are logical tombstones retained for history/audit
 
-## Gate 1B must NOT design
+## Current Gate 1C scope
 
-- PostgreSQL schema / SQL / migrations
-- exact Query API transport
-- journal physical persistence/event schema
-- final Collector selection
-- Scanner checkpoint/resume
-- native delta / true incremental
-- product code
+Freeze implementation-facing architecture required by Gate 2 PoC:
 
-## Persistence decision
+1. PostgreSQL Store realization
+2. exact transaction boundary / locking / CAS semantics
+3. minimal read-only Query Contract
+4. Canonical Change Journal persistence / sequence semantics
+5. Collector Adapter Contract
+6. Architect-reviewed initial Collector recommendation / ADR
 
-**PostgreSQL-first**
+## Gate 1C must preserve
 
-Persistence shape remains Gate 1C.
+- Domain != PostgreSQL schema/ORM
+- failed commit preserves prior canonical truth
+- canonical + journal + generation + input-order state commit atomically
+- incomplete inputs cannot advance removal state
+- append-only journal
+- root_id/resource_id immutability
+- consumer write prohibition
+- Collector replaceability
 
-Domain remains independent of PostgreSQL schema/ORM.
+## Explicitly deferred after Gate 1
+
+### Gate 2 PoC
+- Snapshot -> PostgreSQL Inventory
+- v1/v2 reconcile validation
+- first selected Collector adapter validation
+
+### Post-MVP Scanner Resume
+- durable scanner
+- checkpoint/resume
+- bounded concurrency
+
+### Post-MVP Incremental
+- provider-native delta
+- provider cursor
+- dirty scope / true incremental
 
 ## Implementation status
 
-**NO PRODUCT CODE**
+**NO PRODUCT MVP CODE**
 
-Gate 2 PoC remains blocked until Gate 1B and Gate 1C are Architect-accepted.
+Gate 2 remains blocked until Gate 1C is ChatGPT Architect-accepted.
