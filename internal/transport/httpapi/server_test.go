@@ -33,9 +33,9 @@ func TestHealthAndReadiness(t *testing.T) {
 	if code, _ := get(t, srv, "/readyz"); code != http.StatusOK {
 		t.Fatalf("/readyz must be 200 after migrate, got %d", code)
 	}
-	// /v1 is not implemented until P6.
-	if code, _ := get(t, srv, "/v1/roots"); code != http.StatusNotImplemented {
-		t.Fatalf("/v1 must be 501 at this stage, got %d", code)
+	// /v1 read transport is available (Gate 3 P6).
+	if code, _ := get(t, srv, "/v1/roots"); code != http.StatusOK {
+		t.Fatalf("/v1/roots must be 200, got %d", code)
 	}
 }
 

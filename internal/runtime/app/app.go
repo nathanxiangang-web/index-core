@@ -6,7 +6,9 @@ package app
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os/signal"
@@ -14,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/nathanxiangang-web/index-core/internal/runtime/config"
+	"github.com/nathanxiangang-web/index-core/internal/runtime/scan"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/version"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/worker"
 	"github.com/nathanxiangang-web/index-core/internal/store/postgres"
@@ -137,7 +140,39 @@ func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 }
 
-// Scan implements the rclone-driven scan orchestration (Gate 3 P5).
-func Scan(ctx context.Context, cfg config.Config, logger *slog.Logger, args []string) error {
-	return errors.New("scan is implemented in Gate 3 P5")
+// Scan implements `indexcore scan --root <root_id>` (Gate 3 P5): run the collector,
+// persist DRAFT->SUBMITTED, then let the Kernel Coordinator reconcile.
+func Scan(ctx context.Context, base config.Config, logger *slog.Logger, args []string) error {
+	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	cfg := base
+	cfg.RegisterFlags(fs)
+	rootID := fs.String("root", "", "root UUID")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if *rootID == "" {
+		return errors.New("scan: --root is required")
+	}
+	pool, err := postgres.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer pool.Close()
+	if err := pool.Ping(ctx); err != nil {
+		return fmt.Errorf("ping database: %w", err)
+	}
+	res, err := scan.New(postgres.New(pool), cfg.RclonePath, cfg.ScanTimeout, logger).Scan(ctx, *rootID)
+	if err != nil {
+		return err
+	}
+	writeJSON(map[string]any{
+		"root_id": *rootID, "snapshot_id": res.SnapshotID,
+		"status": string(res.Outcome.Status), "snapshot_lifecycle": string(res.Outcome.SnapshotLifecycle),
+		"generation": res.Outcome.Generation, "applied_generation": res.Outcome.AppliedGeneration,
+	})
+	return nil
 }
