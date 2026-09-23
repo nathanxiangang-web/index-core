@@ -10,14 +10,16 @@ Execution owner: **none currently**
 
 Status:
 
-**ARCHITECTURE PLANNING ACTIVE / NO IMPLEMENTATION AUTHORIZED**
+**DISCOVERY ACTIVE / NO IMPLEMENTATION AUTHORIZED**
 
 Current architecture planning:
 
-- Issue #57 — Provider-native delta / provider cursor / dirty-scope incremental ingestion
+- Issue #57 — incremental architecture umbrella
+- Issue #59 — active Change Discovery capability research
 - Blueprint: `docs/architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md`
+- Research report: `docs/research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md`
 
-Worker execution remains **NONE** until the incremental blueprint is Architect-accepted and a bounded implementation contract is opened.
+Research execution is authorized. Production implementation remains **NONE** until Issue #59 is complete and the Architect explicitly selects a strategy.
 
 Accepted Gate-4 merge commits:
 
@@ -81,29 +83,31 @@ CloudSite 1.0 remains **Legacy / Frozen Product**.
 
 This is a separate IndexCore infrastructure extension and does **not** consume or authorize Gate 5.
 
-Planning target:
+Current task is capability discovery, not solution implementation.
+
+Compare:
 
 ```text
-Provider
-   ↓
-provider cursor / native change feed
-   ↓
-durable incremental batch
-   ↓
-existing Kernel safety / identity / reconcile
-   ↓
-Canonical Inventory + Journal
+Mutation Hint
+Native Delta / Provider Cursor
+Scoped Refresh through OpenList/AList
+Adaptive Polling
+Hybrid
+Full Scan fallback
 ```
 
-The first recommended implementation phase is **additive incremental only**:
+Primary question:
 
-- positive create/update/move observations may reuse the existing Snapshot/Kernel path;
-- provider delete events become verification/dirty-scope work, not immediate canonical deletion;
-- cursor gaps/expiry/reset force full-resync fallback;
-- existing full `scan` behavior remains available and unchanged;
-- proposed new `sync` path prefers incremental when safe.
+> Can IndexCore discover real cloud-drive changes materially earlier than normal
+> AList/OpenList cache refresh, with small controlled provider requests, without
+> rebuilding mature provider drivers?
 
-Implementation is **NOT AUTHORIZED** yet. The Architect must first accept Issue #57's blueprint and open an execution contract.
+Research must settle 115/OpenList/AList/rclone capability, request amplification,
+cache behavior, rate-limit/account risk, large-directory behavior, and realistic
+latency targets.
+
+Implementation is **NOT AUTHORIZED**. After Issue #59's report, the Architect may
+choose STOP, one prototype path, a hybrid, or full-scan-only.
 
 ## Next product blueprint phase
 
