@@ -44,6 +44,10 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
+**IndexCore Core Development — COMPLETE for accepted Alpha scope**
+
+Operating mode: **Stable Alpha Foundation / Maintenance**
+
 **Gate 4 — Reference Consumer Integration — CLOSED**
 
 Gate 1C, Gate 2, Gate 3, and Gate 4 are **CLOSED / ARCHITECT_ACCEPTED**.
@@ -59,6 +63,10 @@ Gate 4 final accepted artifacts:
 Gate 4 proved that a brand-new application can consume IndexCore through the
 server-side read-only `/v1` Query Contract without depending on IndexCore
 internals, PostgreSQL, AList/OpenList, rclone, or CloudSite architecture.
+
+Current operator/integrator documentation starts at `README.md` and `docs/README.md`.
+The accepted core should now be treated as a maintained infrastructure component,
+not an open-ended feature-development branch.
 
 CloudSite 1.0 remains **Legacy / Frozen Product**.
 
@@ -300,6 +308,8 @@ All six Gate 1C deliverables are delivered, Architect-accepted, and frozen:
 - dirty scope / true incremental
 
 ## Implementation status
+
+**CORE DEVELOPMENT STATUS — COMPLETE (ACCEPTED ALPHA SCOPE)**
 
 **GATE 4 REFERENCE CONSUMER INTEGRATION — CLOSED**
 
