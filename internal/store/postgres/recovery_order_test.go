@@ -87,8 +87,10 @@ func TestSingleUnadmittedSubmittedResolved(t *testing.T) {
 	}
 }
 
-// G3-R2.1: the atomic create+admit path leaves no SUBMITTED-but-unadmitted state.
-func TestCreateSubmittedSnapshotAndAdmitIsAtomic(t *testing.T) {
+// G3-R2.1: the split Stage-1 path (DRAFT persisted WITHOUT the root lock, then a
+// short DRAFT->SUBMITTED + admission transaction) leaves no SUBMITTED-but-
+// unadmitted state, while a DRAFT-only crash is not executable.
+func TestSplitStage1LeavesNoUnadmittedSubmitted(t *testing.T) {
 	st, ctx := newStore(t)
 	const rootID = "a4000000-0000-0000-0000-000000000001"
 	seedRootAndPolicy(t, st, ctx, rootID)
@@ -96,20 +98,67 @@ func TestCreateSubmittedSnapshotAndAdmitIsAtomic(t *testing.T) {
 	fresh := domain.FreshDirect
 	strong := domain.StrongFailureVisibility
 	count := int64(0)
-	seq, err := st.CreateSubmittedSnapshotAndAdmit(ctx, domain.Snapshot{
+	snap := domain.Snapshot{
 		SnapshotID: snapID, RootID: rootID, Provenance: []byte(`{}`), ObservedAt: time.Now().UTC(),
 		TraversalStatus: domain.TraversalSuccess, SkippedScopesKnownEmpty: true,
 		FreshnessEvidence: &fresh, CollectorCompletenessAssurance: &strong,
 		CompletenessFlag: domain.CompletenessFlagComplete, LifecycleState: domain.SnapshotDraft, EntryCount: &count,
-	}, nil)
+	}
+	if err := st.CreateDraftSnapshot(ctx, snap, nil); err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+	// A persisted DRAFT is inert: it is not recoverable as unadmitted SUBMITTED work.
+	resolved, ambiguous, err := st.ResolveUnadmittedSubmittedForRoot(ctx, rootID)
 	if err != nil {
-		t.Fatalf("create+admit: %v", err)
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolved != 0 || ambiguous {
+		t.Fatalf("DRAFT must not be recovered as unadmitted SUBMITTED, got resolved=%d ambiguous=%v", resolved, ambiguous)
+	}
+	seq, err := st.SubmitAndAdmitSnapshot(ctx, rootID, snapID)
+	if err != nil {
+		t.Fatalf("submit+admit: %v", err)
 	}
 	if seq != 1 {
 		t.Fatalf("first admission_seq must be 1, got %d", seq)
 	}
 	unadmitted, _ := st.UnadmittedSubmittedByRoot(ctx)
 	if len(unadmitted) != 0 {
-		t.Fatalf("atomic create+admit must leave no unadmitted SUBMITTED state, got %v", unadmitted)
+		t.Fatalf("split Stage-1 must leave no unadmitted SUBMITTED state, got %v", unadmitted)
+	}
+}
+
+// G3-R4(2): root-scoped recovery used by `scan --root A` must never admit
+// stranded SUBMITTED work belonging to another root.
+func TestRootScopedRecoveryDoesNotTouchOtherRoots(t *testing.T) {
+	st, ctx := newStore(t)
+	const rootA = "a9000000-0000-0000-0000-00000000000a"
+	const rootB = "a9000000-0000-0000-0000-00000000000b"
+	seedRootAndPolicy(t, st, ctx, rootA)
+	seedRootAndPolicy(t, st, ctx, rootB)
+	snapB := "a9000000-0000-0000-0000-0000000000b1"
+	seedSubmittedNoAdmission(t, st, ctx, rootB, snapB)
+
+	// `scan --root A` resolves only A; B is left untouched.
+	resolved, ambiguous, err := st.ResolveUnadmittedSubmittedForRoot(ctx, rootA)
+	if err != nil {
+		t.Fatalf("resolve A: %v", err)
+	}
+	if resolved != 0 || ambiguous {
+		t.Fatalf("root A has no stranded work, got resolved=%d ambiguous=%v", resolved, ambiguous)
+	}
+	var admissionsB int
+	_ = st.Pool().QueryRow(ctx, `SELECT count(*) FROM index_admission WHERE root_id=$1::uuid`, rootB).Scan(&admissionsB)
+	if admissionsB != 0 {
+		t.Fatalf("root-scoped recovery must not admit another root's work, got %d", admissionsB)
+	}
+
+	// The owning root still recovers its own single stranded snapshot.
+	resolved, ambiguous, err = st.ResolveUnadmittedSubmittedForRoot(ctx, rootB)
+	if err != nil {
+		t.Fatalf("resolve B: %v", err)
+	}
+	if resolved != 1 || ambiguous {
+		t.Fatalf("root B single candidate must resolve, got resolved=%d ambiguous=%v", resolved, ambiguous)
 	}
 }

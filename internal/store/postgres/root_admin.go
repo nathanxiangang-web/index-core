@@ -185,8 +185,13 @@ type AdapterConfig struct {
 	Config        []byte // jsonb
 }
 
-// UpsertAdapterConfig persists the root's collector adapter binding.
+// UpsertAdapterConfig persists the root's collector adapter binding. It enforces
+// the write boundary that plaintext provider secrets are never stored: secrets
+// must be environment-variable references (G3-R2.8).
 func (s *Store) UpsertAdapterConfig(ctx context.Context, rootID string, a AdapterConfig) error {
+	if err := ValidateAdapterConfigSecretFree(a.Config); err != nil {
+		return err
+	}
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO index_root_adapter_config(root_id, collector_kind, config, updated_at)
 		 VALUES ($1::uuid, $2, $3, now())

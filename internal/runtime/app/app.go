@@ -128,11 +128,14 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 	}()
 	logger.Info("acquired single-writer ownership")
 
+	workerCtx, cancelWorker := context.WithCancel(ctx)
+	defer cancelWorker()
+
 	var ready atomic.Bool
 	workerDone := make(chan error, 1)
 	go func() {
 		ready.Store(true)
-		workerDone <- runWorker(ctx)
+		workerDone <- runWorker(workerCtx)
 	}()
 
 	srv := httpapi.New(httpapi.Deps{
@@ -155,32 +158,43 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 
 	select {
 	case err := <-errCh:
-		waitWorker(workerDone, cfg.ShutdownTimeout, logger)
+		cancelWorker()
+		joinWorker(workerDone, cfg.ShutdownTimeout, logger)
 		if err != nil {
 			return fmt.Errorf("http server: %w", err)
 		}
 		return nil
 	case <-ctx.Done():
 		logger.Info("shutting down", "timeout", cfg.ShutdownTimeout.String())
+		cancelWorker()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancel()
 		herr := srv.Shutdown(shutdownCtx)
-		waitWorker(workerDone, cfg.ShutdownTimeout, logger)
+		joinWorker(workerDone, cfg.ShutdownTimeout, logger)
 		return herr
 	}
 }
 
-// waitWorker joins the worker goroutine with a bounded wait, so the writer lock
-// (released by the caller's defer, i.e. after this returns) is held until worker
-// orchestration has stopped.
-func waitWorker(done <-chan error, timeout time.Duration, logger *slog.Logger) {
+// joinWorker waits for the worker goroutine to stop. The caller releases the
+// writer lock only after this returns, so the lock is held until worker
+// orchestration has actually stopped. If the worker is still running after the
+// graceful timeout it does NOT release early: it keeps holding the writer lock
+// and keeps waiting (the worker was already asked to cancel), so another daemon
+// can never acquire single-writer ownership while a worker is alive (G3-R2.4).
+func joinWorker(done <-chan error, timeout time.Duration, logger *slog.Logger) {
 	select {
 	case err := <-done:
 		if err != nil {
 			logger.Warn("worker exited with error", "error_class", "worker")
 		}
+		return
 	case <-time.After(timeout):
-		logger.Error("forced shutdown: worker did not stop within shutdown timeout", "shutdown_timeout", timeout.String())
+		logger.Error("shutdown timeout: worker still running; holding the writer lock until it stops",
+			"shutdown_timeout", timeout.String())
+	}
+	err := <-done
+	if err != nil {
+		logger.Warn("worker exited with error", "error_class", "worker")
 	}
 }
 

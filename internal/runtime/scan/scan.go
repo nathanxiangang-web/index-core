@@ -125,17 +125,16 @@ func (s *Service) Scan(ctx context.Context, rootID string) (Result, error) {
 	}
 	coord := postgres.NewCoordinator(s.store, cfg)
 
-	// One-shot CLI must also resolve legacy/fault-stranded SUBMITTED work for this
-	// root before collecting later work (G3-R2.2). Multiple ambiguous candidates
-	// fail closed; recovery never orders by DB timestamps (G3-R2.1).
-	resolved, ambiguous, rerr := s.store.ResolveUnadmittedSubmitted(ctx)
+	// One-shot CLI resolves only THIS root's legacy/fault-stranded SUBMITTED work
+	// before collecting later work (G3-R2.2). Recovery is root-scoped: `scan
+	// --root A` must never admit work for other roots. Multiple ambiguous
+	// candidates fail closed; recovery never orders by DB timestamps (G3-R2.1).
+	resolved, ambiguous, rerr := s.store.ResolveUnadmittedSubmittedForRoot(ctx, rootID)
 	if rerr != nil {
 		return Result{}, fmt.Errorf("resolve stranded snapshots: %w", rerr)
 	}
-	for _, r := range ambiguous {
-		if r == rootID {
-			return Result{}, fmt.Errorf("ambiguous unadmitted SUBMITTED snapshots for root %s; refusing to guess order", rootID)
-		}
+	if ambiguous {
+		return Result{}, fmt.Errorf("ambiguous unadmitted SUBMITTED snapshots for root %s; refusing to guess order", rootID)
 	}
 	if resolved > 0 {
 		s.logger.Info("scan: recovered stranded submitted snapshots", "root_id", rootID, "resolved", resolved)
@@ -145,11 +144,16 @@ func (s *Service) Scan(ctx context.Context, rootID string) (Result, error) {
 		return Result{}, fmt.Errorf("drain existing pending head: %w", err)
 	}
 
-	// Atomic DRAFT->SUBMITTED + admission_seq + PENDING (G3-R2.1): admission order
-	// is authoritative and no ambiguous unadmitted-SUBMITTED state is created.
+	// Split Stage-1 (G3-R2.1): persist DRAFT + entries WITHOUT the per-root lock so
+	// a large scan never blocks the root's admission lane, then a SHORT transaction
+	// moves DRAFT -> SUBMITTED + allocates admission_seq + INSERTs PENDING. A crash
+	// between the two leaves only an inert DRAFT (no unadmitted SUBMITTED state).
 	entries := toEntries(raw)
-	if _, err := s.store.CreateSubmittedSnapshotAndAdmit(ctx, snap, entries); err != nil {
-		return Result{}, fmt.Errorf("persist submitted snapshot: %w", err)
+	if err := s.store.CreateDraftSnapshot(ctx, snap, entries); err != nil {
+		return Result{}, fmt.Errorf("persist draft snapshot: %w", err)
+	}
+	if _, err := s.store.SubmitAndAdmitSnapshot(ctx, rootID, snapID); err != nil {
+		return Result{}, fmt.Errorf("submit and admit snapshot: %w", err)
 	}
 
 	out, err := coord.ProcessSnapshot(ctx, rootID, snapID)
@@ -181,11 +185,12 @@ func (s *Service) Scan(ctx context.Context, rootID string) (Result, error) {
 		return Result{SnapshotID: snapID, Outcome: out}, fmt.Errorf("reconcile: %w", err)
 	}
 	// The Collector contract represents source/process failure as
-	// TraversalStatus=FAILED with err=nil so the failed observation is durable and
-	// Kernel-evaluated. The FAILED Snapshot + REJECTED audit trail are preserved,
-	// but the CLI must still report operational failure (G3-R2.3). PARTIAL /
-	// SUSPICIOUS additive-safe successes are NOT source failures.
-	if raw.TraversalStatus != domain.TraversalSuccess {
+	// TraversalStatus=FAILED/INTERRUPTED with err=nil so the failed observation is
+	// durable and Kernel-evaluated. The failed Snapshot + REJECTED audit trail are
+	// preserved, but the CLI must still report operational failure (G3-R2.3).
+	// PARTIAL is a legal additive-safe input (the Kernel still evaluates it) and is
+	// NOT a source failure.
+	if raw.TraversalStatus.IsSourceFailure() {
 		return Result{SnapshotID: snapID, Outcome: out}, fmt.Errorf("%w: traversal_status=%s", ErrSourceFailed, raw.TraversalStatus)
 	}
 	if out.Status == domain.AdmissionRejected {

@@ -4,10 +4,13 @@
 > Stack: **Go 1.27.1 + PostgreSQL 18.6 + pgx/v5 + rclone v1.75.1**.
 > Rule: PASS is claimed only where tests actually exercise the behavior.
 
-## Status template (Issue #47)
+## Status template (Issue #47) — AUTHORITATIVE
+
+> This is the single authoritative status block for this report. Per-round rework
+> history is appended below for traceability; it does not supersede this block.
 
 ```
-STATUS: READY_FOR_ARCH_REVIEW — GATE 3 STANDALONE ALPHA (Round 2)
+STATUS: READY_FOR_ARCH_REVIEW — GATE 3 STANDALONE ALPHA (Round 4)
 
 RUNTIME: PASS
 CONFIG_STARTUP: PASS
@@ -39,8 +42,8 @@ MULTI_DAEMON_HA: NONE
 | P1 | env+flags config, fail-fast, loopback default | IMPLEMENTED + TESTED | `internal/runtime/config` (config_test) |
 | P2 | explicit `migrate`; `serve` verifies schema (no auto-migrate); `/healthz` `/readyz` | IMPLEMENTED + TESTED | `postgres.SchemaStatus`, `httpapi` (server_test); CLI smoke |
 | P3 | root create/list/config/lifecycle via frozen generation+journal | IMPLEMENTED + TESTED | `root_admin.go` (root_admin_test), `indexcore root ...` |
-| P4 | worker/recovery: FIFO head, resume same admission_seq, bounded concurrency, backoff, graceful stop | IMPLEMENTED + TESTED | `internal/runtime/worker` (worker_test), `AdmitOrResumeSnapshot`/`ProcessHead` |
-| P5 | rclone scan: DRAFT→SUBMITTED→Coordinator; additive-safe | IMPLEMENTED + TESTED | `internal/runtime/scan` (scan_test, real rclone) |
+| P4 | worker/recovery: root-scoped recovery for one-shot scan, FIFO head, resume same admission_seq, bounded concurrency, backoff, graceful stop that holds the writer lock until the worker stops | IMPLEMENTED + TESTED | `internal/runtime/worker` (worker_test), `AdmitOrResumeSnapshot`/`ProcessHead`, `ResolveUnadmittedSubmittedForRoot` |
+| P5 | rclone scan: persist DRAFT (no root lock) → short SUBMITTED + admission → Coordinator; additive-safe; PARTIAL is not a source failure | IMPLEMENTED + TESTED | `internal/runtime/scan` (scan_test, real rclone), `CreateDraftSnapshot`/`SubmitAndAdmitSnapshot` |
 | P6 | read-only HTTP /v1 (Q1–Q9), generation cursors, stable errors, no mutation | IMPLEMENTED + TESTED | `internal/transport/httpapi` (v1_test) |
 | P7 | `log/slog` structured fields; no secrets | IMPLEMENTED + TESTED | scan/transport logging (CLI smoke output) |
 | P8 | ≥20k resources on real PostgreSQL, reproducible baseline | IMPLEMENTED + TESTED | `internal/runtime/scale` (gated harness) |
@@ -168,27 +171,20 @@ COMPOSE SMOKE OK
 (Note: postgres:18 requires the data volume mounted at `/var/lib/postgresql`; the
 Compose file was corrected accordingly during this smoke run.)
 
-## Round 3 status template
+# Round 4 rework (PR #49 Round-3 review: runtime transaction boundary + final safety semantics)
 
-```
-STATUS: READY_FOR_ARCH_REVIEW — GATE 3 STANDALONE ALPHA (Round 3)
+| Item | Fix | Where |
+|------|-----|-------|
+| **R4-1 Stage-1 split** | Stage-1 is split into (a) `CreateDraftSnapshot`: persist DRAFT + entries WITHOUT the per-root `FOR UPDATE` lock, and (b) `SubmitAndAdmitSnapshot`: a SHORT transaction that moves DRAFT -> SUBMITTED, allocates `admission_seq` and INSERTs PENDING under the root lock. A 20k-entry scan no longer holds the root lock while writing entries; a crash between the two leaves only an inert DRAFT. | `snapshot_create_admit.go`, `scan.go`, `recovery_order_test.go` |
+| **R4-2 root-scoped recovery** | One-shot `scan --root A` now uses `ResolveUnadmittedSubmittedForRoot`, so it never admits stranded work for roots B/C. The daemon worker keeps the whole-database sweep. | `recovery.go`, `scan.go`, `recovery_order_test.go` |
+| **R4-3 shutdown lock hold** | On graceful-shutdown timeout the writer lock is NOT released early: `runServe` keeps holding it and keeps waiting until the worker goroutine actually stops. The worker is also cancelled on the HTTP-early-exit path. | `app.go`, `shutdown_test.go` |
+| **R4-4 PARTIAL semantics** | `TraversalStatus=PARTIAL` is a legal additive-safe input and is no longer classified as a source failure; only `FAILED`/`INTERRUPTED` cause a non-zero CLI exit. PARTIAL Snapshots are Kernel-evaluated (`acceptance_state=PARTIAL`) and are never rejected nor used to remove resources. | `domain/enums.go`, `scan.go`, `enums_test.go`, `scan_failure_test.go` |
+| **R4-5 secret write boundary** | `UpsertAdapterConfig` (the `root adapter set --config` write boundary) rejects plaintext `password`/`token`/`secret`/`credential`/`api_key` fields; only environment references (`*_env`) are accepted. | `adapter_config_validate.go`, `root_admin.go`, `adapter_config_validate_test.go` |
+| **R4-6 real fault regressions** | The two fault regressions now drive the real runtime persistence API instead of hand-built DB rows: `CreateDraftSnapshot` -> crash before finalize (DRAFT is inert, no admission), and `CreateDraftSnapshot` + `SubmitAndAdmitSnapshot` -> crash before Stage-2 (durable PENDING resumes with the SAME `admission_seq`). | `scan_failure_test.go` |
 
-RUNTIME: PASS
-CONFIG_STARTUP: PASS
-ROOT_ADMIN: PASS
-WORKER_RECOVERY: PASS
-RCLONE_SCAN_PATH: PASS
-ALIST_OPENLIST_REAL_SOURCE: PASS
-QUERY_HTTP_V1: PASS
-OBSERVABILITY: PASS
-SCALE_20K: PASS
-PACKAGING: PASS
-E2E_ALPHA: PASS
-GATE2_REGRESSION: PASS
+## Round 4 test evidence
 
-FROZEN_CONTRACT_CHANGES: NONE
-```
-
-Tests: real PostgreSQL 18.6 + real rclone v1.75.1 + real AList instance; clean-volume
-Compose smoke; `go vet` / `gofmt` clean; full Gate-2 regression green.
+Real PostgreSQL 18.6 + real rclone v1.75.1 + real `xhofe/alist` instance (3 entries,
+3 HTTP-visible resources); full suite green; `go vet` / `gofmt` clean; no frozen
+Gate 1B/1C semantics changed.
 
