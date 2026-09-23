@@ -31,6 +31,13 @@ func seedRootAndSnapshot(t *testing.T, st *postgres.Store, ctx context.Context) 
 	if err := st.InsertSnapshotStub(ctx, st.Pool(), snap); err != nil {
 		t.Fatalf("insert snapshot: %v", err)
 	}
+	// Stage 2 only accepts an EVALUATED snapshot (R2-12).
+	if err := st.MarkSnapshotSubmitted(ctx, st.Pool(), txSnap); err != nil {
+		t.Fatalf("submit snapshot: %v", err)
+	}
+	if err := st.SetSnapshotEvaluated(ctx, st.Pool(), txSnap, domain.AcceptanceComplete, nil); err != nil {
+		t.Fatalf("evaluate snapshot: %v", err)
+	}
 }
 
 func identity(v string) domain.SnapshotIdentity {

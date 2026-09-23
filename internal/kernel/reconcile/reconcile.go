@@ -11,8 +11,8 @@ import (
 // acceptance is the Kernel-owned verdict from P3; only COMPLETE may advance
 // removal evidence and authorize destructive removal (Gate 1B INV-004).
 // snapshotID is the accepted Snapshot being reconciled; it is required to prove
-// removal-confirmation independence (V2c, B2). A FAILED snapshot must be rejected
-// by the caller before calling this.
+// removal-confirmation independence and to avoid double-counting one observation
+// (V2c, R2-7). A FAILED snapshot must be rejected by the caller before calling this.
 func Reconcile(prior []PriorResource, entries []domain.SnapshotEntry, acceptance domain.AcceptanceState, cfg Config, now time.Time, snapshotID string) Result {
 	var res Result
 	if acceptance == domain.AcceptanceFailed {
@@ -43,16 +43,18 @@ func Reconcile(prior []PriorResource, entries []domain.SnapshotEntry, acceptance
 	}
 
 	// R9: a PRESENT resource not observed. Removal evidence advances only on a
-	// COMPLETE snapshot, and confirmation requires a later, independently
-	// admitted Snapshot (V2c, B2): the first MISSING observation never self-confirms.
+	// COMPLETE snapshot, and confirmation requires a later, independently admitted
+	// Snapshot (V2c). Evidence-only transitions do NOT advance the generation (R2-3).
 	if acceptance == domain.AcceptanceComplete {
 		for i := range prior {
 			p := &prior[i]
 			if !p.isPresent() || observed[p.ResourceID] {
 				continue
 			}
-			res.MutatesCanonical = true
 			tr := missingTransition(p, cfg, now, snapshotID)
+			if tr.Kind.GenerationProducing() {
+				res.MutatesCanonical = true
+			}
 			if tr.Kind == KindConfirmRemoved {
 				res.Counts.Removed++
 			} else {
@@ -73,38 +75,49 @@ func missingTransition(p *PriorResource, cfg Config, now time.Time, snapshotID s
 
 	switch {
 	case p.MissingFirstSnapshotID == nil || *p.MissingFirstSnapshotID == "":
-		// First qualifying absence: record MISSING evidence only. It cannot
-		// validate itself, so no candidate/confirmation here.
 		ms := now
-		sid := snapshotID
+		first := snapshotID
 		tr.MissingSince = &ms
 		tr.ConsecutiveMissing = 1
-		tr.MissingFirstSnapshotID = &sid
+		tr.MissingFirstSnapshotID = &first
+		tr.MissingLastSnapshotID = &first
 		tr.Reason = "first MISSING observation (evidence only)"
 		return tr
 
 	case *p.MissingFirstSnapshotID == snapshotID:
-		// Re-admission/replay of the same Snapshot is not independent confirmation.
 		tr.MissingSince = p.MissingSince
 		tr.ConsecutiveMissing = p.ConsecutiveCompleteMissing
 		tr.MissingFirstSnapshotID = p.MissingFirstSnapshotID
+		tr.MissingLastSnapshotID = p.MissingLastSnapshotID
 		tr.Reason = "same-snapshot re-admission is not independent confirmation"
+		return tr
+
+	case p.MissingLastSnapshotID != nil && *p.MissingLastSnapshotID == snapshotID:
+		// This exact observation was already counted; do not double-count (R2-7).
+		tr.MissingSince = p.MissingSince
+		tr.ConsecutiveMissing = p.ConsecutiveCompleteMissing
+		tr.MissingFirstSnapshotID = p.MissingFirstSnapshotID
+		tr.MissingLastSnapshotID = p.MissingLastSnapshotID
+		tr.Reason = "observation already counted; not an independent confirmation"
 		return tr
 
 	default:
 		consec := p.ConsecutiveCompleteMissing + 1
-		independent := int(consec) - 1
 		ms := p.MissingSince
 		if ms == nil {
 			t := now
 			ms = &t
 		}
+		last := snapshotID
 		tr.MissingSince = ms
 		tr.ConsecutiveMissing = consec
 		tr.MissingFirstSnapshotID = p.MissingFirstSnapshotID
-		if independent >= cfg.minIndependent() && int(consec) >= cfg.minConsecutive() {
+		tr.MissingLastSnapshotID = &last
+		if int(consec) >= cfg.minConsecutive() {
 			tr.Kind = KindRemovalCandidate
-			if cfg.RemovalGracePeriod <= 0 || now.Sub(*ms) >= cfg.RemovalGracePeriod {
+			// effectiveGrace >= MoveRecognitionHorizon, so a move-recognizable
+			// resource can never be confirmed removed (R2-8).
+			if cfg.effectiveGrace() <= 0 || now.Sub(*ms) >= cfg.effectiveGrace() {
 				tr.Kind = KindConfirmRemoved
 			}
 		}
@@ -113,11 +126,11 @@ func missingTransition(p *PriorResource, cfg Config, now time.Time, snapshotID s
 }
 
 // applyMatched decides UNCHANGED vs UPDATE vs RENAME/MOVE, resets removal
-// evidence when a MISSING resource reappears (B2), and emits the ordered pair
-// [path-change, update] for a RENAME/MOVE with a concurrent attribute change.
+// evidence when a MISSING resource reappears (evidence-only), and emits the
+// ordered pair [path-change, update] for a RENAME/MOVE with an attribute change.
 func applyMatched(res *Result, p *PriorResource, e *domain.SnapshotEntry) {
 	if p.hasMissingEvidence() || p.MissingSince != nil || p.ConsecutiveCompleteMissing > 0 {
-		res.MutatesCanonical = true
+		// Evidence-only: no generation advance (R2-3).
 		res.Transitions = append(res.Transitions,
 			Transition{Kind: KindResetRemovalEvidence, ResourceID: p.ResourceID, Prior: p,
 				Reason: "observed again; reset removal evidence"})

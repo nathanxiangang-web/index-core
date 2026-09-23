@@ -10,17 +10,13 @@ import (
 )
 
 // The final IO3 digest is Kernel-owned: Namespace is the canonicalization
-// rule-set id and Version is its version. They are NOT adapter-declared
-// (doc A Sec 3.8, doc E Sec 2.4.3).
+// rule-set id and Version is its version (doc A Sec 3.8, doc E Sec 2.4.3).
 const (
 	DigestNamespace = "kernel.index-core/io3"
-	DigestVersion   = "v1"
+	DigestVersion   = "v2"
 )
 
 // Entry is a normalized SnapshotEntry field set that contributes to the digest.
-// Every field that can alter a reconcile decision is included (B4): hash and
-// hash_algorithm (R3 compares both), provider object id/scope and identity
-// assurance (R1 eligibility), and content_type (UPDATE semantics).
 type Entry struct {
 	ParentRef             string
 	Name                  string
@@ -36,19 +32,22 @@ type Entry struct {
 }
 
 // Evidence is the normalized, reconcile-decision-relevant evidence included in
-// the digest. Wall-clock, admission timing and DB timing MUST NOT appear here.
+// the digest. RemovalDecisionContext is a Kernel-derived canonicalization of the
+// per-resource removal-decision state (first absence vs independent confirmation
+// vs reappearance reset) so semantically identical raw entry sets that drive
+// different removal decisions cannot collapse into one IO3 identity (R2-4).
+// Wall-clock, admission, and DB timing MUST NOT appear here.
 type Evidence struct {
 	TraversalStatus          string
 	ErrorSummaryCanonical    string
-	SkippedScopesCanonical   string // "UNKNOWN" | "CONFIRMED_EMPTY" | canonical sorted list
+	SkippedScopesCanonical   string
 	Freshness                string
 	Assurance                string
-	ScopeShrinkCorroboration string // NONE | CORROBORATED | CONTRADICTED
+	ScopeShrinkCorroboration string
+	RemovalDecisionContext   string
 }
 
-// FinalDigest computes the Kernel-finalized evaluated-Snapshot IO3 identity as a
-// DETERMINISTIC_DIGEST. Two evaluated snapshots that can drive different
-// reconcile decisions MUST NOT collapse into the same digest (B4).
+// FinalDigest computes the Kernel-finalized evaluated-Snapshot IO3 identity.
 func FinalDigest(entries []Entry, ev Evidence) domain.SnapshotIdentity {
 	norm := make([]Entry, len(entries))
 	copy(norm, entries)
@@ -80,6 +79,7 @@ func FinalDigest(entries []Entry, ev Evidence) domain.SnapshotIdentity {
 	writeTag(h, ev.Freshness)
 	writeTag(h, ev.Assurance)
 	writeTag(h, ev.ScopeShrinkCorroboration)
+	writeTag(h, ev.RemovalDecisionContext)
 
 	return domain.SnapshotIdentity{
 		Kind:      domain.IdentityDeterministicDigest,
@@ -89,14 +89,69 @@ func FinalDigest(entries []Entry, ev Evidence) domain.SnapshotIdentity {
 	}
 }
 
+// lessEntry is a TOTAL canonical order over every digested entry field, so the
+// digest is genuinely order-independent even for entries that tie on
+// parent/name/hash (R2-10).
 func lessEntry(a, b Entry) bool {
-	if a.ParentRef != b.ParentRef {
-		return a.ParentRef < b.ParentRef
+	if c := cmpStr(a.ParentRef, b.ParentRef); c != 0 {
+		return c < 0
 	}
-	if a.Name != b.Name {
-		return a.Name < b.Name
+	if c := cmpStr(a.Name, b.Name); c != 0 {
+		return c < 0
 	}
-	return a.ContentHash < b.ContentHash
+	if a.IsDir != b.IsDir {
+		return !a.IsDir
+	}
+	if c := cmpOptInt(a.Size, b.Size); c != 0 {
+		return c < 0
+	}
+	if c := cmpOptInt(a.MTimeUnixNano, b.MTimeUnixNano); c != 0 {
+		return c < 0
+	}
+	if c := cmpStr(a.ContentHash, b.ContentHash); c != 0 {
+		return c < 0
+	}
+	if c := cmpStr(a.HashAlgorithm, b.HashAlgorithm); c != 0 {
+		return c < 0
+	}
+	if c := cmpStr(a.ContentType, b.ContentType); c != 0 {
+		return c < 0
+	}
+	if c := cmpStr(a.ProviderObjectID, b.ProviderObjectID); c != 0 {
+		return c < 0
+	}
+	if c := cmpStr(a.ProviderObjectIDScope, b.ProviderObjectIDScope); c != 0 {
+		return c < 0
+	}
+	return cmpStr(a.ProviderAssurance, b.ProviderAssurance) < 0
+}
+
+func cmpStr(a, b string) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func cmpOptInt(a, b *int64) int {
+	switch {
+	case a == nil && b == nil:
+		return 0
+	case a == nil:
+		return -1
+	case b == nil:
+		return 1
+	case *a < *b:
+		return -1
+	case *a > *b:
+		return 1
+	default:
+		return 0
+	}
 }
 
 func writeTag(h interface{ Write([]byte) (int, error) }, s string) {

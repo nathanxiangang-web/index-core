@@ -36,10 +36,12 @@ type CanonicalResource struct {
 	MissingSince               *time.Time
 	ConsecutiveCompleteMissing int32
 	// MissingFirstSnapshotID records the accepted Snapshot that first produced
-	// MISSING evidence. It is a Store-internal realization used to prove that a
-	// later, independently admitted Snapshot confirmed removal (V2c); it is not
-	// part of the external Domain semantics.
+	// MISSING evidence. MissingLastSnapshotID records the most recent accepted
+	// Snapshot already counted toward the independent-confirmation count. Both are
+	// Store-internal realizations of V2c and are not part of the external Domain
+	// semantics.
 	MissingFirstSnapshotID *string
+	MissingLastSnapshotID  *string
 	CanonicalPath          *string
 	ParentResourceID       *string
 	Name                   *string

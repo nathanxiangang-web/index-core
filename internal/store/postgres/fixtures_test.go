@@ -94,7 +94,7 @@ func TestFixtureDeltaBehaviour(t *testing.T) {
 		out1, id1 := processSnapshot(t, st, ctx, "e3000000-0000-0000-0000-000000000001", v1, cfg)
 
 		insertSubmittedSnapshot(t, st, ctx, "e3000000-0000-0000-0000-000000000002", v1)
-		eval2, err := st.EvaluateSnapshot(ctx, "e3000000-0000-0000-0000-000000000002", nil)
+		eval2, err := st.EvaluateSnapshot(ctx, pipeRoot, "e3000000-0000-0000-0000-000000000002")
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}

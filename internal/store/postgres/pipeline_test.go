@@ -57,19 +57,24 @@ func int64p(v int64) *int64 { return &v }
 func processSnapshot(t *testing.T, st *postgres.Store, ctx context.Context, snapID string,
 	entries []domain.SnapshotEntry, cfg reconcile.Config) (postgres.ReconcileOutcome, domain.SnapshotIdentity) {
 	t.Helper()
-	eval, err := st.EvaluateSnapshot(ctx, snapID, nil)
-	if err != nil {
-		t.Fatalf("evaluate snapshot %s: %v", snapID, err)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("invalid config: %v", err)
 	}
+	// Stage-1 admission MUST precede evaluation so "independently admitted"
+	// is truthful (R2-5).
 	seq, err := st.AllocateAdmission(ctx, st.Pool(), pipeRoot, snapID)
 	if err != nil {
 		t.Fatalf("allocate admission: %v", err)
 	}
+	eval, err := st.EvaluateSnapshot(ctx, pipeRoot, snapID)
+	if err != nil {
+		t.Fatalf("evaluate snapshot %s: %v", snapID, err)
+	}
 	out, err := st.ReconcileHead(ctx, postgres.ReconcileInput{
 		RootID: pipeRoot, AdmissionSeq: seq, SnapshotID: snapID, Identity: eval.Identity,
-	}, func(prior []reconcile.PriorResource, _ domain.Snapshot, gen int64) (*postgres.Plan, error) {
+	}, func(prior []reconcile.PriorResource, snap domain.Snapshot, gen int64) (*postgres.Plan, error) {
 		res := reconcile.Reconcile(prior, entries, eval.Acceptance, cfg, time.Now().UTC(), snapID)
-		return st.PlanFromResult(pipeRoot, snapID, res), nil
+		return st.PlanFromResult(pipeRoot, snapID, snap.ObservedAt, res), nil
 	})
 	if err != nil {
 		t.Fatalf("reconcile %s: %v", snapID, err)
@@ -175,13 +180,12 @@ func TestPipelineRemovalIndependenceEndToEnd(t *testing.T) {
 		t.Fatalf("first MISSING must NOT remove the resource, got %d PRESENT", len(rows))
 	}
 
-	// Snapshot 3 is a later, independent snapshot. It must differ from snapshot 2
-	// in evaluated content, otherwise an identical identity at the same generation
-	// is an IO3 NOOP and would not reprocess the missing resource.
-	keeper3 := append([]domain.SnapshotEntry{}, keeper...)
-	keeper3[0] = entryWithProviderID("k1.txt", "/", "PK-k1.txt", "hk-k1-v2", 99, mt.Add(time.Hour))
-	insertSubmittedSnapshot(t, st, ctx, "c2000000-0000-0000-0000-000000000003", keeper3)
-	processSnapshot(t, st, ctx, "c2000000-0000-0000-0000-000000000003", keeper3, cfg)
+	// Snapshot 3 is a later, independent COMPLETE observation with identical
+	// provider content. It must still confirm removal: its evaluated identity
+	// differs from snapshot 2 because the Kernel-derived removal decision context
+	// differs (R2-4), not because the files changed.
+	insertSubmittedSnapshot(t, st, ctx, "c2000000-0000-0000-0000-000000000003", keeper)
+	processSnapshot(t, st, ctx, "c2000000-0000-0000-0000-000000000003", keeper, cfg)
 	if rows, _ := st.PresentResourcesAtPath(ctx, st.Pool(), pipeRoot, "/a.txt"); len(rows) != 0 {
 		t.Fatalf("independent confirmation must remove the resource, got %d PRESENT", len(rows))
 	}

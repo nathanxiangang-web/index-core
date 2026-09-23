@@ -61,6 +61,14 @@ func entryFile(name, parent, hash string, size int64, mtime time.Time) domain.Sn
 }
 
 func entryWithProvider(name, parent, provID, hash string, size int64, mtime time.Time) domain.SnapshotEntry {
+	e := entryWithProviderUnverified(name, parent, provID, hash, size, mtime)
+	stable := domain.IdentityStableWithinScope
+	e.ProviderIdentityAssurance = &stable
+	return e
+}
+
+// entryWithProviderUnverified carries a provider id but no STABLE assurance.
+func entryWithProviderUnverified(name, parent, provID, hash string, size int64, mtime time.Time) domain.SnapshotEntry {
 	e := entryFile(name, parent, hash, size, mtime)
 	e.ProviderObjectID = sp(provID)
 	e.ProviderObjectIDScope = sp("root")
@@ -243,5 +251,39 @@ func TestMovePlusUpdateOrderedPair(t *testing.T) {
 	if len(res.Transitions) != 2 ||
 		res.Transitions[0].Kind != KindMove || res.Transitions[1].Kind != KindUpdate {
 		t.Fatalf("move+update must be ordered pair [MOVE, UPDATE], got %+v", res.Transitions)
+	}
+}
+
+// R2-1: R1 fires only when the CURRENT entry declares STABLE assurance.
+func TestR1RequiresCurrentEntryAssurance(t *testing.T) {
+	prior := []PriorResource{priorWithProvider("r1", "/a.txt", "P1", "h1", 1, epoch)}
+	res := Reconcile(prior,
+		[]domain.SnapshotEntry{entryWithProviderUnverified("a.txt", "/", "P1", "h2", 5, epoch.Add(time.Hour))},
+		domain.AcceptanceComplete, Config{}, epoch, snap2)
+	if res.Counts.Updated != 0 || res.Counts.Unchanged != 0 {
+		t.Fatalf("an UNVERIFIED current id must not force an R1 MATCH, got %+v", res.Counts)
+	}
+}
+
+// R2-2: a present hash contradiction must not fall through to weak size+mtime
+// move matching.
+func TestHashContradictionDoesNotMatchMissing(t *testing.T) {
+	cfg := Config{MoveRecognitionHorizon: 4 * time.Hour, RemovalGracePeriod: 8 * time.Hour}
+	prior := []PriorResource{priorMissing("r1", "/old.txt", "h1", 1, epoch, epoch.Add(-time.Hour), snap1)}
+	res := Reconcile(prior,
+		[]domain.SnapshotEntry{entryFile("new.txt", "/", "h2", 1, epoch)},
+		domain.AcceptanceComplete, cfg, epoch, snap2)
+	if res.Counts.Moved != 0 || res.Counts.Renamed != 0 || res.Counts.Unchanged != 0 {
+		t.Fatalf("contradicting hashes must never MATCH via size+mtime, got %+v", res.Counts)
+	}
+}
+
+// R2-8: a config with grace < horizon is rejected.
+func TestConfigRejectsGraceBelowHorizon(t *testing.T) {
+	if err := (Config{RemovalGracePeriod: time.Hour, MoveRecognitionHorizon: 2 * time.Hour}).Validate(); err == nil {
+		t.Fatal("grace < horizon must be rejected")
+	}
+	if err := (Config{MinIndependentConfirmations: 2}).Validate(); err == nil {
+		t.Fatal("MinIndependentConfirmations > 1 must be rejected")
 	}
 }

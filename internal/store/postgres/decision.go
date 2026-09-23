@@ -11,11 +11,10 @@ import (
 	"github.com/nathanxiangang-web/index-core/internal/kernel/reconcile"
 )
 
-// PlanFromResult translates a pure Kernel reconcile decision into a Store Plan
-// whose Apply performs the canonical writes AND appends versioned IdentityEvidence
-// observations inside the caller's Stage-2 transaction (B3). This keeps Kernel
-// logic provider-neutral and free of pgx types.
-func (s *Store) PlanFromResult(rootID, snapshotID string, res reconcile.Result) *Plan {
+// PlanFromResult translates a pure Kernel reconcile decision into a Store Plan.
+// Apply performs canonical writes and appends IdentityEvidence observations
+// (with the Snapshot observation time, R2-9) inside the Stage-2 transaction.
+func (s *Store) PlanFromResult(rootID, snapshotID string, observedAt time.Time, res reconcile.Result) *Plan {
 	events := make([]domain.JournalEvent, 0, len(res.Transitions))
 	for _, tr := range res.Transitions {
 		et, ok := eventTypeFor(tr.Kind)
@@ -43,9 +42,8 @@ func (s *Store) PlanFromResult(rootID, snapshotID string, res reconcile.Result) 
 					return err
 				}
 			}
-			now := time.Now().UTC()
 			for _, o := range observations {
-				if err := s.AppendObservation(ctx, tx, rootID, snapshotID, o.ResourceID, o.Entry, now); err != nil {
+				if err := s.AppendObservation(ctx, tx, rootID, snapshotID, o.ResourceID, o.Entry, observedAt); err != nil {
 					return err
 				}
 			}
@@ -107,17 +105,17 @@ func (s *Store) applyTransition(ctx context.Context, tx pgx.Tx, rootID string, g
 	case reconcile.KindMissingEvidence:
 		return s.SetRemovalEvidence(ctx, tx, tr.ResourceID,
 			domain.RemovalEvidenceMissingConfirmedByComplete, tr.MissingSince, tr.ConsecutiveMissing,
-			tr.MissingFirstSnapshotID, tr.LastConfirmedGeneration)
+			tr.MissingFirstSnapshotID, tr.MissingLastSnapshotID, tr.LastConfirmedGeneration)
 
 	case reconcile.KindRemovalCandidate:
 		return s.SetRemovalEvidence(ctx, tx, tr.ResourceID,
 			domain.RemovalEvidenceCandidate, tr.MissingSince, tr.ConsecutiveMissing,
-			tr.MissingFirstSnapshotID, tr.LastConfirmedGeneration)
+			tr.MissingFirstSnapshotID, tr.MissingLastSnapshotID, tr.LastConfirmedGeneration)
 
 	case reconcile.KindConfirmRemoved:
 		if err := s.SetRemovalEvidence(ctx, tx, tr.ResourceID,
 			domain.RemovalEvidenceCandidate, tr.MissingSince, tr.ConsecutiveMissing,
-			tr.MissingFirstSnapshotID, tr.LastConfirmedGeneration); err != nil {
+			tr.MissingFirstSnapshotID, tr.MissingLastSnapshotID, tr.LastConfirmedGeneration); err != nil {
 			return err
 		}
 		return s.ConfirmRemoval(ctx, tx, tr.ResourceID, generation)

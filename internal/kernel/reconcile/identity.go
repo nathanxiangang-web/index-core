@@ -18,16 +18,33 @@ const (
 	ResolutionConflict    IdentityResolution = "CONFLICT"
 )
 
+// entryHashComparable reports whether the current entry carries a comparable
+// content hash (hash + algorithm).
+func entryHashComparable(e domain.SnapshotEntry) bool {
+	return e.ContentHash != nil && *e.ContentHash != "" && e.HashAlgorithm != nil && *e.HashAlgorithm != ""
+}
+
+func hashAgrees(a, b *string, aAlg, bAlg *string) bool {
+	if a == nil || b == nil || *a == "" || *b == "" {
+		return false
+	}
+	return *a == *b && derefStr(aAlg) == derefStr(bAlg)
+}
+
 // resolveIdentity implements the FROZEN Gate 1B Stable Identity v1 rules for the
-// scenarios the PoC exercises (R1, R3, R4, R5 overlay, R8, R10, R11; R9 is the
-// reconcile-level disappearance rule). It never force-matches: insufficient
-// evidence is first-class UNRESOLVED (R11), and a copy at a new path is
-// NEW_RESOURCE rather than an auto-MATCH (R3 continuity context).
+// scenarios the PoC exercises (R1, R3, R4, R5 overlay, R8, R10, R11).
+//
+// R2-1: R1 fires only when the CURRENT entry declares STABLE_WITHIN_SCOPE; an
+// unverified/unstable current id never qualifies as STRONG.
+// R2-2: a present strong fingerprint contradiction must not fall through to the
+// hash-absent size+mtime move fallback.
 func resolveIdentity(entry domain.SnapshotEntry, prior []PriorResource, cfg Config, now time.Time) (IdentityResolution, *PriorResource, string) {
 	entryPath := EntryPath(entry)
 
-	// R1: STABLE_WITHIN_SCOPE provider_object_id is the only STRONG continuity signal.
-	if entry.ProviderObjectID != nil && entry.ProviderObjectIDScope != nil {
+	// R1: STABLE_WITHIN_SCOPE provider_object_id on BOTH sides.
+	entryStable := entry.ProviderIdentityAssurance != nil &&
+		*entry.ProviderIdentityAssurance == domain.IdentityStableWithinScope
+	if entryStable && entry.ProviderObjectID != nil && entry.ProviderObjectIDScope != nil {
 		var matches []*PriorResource
 		for i := range prior {
 			p := &prior[i]
@@ -42,12 +59,8 @@ func resolveIdentity(entry domain.SnapshotEntry, prior []PriorResource, cfg Conf
 		}
 		switch len(matches) {
 		case 1:
-			// A STABLE_WITHIN_SCOPE id is strong continuity even across paths, so a
-			// different path is a recognized move/rename (path updates in place).
 			return ResolutionMatched, matches[0], "R1 provider_object_id"
 		case 0:
-			// R10: a differing provider id at an otherwise continuous path is
-			// UNRESOLVED, never a guess.
 			for i := range prior {
 				p := &prior[i]
 				if p.isPresent() && p.canonicalPath() == entryPath && p.ProviderObjectID != nil &&
@@ -55,23 +68,21 @@ func resolveIdentity(entry domain.SnapshotEntry, prior []PriorResource, cfg Conf
 					return ResolutionUnresolved, nil, "R10 provider_object_id changed at a continuous path"
 				}
 			}
-			// otherwise fall through to R3/R4
 		default:
 			return ResolutionConflict, nil, "R1 multiple provider_object_id matches"
 		}
 	}
 
-	// R3: content_hash + hash_algorithm. A cross-path hash MATCH requires
-	// continuity context (the candidate is MISSING within the move horizon).
-	if entry.ContentHash != nil && *entry.ContentHash != "" {
+	// R3: content_hash + hash_algorithm with continuity context.
+	entryHasHash := entryHashComparable(entry)
+	if entryHasHash {
 		var matches []*PriorResource
 		for i := range prior {
 			p := &prior[i]
 			if p.isRemoved() {
 				continue
 			}
-			if derefStr(p.ContentHash) == *entry.ContentHash &&
-				derefStr(p.HashAlgorithm) == derefStr(entry.HashAlgorithm) {
+			if hashAgrees(p.ContentHash, entry.ContentHash, p.HashAlgorithm, entry.HashAlgorithm) {
 				matches = append(matches, p)
 			}
 		}
@@ -87,16 +98,15 @@ func resolveIdentity(entry domain.SnapshotEntry, prior []PriorResource, cfg Conf
 				}
 				return ResolutionUnresolved, nil, "R3 cross-path content_hash outside horizon"
 			}
-			// Two live resources with identical content at different paths.
 			return ResolutionConflict, nil, "R3 identical content at two live paths"
 		case 0:
-			// proceed to R4
+			// No hash agreement anywhere.
 		default:
 			return ResolutionConflict, nil, "R3 multiple content_hash matches"
 		}
 	}
 
-	// R4: path + size + mtime heuristic (hash absent, or no hash match).
+	// R4: path + size + mtime heuristic.
 	var samePath []*PriorResource
 	for i := range prior {
 		p := &prior[i]
@@ -108,12 +118,11 @@ func resolveIdentity(entry domain.SnapshotEntry, prior []PriorResource, cfg Conf
 	case 1:
 		c := samePath[0]
 		sizeMatches := equalInt64(c.Size, entry.Size) && c.Size != nil
-		bothHashes := c.ContentHash != nil && entry.ContentHash != nil
-		hashesDiffer := bothHashes && *c.ContentHash != *entry.ContentHash
+		bothHashes := entryHasHash && c.ContentHash != nil && *c.ContentHash != ""
+		hashesDiffer := bothHashes && !hashAgrees(c.ContentHash, entry.ContentHash, c.HashAlgorithm, entry.HashAlgorithm)
 		mtimeBothPresent := c.Mtime != nil && entry.Mtime != nil
 
 		if hashesDiffer {
-			// R8 imposter: same path, different strong content.
 			return ResolutionNewResource, nil, "R8 imposter (different content_hash)"
 		}
 		if sizeMatches && mtimeBothPresent && equalTimePtr(c.Mtime, entry.Mtime) {
@@ -124,12 +133,17 @@ func resolveIdentity(entry domain.SnapshotEntry, prior []PriorResource, cfg Conf
 		}
 		return ResolutionUnresolved, nil, "R4 insufficient (size mismatch or mtime absent)"
 	case 0:
-		// R5: moved candidate — a resource with MISSING evidence within the horizon.
+		// R5 moved candidate: hash-absent degraded path only. A present strong
+		// fingerprint that contradicts the candidate must NOT be overridden by
+		// size+mtime (R2-2).
 		var moved []*PriorResource
 		for i := range prior {
 			p := &prior[i]
 			if !p.hasMissingEvidence() || !withinMoveHorizon(p, cfg, now) {
 				continue
+			}
+			if entryHasHash {
+				continue // hash-present entries must match by hash (R3), not size+mtime
 			}
 			if equalInt64(p.Size, entry.Size) && p.Size != nil &&
 				p.Mtime != nil && entry.Mtime != nil && equalTimePtr(p.Mtime, entry.Mtime) {
@@ -138,7 +152,7 @@ func resolveIdentity(entry domain.SnapshotEntry, prior []PriorResource, cfg Conf
 		}
 		switch len(moved) {
 		case 1:
-			return ResolutionMatched, moved[0], "R5 move (size+mtime within horizon)"
+			return ResolutionMatched, moved[0], "R5 move (size+mtime within horizon, hash absent)"
 		case 0:
 			return ResolutionNewResource, nil, "no candidate -> new resource"
 		default:
@@ -159,7 +173,6 @@ func withinMoveHorizon(p *PriorResource, cfg Config, now time.Time) bool {
 }
 
 // EntryPath derives an entry's canonical path from its Collector-local refs.
-// PoC assumption (CANDIDATE): ParentRef is the parent's canonical path.
 func EntryPath(entry domain.SnapshotEntry) string {
 	if entry.ParentRef == "" || entry.ParentRef == "/" {
 		return "/" + entry.Name
@@ -185,7 +198,9 @@ func equalTimePtr(a, b *time.Time) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return a.UTC().Equal(b.UTC())
+	// Compare at microsecond precision: PostgreSQL timestamptz stores microseconds,
+	// so a round-tripped observation time differs from the Go nanosecond value.
+	return a.UTC().Truncate(time.Microsecond).Equal(b.UTC().Truncate(time.Microsecond))
 }
 
 // PathDir / PathBase are small path helpers shared with the reconcile core.

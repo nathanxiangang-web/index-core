@@ -9,14 +9,12 @@ import (
 	"github.com/nathanxiangang-web/index-core/internal/kernel/pipeline"
 )
 
-// EvaluateSnapshot loads a submitted Snapshot and its entries in one transaction,
-// runs the Kernel evaluation pipeline (completeness -> final digest), persists the
-// Kernel-owned acceptance_state + scope_shrink_corroboration, and returns the
-// final IO3 identity. The identity is never injected by the adapter (B4).
-//
-// corroboration is the Kernel-derived significance corroboration from later
-// independent admitted observations; nil means NONE.
-func (s *Store) EvaluateSnapshot(ctx context.Context, snapshotID string, corroboration *domain.ScopeShrinkCorroboration) (pipeline.Result, error) {
+// EvaluateSnapshot loads a SUBMITTED Snapshot and its entries in one transaction,
+// loads the rich prior, derives the Kernel-owned scope-shrink corroboration from
+// persisted admitted Snapshots, runs the Kernel evaluation pipeline, persists the
+// acceptance_state + corroboration once (SUBMITTED -> EVALUATED), and returns the
+// final IO3 identity. No caller-supplied verdict is accepted (R2-6).
+func (s *Store) EvaluateSnapshot(ctx context.Context, rootID, snapshotID string) (pipeline.Result, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return pipeline.Result{}, err
@@ -31,23 +29,30 @@ func (s *Store) EvaluateSnapshot(ctx context.Context, snapshotID string, corrobo
 	if err != nil {
 		return pipeline.Result{}, err
 	}
-	priorPresent, err := s.CountCanonicalPresent(ctx, tx, snap.RootID)
+	prior, err := s.LoadPriorResources(ctx, tx, rootID)
 	if err != nil {
 		return pipeline.Result{}, err
 	}
-
-	ev := pipeline.Evidence{
-		TraversalStatus:          snap.TraversalStatus,
-		SkippedScopes:            snap.SkippedScopes,
-		SkippedKnownEmpty:        snap.SkippedScopesKnownEmpty,
-		HasErrorSummary:          len(snap.ErrorSummary) > 0,
-		Freshness:                freshOrUnknown(snap.FreshnessEvidence),
-		Assurance:                assuranceOrUnknown(snap.CollectorCompletenessAssurance),
-		EntryCount:               countOrZero(snap.EntryCount),
-		PriorPresent:             priorPresent,
-		IndependentCorroboration: corroboration,
+	var priorPresent int64
+	for i := range prior {
+		if prior[i].ResourcePresence == domain.ResourcePresent {
+			priorPresent++
+		}
 	}
-	res := pipeline.Evaluate(entries, ev)
+
+	corroboration := s.deriveCorroboration(ctx, tx, rootID, snapshotID, priorPresent, len(entries))
+
+	res := pipeline.Evaluate(entries, prior, pipeline.Evidence{
+		TraversalStatus:   snap.TraversalStatus,
+		SkippedScopes:     snap.SkippedScopes,
+		SkippedKnownEmpty: snap.SkippedScopesKnownEmpty,
+		HasErrorSummary:   len(snap.ErrorSummary) > 0,
+		Freshness:         freshOrUnknown(snap.FreshnessEvidence),
+		Assurance:         assuranceOrUnknown(snap.CollectorCompletenessAssurance),
+		EntryCount:        int64(len(entries)),
+		PriorPresent:      priorPresent,
+		Corroboration:     corroboration,
+	})
 
 	if err := s.SetSnapshotEvaluated(ctx, tx, snapshotID, res.Acceptance, &res.Corroboration); err != nil {
 		return pipeline.Result{}, err
@@ -56,6 +61,32 @@ func (s *Store) EvaluateSnapshot(ctx context.Context, snapshotID string, corrobo
 		return pipeline.Result{}, err
 	}
 	return res, nil
+}
+
+// deriveCorroboration returns CORROBORATED when the current significant shrink is
+// independently confirmed by a previously admitted Snapshot (different snapshot,
+// EVALUATED/RECONCILED, with a matching reduced entry count), else NONE. It is
+// Kernel-derived from persisted admitted evidence, never caller-supplied (R2-6).
+func (s *Store) deriveCorroboration(ctx context.Context, q Querier, rootID, snapshotID string, priorPresent int64, entryCount int) domain.ScopeShrinkCorroboration {
+	if priorPresent <= 0 || entryCount < 0 {
+		return domain.ShrinkNone
+	}
+	drop := priorPresent - int64(entryCount)
+	if drop <= 0 || float64(drop)/float64(priorPresent) < 0.5 {
+		return domain.ShrinkNone
+	}
+	var n int
+	err := q.QueryRow(ctx,
+		`SELECT count(*) FROM index_snapshot
+		  WHERE root_id = $1::uuid AND snapshot_id <> $2::uuid
+		    AND lifecycle_state IN ('EVALUATED','RECONCILED')
+		    AND entry_count IS NOT NULL
+		    AND abs(entry_count - $3) <= greatest(1, $3 / 10)`,
+		rootID, snapshotID, entryCount).Scan(&n)
+	if err != nil || n == 0 {
+		return domain.ShrinkNone
+	}
+	return domain.ShrinkCorroborated
 }
 
 func freshOrUnknown(f *domain.FreshnessEvidence) domain.FreshnessEvidence {
@@ -70,11 +101,4 @@ func assuranceOrUnknown(a *domain.FailureVisibility) domain.FailureVisibility {
 		return domain.UnknownFailureVisibility
 	}
 	return *a
-}
-
-func countOrZero(n *int64) int64 {
-	if n == nil {
-		return 0
-	}
-	return *n
 }

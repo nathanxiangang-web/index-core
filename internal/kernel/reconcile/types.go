@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,19 +13,36 @@ import (
 // runtime/CANDIDATE values, not new frozen architecture.
 type Config struct {
 	// RemovalGracePeriod is the interval after MISSING during which a resource
-	// MUST NOT be confirmed removed (frozen invariant:
-	// RemovalGracePeriod >= MoveRecognitionHorizon).
+	// MUST NOT be confirmed removed. Frozen invariant:
+	// RemovalGracePeriod >= MoveRecognitionHorizon.
 	RemovalGracePeriod time.Duration
 	// MoveRecognitionHorizon is the interval after MISSING during which R3/R5 may
 	// still recognize a rename/move. Zero disables move recognition.
 	MoveRecognitionHorizon time.Duration
 	// MinConsecutiveCompleteMissing is C3 (>=1).
 	MinConsecutiveCompleteMissing int
-	// MinIndependentConfirmations is V2c: the number of later, independently
-	// admitted COMPLETE observations required beyond the first MISSING. Default 1.
+	// MinIndependentConfirmations is V2c. Gate-2 PoC supports exactly 1 distinct
+	// later confirmation; any value >1 must be rejected (R2-7).
 	MinIndependentConfirmations int
 	// NewID assigns a Kernel-owned resource_id for ADD. Injectable for determinism.
 	NewID func() string
+}
+
+// ErrUnsupportedMinIndependent is returned by Validate for a config value the
+// Gate-2 PoC cannot count correctly.
+var ErrUnsupportedMinIndependent = errors.New("MinIndependentConfirmations > 1 is not supported by the Gate-2 PoC")
+
+// Validate rejects configurations that would violate the frozen horizon
+// relationship or expose an incorrectly counted independence setting (R2-7/R2-8).
+func (c Config) Validate() error {
+	if c.MinIndependentConfirmations > 1 {
+		return ErrUnsupportedMinIndependent
+	}
+	if c.MoveRecognitionHorizon > 0 && c.RemovalGracePeriod < c.MoveRecognitionHorizon {
+		return fmt.Errorf("RemovalGracePeriod (%s) must be >= MoveRecognitionHorizon (%s)",
+			c.RemovalGracePeriod, c.MoveRecognitionHorizon)
+	}
+	return nil
 }
 
 func (c Config) newID() string {
@@ -41,11 +59,14 @@ func (c Config) minConsecutive() int {
 	return c.MinConsecutiveCompleteMissing
 }
 
-func (c Config) minIndependent() int {
-	if c.MinIndependentConfirmations < 1 {
-		return 1
+// effectiveGrace returns a removal grace period that is never shorter than the
+// move-recognition horizon, so a move-recognizable resource can never be
+// confirmed removed (R2-8).
+func (c Config) effectiveGrace() time.Duration {
+	if c.MoveRecognitionHorizon > c.RemovalGracePeriod {
+		return c.MoveRecognitionHorizon
 	}
-	return c.MinIndependentConfirmations
+	return c.RemovalGracePeriod
 }
 
 // NewUUID returns a random RFC-4122 v4 UUID string (Kernel-assigned identifier).
@@ -59,8 +80,6 @@ func NewUUID() string {
 
 // PriorResource is a canonical resource enriched with the latest identity
 // evidence, which is what identity matching (Gate 1B Domain R0..R11) needs.
-// It embeds domain.CanonicalResource, which includes the Store-internal
-// MissingFirstSnapshotID used for independence (B2).
 type PriorResource struct {
 	domain.CanonicalResource
 	ProviderObjectID      *string
@@ -71,8 +90,7 @@ type PriorResource struct {
 func (p *PriorResource) isRemoved() bool { return p.ResourcePresence == domain.ResourceRemoved }
 func (p *PriorResource) isPresent() bool { return p.ResourcePresence == domain.ResourcePresent }
 
-// hasMissingEvidence reports a live resource carrying MISSING/removal evidence
-// (it is still PRESENT, not a tombstone).
+// hasMissingEvidence reports a live resource carrying MISSING/removal evidence.
 func (p *PriorResource) hasMissingEvidence() bool {
 	return p.isPresent() && p.RemovalEvidenceState != domain.RemovalEvidenceNone
 }
@@ -95,7 +113,19 @@ const (
 	KindConflict             Kind = "CONFLICT"
 )
 
-// Transition is one Kernel-decided canonical change (provider-neutral).
+// GenerationProducing reports whether a transition is a canonical mutation that
+// advances current_generation. Evidence-only writes (MISSING/CANDIDATE/RESET)
+// do NOT advance the generation (R2-3).
+func (k Kind) GenerationProducing() bool {
+	switch k {
+	case KindAdd, KindUpdate, KindRename, KindMove, KindConfirmRemoved:
+		return true
+	default:
+		return false
+	}
+}
+
+// Transition is one Kernel-decided change (provider-neutral).
 type Transition struct {
 	Kind       Kind
 	ResourceID string
@@ -107,13 +137,14 @@ type Transition struct {
 	MissingSince            *time.Time
 	ConsecutiveMissing      int32
 	MissingFirstSnapshotID  *string
+	MissingLastSnapshotID   *string
 	LastConfirmedGeneration int64
 
 	Reason string
 }
 
 // Observation is a versioned IdentityEvidence observation the Store must append
-// inside the same Stage-2 transaction (B3, doc A C-E2/C-E6).
+// inside the same Stage-2 transaction (B3).
 type Observation struct {
 	ResourceID string
 	Entry      domain.SnapshotEntry
