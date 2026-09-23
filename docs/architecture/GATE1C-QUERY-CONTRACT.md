@@ -3,7 +3,7 @@
 > Implementation-facing contract for the minimal provider-neutral, read-only
 > Consumer surface over the Canonical Inventory and the Canonical Change Journal.
 > Produced by the Codex Executor (Worker) for ChatGPT Architect review.
-> Status: **PARTIAL_FOR_ARCH_REVIEW** — reworked per PR #43 Architect review; A/B/C are NOT FROZEN.
+> Status: **PARTIAL_FOR_ARCH_REVIEW** — reworked per PR #43 Architect review (round 2); A/B/C are NOT FROZEN.
 > Baseline: remote `main` = `6a131f17657807d9aee2921be1f286ceaff784e4`.
 > Depends on `GATE1C-POSTGRESQL-STORE.md` (A) and `GATE1C-TRANSACTION-BOUNDARY.md` (B).
 
@@ -53,7 +53,7 @@ Consumer --uses--> Query Contract   --backed by-->  PostgreSQL (read-only)
 | Q5 | Resolve canonical path / hierarchy | `resolve_path(root_id, canonical_path, options?) -> PathResolution` | all live resource(s) at path + ambiguity | `DERIVED` |
 | Q6 | List active resources | `list_active_resources(root_id, page?) -> Page[ResourceView]` | PRESENT only | `DERIVED` |
 | Q7 | Explicit tombstone / history access | `list_removed(root_id, page?) -> Page[ResourceView]` | REMOVED only (explicit) | `DERIVED` |
-| Q8 | Read Change Journal from cursor | `read_journal(scope, cursor_vector, limit) -> Page[JournalEventView]` | ordered events | `DERIVED` |
+| Q8 | Read Change Journal from cursor | `read_journal(scope, cursor_vector, limit) -> Page[JournalEventView]` | per-root ordered events | `DERIVED` |
 | Q9 | Root / generation / status | `get_root_status(root_id) -> RootStatus \| None` | lifecycle + generation + counters | `DERIVED` |
 
 > `DERIVED` Consumers must not directly mutate Canonical Inventory; the Query
@@ -62,6 +62,10 @@ Consumer --uses--> Query Contract   --backed by-->  PostgreSQL (read-only)
 > `DERIVED` (Architect, PR #43 review #5) — `canonical_path` is a NON-unique
 > coordinate (doc A `C-C3a`). Q5 therefore returns a `PathResolution` set, never a
 > single silently-chosen resource. `FACT`.
+
+> `DERIVED` (Architect, PR #43 review round 2) — an all-roots journal read (Q8)
+> guarantees ordering only WITHIN each root (`event_seq`); it defines NO canonical
+> global order across roots. `FACT`.
 
 ---
 
@@ -123,6 +127,10 @@ Consumer --uses--> Query Contract   --backed by-->  PostgreSQL (read-only)
 > `DERIVED` (Architect, PR #43 review #1) — the only authoritative journal cursor
 > is the per-root `event_seq`. `event_id` is retained for opaque identity/debug
 > lookup and MUST NOT be used to order or resume consumption. `FACT`.
+>
+> `DERIVED` (Architect, PR #43 review round 2) — `JournalEventView` ordering is
+> per-root only. An all-roots result has NO canonical cross-root order; consumers
+> MUST NOT treat the physical merge order as authoritative. `FACT`.
 
 ### 2.4 `RootStatus`
 
@@ -162,16 +170,17 @@ unique winner. `FACT`.
 | V1 | Default resource reads return `resource_presence = 'PRESENT'` only. | `DERIVED` | GATE1A C3.2; GATE1B-SAFE-RECONCILE Sec 1.3 |
 | V2 | `REMOVED` tombstones are returned ONLY when explicitly requested (`options.include_removed = true`, or Q7). | `DERIVED` | GATE1B-DOMAIN-MODEL 1.4 ("active queries normally exclude REMOVED") |
 | V3 | `removal_evidence_state` / `missing_since` / missing counters are NEVER exposed as resource status. | `DERIVED` | Blocker F |
-| V4 | `list_roots` default filter: `ACTIVE` (and `NEW`). | `PROPOSED` | GATE1B Sec 10.4 defers root visibility to Gate 1C |
-| V5 | `DEPRECATED` roots are returned only with `options.include_deprecated = true`. | `PROPOSED` | GATE1B Sec 10.4 |
-| V6 | `DELETED` roots are returned only with `options.include_deleted = true`; their resources remain readable (retained partition) when explicitly requested. | `PROPOSED` | GATE1B Sec 10.3/10.4 |
-| V7 | A DELETED root still reports its last committed generation and tombstoned resources for audit. | `PROPOSED` | GATE1B Sec 10.3 |
+| V4 | `list_roots` default filter: `ACTIVE` (and `NEW`). | `DERIVED` | Architect acceptance, PR #43 review round 2; GATE1B Sec 10.4 |
+| V5 | `DEPRECATED` roots are returned only with `options.include_deprecated = true`. | `DERIVED` | Architect acceptance, PR #43 review round 2 |
+| V6 | `DELETED` roots are returned only with `options.include_deleted = true`; their resources remain readable (retained partition) when explicitly requested. | `DERIVED` | Architect acceptance, PR #43 review round 2; GATE1B Sec 10.3 |
+| V7 | A DELETED root still reports its last committed generation and tombstoned resources for audit. | `DERIVED` | Architect acceptance, PR #43 review round 2; GATE1B Sec 10.3 |
 | V8 | A resource reappearing after removal is a NEW `resource_id` (fresh ADD); queries never merge it with the prior tombstone. | `DERIVED` | GATE1B-SAFE-RECONCILE Sec 1.3.4 |
 | V9 | `resolve_path` returns ALL live matches and sets `ambiguous=true` when a path holds overlapping `PRESENT` resources (R8 imposter); it never fabricates uniqueness. | `DERIVED` | PR #43 review #5; doc A `C-C3a` |
 
-> `UNKNOWN` — the default visibility of `DEPRECATED`/`DELETED` roots is a Gate 1C
-> Query decision (GATE1B Sec 10.4). V4-V7 are the Worker's `PROPOSED` answer and
-> require Architect acceptance.
+> `DERIVED` (Architect acceptance, PR #43 review round 2) — Root default
+> visibility is **CLOSED**: `ACTIVE` (+`NEW`) are default-visible; `DEPRECATED`
+> and `DELETED` require explicit request; a deleted root's partition is retained
+> for audit. V4-V7 are accepted, NOT proposals. `FACT` (Architect).
 
 ---
 
@@ -201,6 +210,7 @@ unique winner. `FACT`.
 | JC5 | The Journal never contains `MISSING`/`REMOVAL_CANDIDATE`/`UNCHANGED`/`CONFLICT`/`REJECTED`. | `DERIVED` | Sec 3.1 |
 | JC6 | Projection rebuild may be triggered by replaying from a chosen cursor; canonical is never edited to satisfy a projection. | `DERIVED` | GATE1A C4.2, J6 |
 | JC7 | `read_journal(scope=all_roots, cursor_vector, limit)` consumes the per-root cursor vector and returns each root's events after that root's cursor; a root absent from the vector starts from its beginning or a caller-chosen floor. | `PROPOSED` | — |
+| JC8 | An all-roots journal read guarantees ordering only WITHIN each root (`event_seq`); it defines NO canonical global order across roots. Any physical merge order is non-canonical. | `DERIVED` (Architect, PR #43 review round 2) | doc A Sec 3.9 |
 
 > `DERIVED` A projection that disagrees with canonical rebuilds from the Journal;
 > canonical wins (GATE1A C4.2; J6). `FACT`.
@@ -263,7 +273,9 @@ unique winner. `FACT`.
 | 9 | Consumers have no write path around Kernel | Sec 6 | `COVERED` |
 | — | `removal_evidence_state` not exposed | Sec 2.2, V3 | `COVERED` |
 | — | Tombstone/history only on explicit request | V2, Q7 | `COVERED` |
+| — | Root default visibility closed (ACTIVE+NEW default; DEPRECATED/DELETED explicit) | Sec 3 V4-V7 | `COVERED` |
 | — | Journal cursor consumption is per-root and commit-safe | Sec 5 JC2/JC3/JC7 | `COVERED` |
+| — | All-roots journal has no canonical global order | Sec 5 JC2/JC7/JC8 | `COVERED` |
 | — | Pagination cursor is generation-bound (`STALE_CURSOR`) | Sec 7 P2/P3 | `COVERED` |
 | — | Path overlap surfaced explicitly, never a false unique | Sec 2.5, V9 | `COVERED` |
 | — | Provider-neutral / CloudSite-agnostic | Sec 8 | `COVERED` |
@@ -274,11 +286,12 @@ unique winner. `FACT`.
 
 | Item | Tag | Note |
 |------|-----|------|
-| ~~Global vs per-root journal cursor exposure~~ | `DERIVED` (CLOSED — Architect, PR #43 review #1) | Per-root `event_seq` authoritative; cross-root vector; no global cursor. Sec 5 JC2. |
+| ~~Global vs per-root journal cursor exposure~~ | `DERIVED` (CLOSED — Architect, PR #43 review #1, round 2) | Per-root `event_seq` authoritative; cross-root vector; no global cursor; all-roots read has no canonical global order. Sec 5 JC2/JC8. |
 | ~~Pagination strategy~~ | `DERIVED` (CLOSED — Architect, PR #43 review #6) | Cursor bound to `root_id + generation + sort key`; `STALE_CURSOR` on generation change. Sec 7. |
+| ~~Default visibility of DEPRECATED/DELETED roots~~ | `DERIVED` (CLOSED — Architect, PR #43 review round 2) | `ACTIVE` (+`NEW`) default-visible; `DEPRECATED`/`DELETED` explicit; deleted partition retained for audit. Sec 3 V4-V7. |
 | Path-resolution disambiguation policy | `CANDIDATE` | Overlap is explicit; optional deterministic tie-break hint deferred. Sec 2.5. |
 | Page size default / max | `CANDIDATE` | Sec 7 P5. |
-| Default visibility of DEPRECATED/DELETED roots | `PROPOSED` (needs Architect) | Sec 3 V4-V7 |
+| Cross-root journal total order | `DEFERRED` | Not defined; per-root ordering only. Sec 5 JC8. |
 | Admin/ops visibility of removal evidence | `DEFERRED` | Sec 2.4 |
 | Arbitrary historical generation reads | `DEFERRED` (POST_MVP) | Sec 4 CR3 |
 | Authz | `DEFERRED` | Sec 9 |
@@ -302,6 +315,7 @@ unique winner. `FACT`.
 | QC11 | Page 1 read at generation G; root advances to G+1; Page 2 requested with the Page-1 cursor | `STALE_CURSOR`; consumer restarts paging; no page mixes G and G+1 |
 | QC12 | `resolve_path` for a path holding an old MISSING-but-PRESENT resource and a new imposter | returns BOTH matches with `ambiguous=true`; never a silent single winner |
 | QC13 | Two roots produce journal events concurrently; consumer uses a per-root cursor vector | every committed event is read exactly once per root; no reliance on `event_id` order |
+| QC14 | `read_journal(scope=all_roots)` with a per-root cursor vector | returns each root's events in `event_seq` order; NO cross-root canonical order is asserted or relied upon |
 
 ---
 

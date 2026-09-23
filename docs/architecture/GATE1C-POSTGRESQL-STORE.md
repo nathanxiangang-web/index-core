@@ -399,13 +399,26 @@ Constraints:
   transaction that allocates the sequence.
 - `C-A4` (`DERIVED`, Architect decision, PR #43 review #2): crash recovery MUST
   be defined:
-  - the lowest `PENDING` input remains **reclaimable** after process death (via
-    lease expiry or explicit claim release);
+  - the head-of-line input (see `C-A5`) remains **reclaimable** after process
+    death (via lease expiry or explicit claim release);
   - process death MUST NOT head-of-line block a root forever;
   - a reclaim/retry keeps the SAME `admission_seq` (it is never re-numbered);
-  - if a later `admission_seq` has already committed, the older input becomes
-    `STALE_INPUT` per IO4.
+  - if the head-of-line input is found already superseded by a committed higher
+    input, it becomes `STALE_INPUT` per IO4.
   `FACT` (Architect).
+- `C-A5` (`DERIVED`, Architect decision, PR #43 review round 2): **absolute
+  per-root FIFO**. Define `head_seq` = the MINIMUM `admission_seq` for the root
+  whose `status = 'PENDING'` (non-terminal; `APPLIED`/`NOOP`/`REJECTED`/
+  `STALE_INPUT`/`FAILED` are terminal). Then:
+  - ONLY the `head_seq` input MAY be claimed, processed, or committed;
+  - an input with `admission_seq > head_seq` MUST NOT be claimed, processed, or
+    committed while `head_seq` exists — **even if `head_seq` is currently being
+    processed (claimed, lease not expired)**;
+  - a reclaim is permitted only for `head_seq`, and only when its claim is free
+    or its lease has expired;
+  - higher sequences advance only after `head_seq` becomes terminal.
+  A higher sequence MUST NOT "leapfrog" a lower non-terminal one under any
+  circumstance (IO5/IO6). `FACT` (Architect).
 
 > `DERIVED` `FAILED` is a valid terminal status (a reconcile that errored and was
 > rolled back); the schema and doc B state machine MUST agree (PR #43 review #2).
@@ -415,25 +428,40 @@ Constraints:
 > committed by a newer admitted input (IO2/IO4). Doc B defines the enforcement
 > transaction flow. `FACT`.
 
-### 3.8 T8 `index_applied_snapshot` — idempotency (IO3)
+### 3.8 T8 `index_applied_snapshot` — idempotency / application history (IO3)
 
 `DERIVED` semantic (IO3) / `PROPOSED` shape.
+
+This table is an **append-only application history**, NOT a single latest row.
+The same `snapshot_identity` MAY be applied again at a HIGHER canonical
+generation (a re-reconcile); each successful application appends one row.
 
 | Column | Type | Null | Notes |
 |--------|------|------|-------|
 | `root_id` | `uuid` | NO | FK -> `index_root`. |
-| `snapshot_identity` | `text` | NO | Stable revision token OR deterministic normalized-content digest. See contract below. |
-| `snapshot_identity_version` | `text` | NO | Version of the identity algorithm (required for the digest form). |
-| `snapshot_id` | `uuid` | NO | |
-| `applied_generation` | `bigint` | NO | Generation at which it was applied. |
-| `applied_admission_seq` | `bigint` | NO | |
+| `snapshot_identity_kind` | `text` | NO | CHECK IN (`REVISION_TOKEN`,`DETERMINISTIC_DIGEST`). Part of the identity. |
+| `snapshot_identity_namespace` | `text` | NO | Namespace that makes the value collision-free: for a token, the adapter/provider scope that issued it; for a digest, the canonicalization rule-set id. Adapter-declared. Part of the identity. |
+| `snapshot_identity_version` | `text` | NO | Version of the identity algorithm/contract (required for the digest form; token-scheme version for the token form). Part of the identity. |
+| `snapshot_identity_value` | `text` | NO | The revision token string or the digest hex. |
+| `snapshot_id` | `uuid` | NO | The snapshot applied in this application. |
+| `applied_generation` | `bigint` | NO | Generation produced by this application. |
+| `applied_admission_seq` | `bigint` | NO | Admission input that produced it. |
 | `applied_at` | `timestamptz` | NO | |
 
 Constraints:
 
-- `C-AS1` PK (`root_id`, `snapshot_identity`).
-- `C-AS2` (`PROPOSED`): replay of the same `snapshot_identity` at the same
-  canonical generation is a NO-OP (Safe Reconcile 2.4, IO3).
+- `C-AS1` UNIQUE (`root_id`, `snapshot_identity_kind`,
+  `snapshot_identity_namespace`, `snapshot_identity_version`,
+  `snapshot_identity_value`, `applied_generation`) — the same logical identity is
+  applied at most ONCE per generation; a new generation appends a new row.
+- `C-AS2` (`DERIVED`, PR #43 review round 2): the table is **append-only
+  application history**. A row is NEVER UPDATEd to a newer generation (no
+  upsert-latest); history is retained for audit/replay.
+- `C-AS3` (`DERIVED`, IO3): the NO-OP test at reconcile time is exact — if a row
+  exists with the identity tuple (`root_id`, kind, namespace, version, value) AND
+  `applied_generation = current_generation`, it is a NO-OP. Otherwise (no row, or
+  all matching rows have `applied_generation < current_generation`) the input is
+  reconciled normally against the current generation.
 
 > `DERIVED` (Architect decision, PR #43 review #3) — the `snapshot_identity`
 > contract is provider-neutral and MUST NOT include wall-clock, admission timing,
@@ -444,8 +472,16 @@ Constraints:
 >    semantics/content (the SnapshotEntry set plus relevant evidence), tagged
 >    with `snapshot_identity_version`.
 > Identical observed content collected at a different `observed_at` MUST yield
-> the SAME identity. Adapter E maps concrete sources to this contract later; A/B
-> fix the key semantics now. `FACT` (Architect).
+> the SAME identity. `kind` + `namespace` + `version` + `value` together form the
+> identity, and ALL of them enter its uniqueness; two values that differ only in
+> namespace/version MUST NOT be collapsed. Adapter E maps concrete sources to
+> this contract later; A/B fix the key semantics now. `FACT` (Architect, PR #43
+> review round 2).
+
+> `DERIVED` (Architect, PR #43 review round 2) — identity match alone does NOT
+> imply NO-OP. Identical content (same identity) collected after the canonical
+> generation advanced from G to G+1 MUST be reconciled again; only the
+> identity + unchanged-generation case is a NO-OP. `FACT`.
 
 ### 3.9 T9 `index_journal_event` — Canonical Change Journal (append-only)
 
@@ -489,6 +525,12 @@ Indexes:
 > only as an opaque surrogate identity, never as a cross-root cursor. Cross-root
 > consumers use a **vector of per-root cursors** (`{root_id: event_seq, ...}`)
 > unless a future explicit commit-order mechanism is designed. `FACT` (Architect).
+>
+> `DERIVED` (Architect, PR #43 review round 2) — even consumed as a per-root
+> cursor vector, an **all-roots journal read has NO canonical global order**. Only
+> ordering WITHIN a root (`event_seq`) is guaranteed. Any physical merge order of
+> multiple roots' events is a non-canonical implementation detail; consumers MUST
+> NOT derive a cross-root total order from it. `FACT` (Architect).
 
 ### 3.10 T10 `index_root_config` — per-root policy
 
@@ -558,8 +600,8 @@ Constraints:
 | IdentityEvidence | current folded aggregate (rebuildable projection/cache) | `index_identity_evidence_current` | `DERIVED` |
 | Journal | 7 event types | `index_journal_event.event_type` | `DERIVED` |
 | Journal | intra-generation ordering | `intra_generation_seq` | `DERIVED` |
-| Admission ordering | IO1 sequence | `index_admission.admission_seq` | `DERIVED` |
-| Idempotency | applied snapshot identity | `index_applied_snapshot` | `DERIVED` |
+| Admission ordering | IO1 sequence + absolute per-root FIFO head-of-line | `index_admission` (`admission_seq`, `status`); `head_seq` = min `PENDING` | `DERIVED` |
+| Idempotency | snapshot identity (kind+namespace+version+value); append-only application history per generation | `index_applied_snapshot` | `DERIVED` |
 | Removal policy | grace/horizon/thresholds | `index_root_config` | `CANDIDATE` |
 | Conflict result | UNRESOLVED/CONFLICT records | `index_reconcile_result.conflicts` | `DERIVED` |
 
@@ -580,6 +622,9 @@ Sec 1-3 and Sec 10).
 | Removal evidence not consumer-visible | Query Contract excludes it (doc C) | `DERIVED` |
 | No Collector-specific domain field | M2; `extra_evidence`/`metadata` opaque only | `DERIVED` |
 | Path is a NON-unique coordinate; live rows MAY overlap on a path | NO unique constraint; `C-C3` REJECTED, `C-C3a` (no uniqueness), `I-C3` non-unique index | `DERIVED` |
+| Admission is absolute per-root FIFO | only `head_seq` (min `PENDING` `admission_seq`) may be claimed/processed/committed; higher sequences blocked (`C-A5`) | `DERIVED` |
+| Idempotency identity is complete and generation-scoped | identity = (kind, namespace, version, value); append-only history per `applied_generation`; NO-OP only at same generation (`C-AS1`..`C-AS3`) | `DERIVED` |
+| Journal has NO cross-root total order | per-root `event_seq` ordering only; `event_id` opaque; all-roots reads define no canonical global order | `DERIVED` |
 
 ---
 
@@ -625,6 +670,9 @@ atomicity and ordering. It does not define the transaction itself.
 | 8 | root_id/resource_id cannot be reused | Sec 3.1/3.3 constraints | `COVERED` |
 | 9 | Consumers have no write path | doc C | `COVERED` (doc C) |
 | 10 | Collector-specific fields do not leak into Domain | Sec 6 | `COVERED` |
+| 5a | Absolute per-root admission FIFO (head-of-line; no leapfrog) | Sec 3.7 `C-A5` + doc B | `COVERED` |
+| 4a | Idempotency identity includes kind/namespace/version; re-reconcile at a higher generation keeps history | Sec 3.8 `C-AS1`..`C-AS3` + doc B | `COVERED` |
+| — | All-roots journal defines no canonical global order | Sec 3.9 + doc C Sec 5 | `COVERED` |
 
 ---
 
@@ -632,8 +680,8 @@ atomicity and ordering. It does not define the transaction itself.
 
 | Item | Tag | Note |
 |------|-----|------|
-| ~~Global vs per-root journal sequence~~ | `DERIVED` (CLOSED — Architect, PR #43 review #1) | Per-root `event_seq` is authoritative; `event_id` is opaque identity only, never a cursor; cross-root consumption uses a per-root cursor vector. Sec 3.9. |
-| ~~`snapshot_identity` dedup key~~ | `DERIVED` (CLOSED — Architect, PR #43 review #3) | Provider-neutral contract frozen: stable adapter/native revision token OR versioned deterministic digest; MUST NOT include wall-clock/admission/DB timing. Sec 3.8. |
+| ~~Global vs per-root journal sequence~~ | `DERIVED` (CLOSED — Architect, PR #43 review #1, round 2) | Per-root `event_seq` is authoritative; `event_id` is opaque identity only; cross-root consumption uses a per-root cursor vector, and an all-roots read defines NO canonical global order. Sec 3.9. |
+| ~~`snapshot_identity` dedup key~~ | `DERIVED` (CLOSED — Architect, PR #43 review #3, round 2) | Identity = (kind, namespace, version, value); all four enter uniqueness. Application is append-only history per generation; NO-OP only when identity matches AND `applied_generation = current_generation`. Sec 3.8. |
 | Global commit-order cursor (should a future consumer require one) | `DEFERRED` | No commit-order mechanism is designed in Gate 1C; consumers use the per-root cursor vector (Sec 3.9). |
 | Admission lease duration / reclaim policy | `CANDIDATE` | `C-A4` fixes the correctness rule; exact lease timing is operational config (doc B). |
 | Persisting full SnapshotEntry | `CANDIDATE` | Storage cost vs audit/replay. Sec 3.6. |
@@ -641,7 +689,7 @@ atomicity and ordering. It does not define the transaction itself.
 | Enum storage (text+CHECK vs native enum) | `CANDIDATE` | Sec 3 preamble. |
 | Partitioning / large-table strategy for 100k+ and beyond | `DEFERRED` | Post-MVP operational concern; PoC is single-node. |
 | Physical retention policy for tombstones/old generations | `DEFERRED` | GATE1B Sec 10.3 notes retention is explicit policy. |
-| `snapshot_identity` for Collectors with no stable token | `UNKNOWN` | Depends on Collector adapter (deliverable E). |
+| `snapshot_identity` kind/namespace selection for Collectors with no stable token | `UNKNOWN` | The versioned deterministic-digest form covers them; the concrete adapter mapping is deliverable E. Sec 3.8. |
 
 ---
 
@@ -674,9 +722,12 @@ atomicity and ordering. It does not define the transaction itself.
 | G7 | Path reused by imposter while the old resource is only MISSING | Old row stays `PRESENT` with `MISSING_CONFIRMED_BY_COMPLETE_SNAPSHOT` evidence; new row INSERTs with a new `resource_id` at the SAME `canonical_path`; BOTH rows coexist. No uniqueness constraint is violated (`C-C3` REJECTED; `C-C3a`). `resolve_path` (doc C Q5) MUST surface the overlap explicitly, never an arbitrary single winner. |
 | G8 | RENAME + UPDATE in one pass | Two journal events same generation, `intra_generation_seq` 1 then 2. |
 | G9 | Concurrent reconciles on two different roots | Both commit independently. Journal consumption MUST NOT assume a global `event_id` allocation order equals commit-visibility order: a consumer that advanced past a higher `event_id` MUST still be able to read a later-committed lower `event_id` via the per-root `event_seq` cursor vector. |
-| G10 | Worker crashes after Stage 1 commit, leaving the lowest `PENDING` admission | The input stays durably `PENDING` with its `admission_seq`. A later worker reclaims it (lease expiry / claim release), reuses the SAME `admission_seq` (never re-numbered) and processes it. The root is not head-of-line blocked forever (`C-A4`). |
-| G11 | Same immutable snapshot content collected twice at different `observed_at` | Both scans map to the SAME `snapshot_identity` (revision token or versioned deterministic digest), so the second is an IO3 NO-OP. `observed_at` MUST NOT enter the identity. |
+| G10 | Worker crashes after Stage 1 commit, leaving the head-of-line (`head_seq`) admission `PENDING` | The input stays durably `PENDING` with its `admission_seq`. A later worker reclaims it (lease expiry / claim release), reuses the SAME `admission_seq` (never re-numbered) and processes it. The root is not head-of-line blocked forever (`C-A4`/`C-A5`); no higher sequence leapfrogs it. |
+| G11 | Same immutable snapshot content collected twice at different `observed_at` | Both scans map to the SAME `snapshot_identity` (`kind` + `namespace` + `version` + `value`). `observed_at` MUST NOT enter the identity. Whether the second application is a NO-OP depends ONLY on generation: same identity + unchanged `current_generation` -> `NOOP` (`C-AS3`); same identity but `current_generation` advanced -> normal re-reconcile (see G14). |
 | G12 | A path is repeatedly impersonated before the old MISSING resource is removed | Each imposter gets a distinct new `resource_id`; at any instant multiple `PRESENT` rows MAY share the path, each addressable by `resource_id` and distinguished by `removal_evidence_state`. Persistence never collapses them into one row, and path resolution reports the ambiguity. |
+| G13 | A lower `admission_seq` is being processed (claimed, lease NOT expired); a higher `admission_seq` is available | The higher input MUST NOT be claimed, processed, or committed; `head_seq` (min `PENDING`) blocks it until it reaches a terminal status (`C-A5`). No leapfrog even while the head is actively in flight. |
+| G14 | Same `snapshot_identity` re-collected after canonical advanced G -> G+1 | NOT a NO-OP: reconcile normally against G+1, bump to G+2, and APPEND a new `index_applied_snapshot` row with `applied_generation = G+2` (history retained; the earlier row is never UPDATEd to the new generation). |
+| G15 | Two identities that differ only in `snapshot_identity_namespace` or `snapshot_identity_version` | They are DISTINCT identities (kind + namespace + version + value all enter uniqueness); neither collapses into the other, and each may be applied independently. |
 
 > Resolution of G7 (Architect, PR #43 review #5): the earlier note posed this as an
 > `UNKNOWN`. The Architect ruled that `UNIQUE(root_id, canonical_path)` is invalid
