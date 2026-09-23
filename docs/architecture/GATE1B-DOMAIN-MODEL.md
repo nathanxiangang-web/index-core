@@ -831,7 +831,7 @@ NO_BATCH_DESCENDANT_PROPAGATION.
 
 ---
 
-## 5. Worker Self-Check
+## 5. Contract Self-Check
 
 > Rework note: the original "legacy verification wrapper" wrapper (self-run
 > counterexample-hunter / contract-consistency-checker / evidence-reader
@@ -841,7 +841,7 @@ NO_BATCH_DESCENDANT_PROPAGATION.
 | Check | Question | Result | Verification | Decision |
 |-------|----------|--------|--------------|----------|
 | Scenario counterexample check | Do the identity rules R0-R11 produce a wrong result for any of the 11 scenarios, or allow force-matching? | No scenario is force-matched. UNRESOLVED reachable in 2,4,7,9,10. CONFLICT reachable in 1(multi-id),4,7,9,10. R0 prevents cross-root identity leak. R9 never deletes. R11 enforces conservative fallback. R6 v1 (NO_BATCH_DESCENDANT_PROPAGATION) does not force-match descendants. A1 rework: copy -> NEW_RESOURCE, not MATCHED. A2 rework: absent mtime never positive. A4 rework: horizons closed (2.4). | VERIFIED (Worker re-checked each rule against its scenario and the evidence citations) | ADOPT (rules R0-R5, R7-R11); R6 ADOPTED as v1 NO_BATCH_DESCENDANT_PROPAGATION |
-| Contract consistency check | Are the Domain Model (Section 1) and Identity Rules (Section 2) mutually consistent, and consistent with Gate 1A frozen boundaries? | Consistent. resource_id != path != provider_object_id (1.4 vs 1.3). parent_ref remains Collector-local (1.3). hash and provider_object_id remain OPTIONAL (1.3, 1.6, R1-R4). provider_identity_assurance qualifies provider_object_id (1.6, R1). Generation is per-root (1.5) matching disjoint partitions (Section 3). Snapshot is immutable input (1.2) matching Gate 1A A3. CanonicalResource.status MISSING != DELETED (1.4) matching principle 3. R4 and R8 now consistent (A2 rework). R3 requires continuity context (A1 rework). Move/Removal horizon invariant defined (2.4, A4 rework). No Safe Reconcile state machine designed (deferred to Safe Reconcile contract). No completeness acceptance designed (deferred to Completeness contract). No Change Journal format designed (deferred to Safe Reconcile contract). | VERIFIED (Worker cross-checked each Section 1 field against Gate 1A A1-A5 and the DO NOT list) | ADOPT |
+| Contract consistency check | Are the Domain Model (Section 1) and Identity Rules (Section 2) mutually consistent, and consistent with Gate 1A frozen boundaries? | Consistent. resource_id != path != provider_object_id (1.4 vs 1.3). parent_ref remains Collector-local (1.3). hash and provider_object_id remain OPTIONAL (1.3, 1.6, R1-R4). provider_identity_assurance qualifies provider_object_id (1.6, R1). Generation is per-root (1.5) matching disjoint partitions (Section 3). Snapshot is immutable input (1.2) matching Gate 1A A3. CanonicalResource separates `resource_presence` from `removal_evidence_state` (1.4), matching principle 3. R4 and R8 now consistent (A2 rework). R3 requires continuity context (A1 rework). Move/Removal horizon invariant defined (2.4, A4 rework). No Safe Reconcile state machine designed (deferred to Safe Reconcile contract). No completeness acceptance designed (deferred to Completeness contract). No Change Journal format designed (deferred to Safe Reconcile contract). | VERIFIED (The contract review cross-checked each Section 1 field against Gate 1A A1-A5 and the DO NOT list) | ADOPT |
 | Evidence citation check | Do all ACCEPTED_SEMANTIC rules cite a principle, D02 finding, or Gate 1A boundary? | Yes. R0: principle 5 + A1.3 + D02 Q11. R1: A1.2 + D02 Q7/Q8 + A3 rework. R3: principle 7 + principle 5 + D02 Q12 + A1 rework. R4: principle 7 + principle 5 + principle 4 + D02 Q5 + A2 rework. R5: principle 3 + D02 Q12 + A4 rework. R6: principle 3 + principle 4 + D02 Q12 + A5 rework. R7: principle 4 + D02 Q9 + A2 rework. R8: principle 5 + principle 4 + D02 Q12 + A2 rework. R9: principle 3 + D02 Q10 + A4 rework. R10: principle 5 + principle 6 + A1.2. R11: DO NOT + principle 4. Section 2.4: principle 3 + principle 4 + A4 rework. Section 3: A1.3 + D02 Q11 + principle 9. | VERIFIED (every ACCEPTED_SEMANTIC tag has at least one citation) | ADOPT |
 
 ---
@@ -882,8 +882,8 @@ ACCEPTED_SEMANTIC (NO_BATCH_DESCENDANT_PROPAGATION); batch propagation is POST_M
 | A3: did not treat provider_object_id field presence as STRONG | Honored — provider_identity_assurance qualifies the id; only STABLE_WITHIN_SCOPE is STRONG (1.6, R1) |
 | A4: did not leave move and removal horizons unrelated | Honored — Section 2.4 freezes removal_grace_period >= move_recognition_horizon |
 | A5: did not leave R6 as CANDIDATE | Honored — R6 frozen as ACCEPTED_SEMANTIC, NO_BATCH_DESCENDANT_PROPAGATION; batch propagation is POST_MVP |
-| Rework: did not use temporary helper agents / legacy verification wrapper | Honored — Section 5 is Worker Self-Check; no temporary helper agent organization layer |
-| Rework: uses only the formal gate route | Honored — no Gate 1D references; POST_MVP / DEFERRED_UNSCHEDULED used for unscheduled items |
+| Rework: did not use temporary helper agents / legacy verification wrapper | Honored — Section 5 is Contract Self-Check; no temporary helper agent organization layer |
+| Formal gate-route check | Honored — unscheduled capabilities use POST_MVP / DEFERRED_UNSCHEDULED rather than inventing another gate |
 
 ---
 
@@ -918,7 +918,7 @@ ACCEPTED_SEMANTIC (NO_BATCH_DESCENDANT_PROPAGATION); batch propagation is POST_M
 | Identity v1 rules cover all 11 scenarios | Yes | Section 4 coverage table; rules R0-R11 |
 | Identity Result states defined | Yes | Section 2.1 (MATCHED, NEW_RESOURCE, UNRESOLVED, CONFLICT) |
 | Root ownership resolved (A or B with justification) | Yes | Section 3 (Option A, disjoint, with 5-point justification) |
-| Worker Self-Check present (rework: was legacy verification wrapper) | Yes | Section 5 |
+| Contract Self-Check present (rework: was legacy verification wrapper) | Yes | Section 5 |
 | Move/Removal Horizon Invariant defined (A4 rework) | Yes | Section 2.4 |
 | No DO NOT violations | Yes | Section 7 |
 | Formal gate-route check | Yes | Section 8 uses POST_MVP / DEFERRED_UNSCHEDULED |
