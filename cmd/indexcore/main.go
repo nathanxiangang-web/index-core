@@ -1,4 +1,4 @@
-// Command indexcore is the Gate 3 standalone Alpha runtime for the Index Core.
+// Command indexcore is the standalone Alpha runtime for IndexCore.
 package main
 
 import (
@@ -120,7 +120,7 @@ func newLogger(cfg config.Config) *slog.Logger {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprint(w, `indexcore — Index Core standalone Alpha runtime
+	fmt.Fprint(w, `indexcore — provider-neutral canonical resource indexing runtime
 
 Usage:
   indexcore <command> [flags]
@@ -130,7 +130,7 @@ Commands:
   serve          run the read-only HTTP /v1 transport
   doctor         validate database connectivity and schema compatibility
   root           root administration (create/list/config/lifecycle)
-  scan           run a collector scan for a root (rclone)
+  scan           run the configured collector scan for a root
   version        print build version
   help           print this help
 
