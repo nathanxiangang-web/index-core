@@ -3,7 +3,14 @@
 > Architect decision: 2026-09-24
 > Execution issue: #50
 > IndexCore baseline: main@f7edc518dfc99a43cfc464e332e6fe3bfcda601c
-> Status: AUTHORIZED
+> Status: ARCHITECT_ACCEPTED / CLOSED
+
+> Final accepted artifacts:
+> - index-core PR #53 merge `9bc98fb7759f16d5c6b772cf4442dea133e2012b`
+> - reference-web PR #2 merge `8f7062216dc9924f64d9ae0367e504c279704857`
+> - index-core PR #52 merge `9d23b24f0ed715fce6128c031da99f6e111257ed`
+> - final real E2E `PASS=52 FAIL=0`
+> - `INDEXCORE_FROZEN_CONTRACT_CHANGES: NONE`
 
 ## 1. Decision
 
@@ -189,6 +196,14 @@ No:
 
 ## 12. Exit
 
-Gate 4 exits only when Issue #50 is demonstrated end-to-end against the real
-Gate-3 IndexCore runtime and the final Consumer report shows whether the current
-public Query HTTP contract is sufficient for a clean new application.
+**EXIT CONDITION MET — GATE 4 CLOSED.**
+
+Issue #50 was demonstrated end-to-end against the real Gate-3 IndexCore runtime.
+The final Consumer report concludes that the current public read-only `/v1`
+Query Contract is sufficient for a clean new application.
+
+Gate 4 introduced no frozen IndexCore contract change and did not authorize a
+formal successor product.
+
+The next blueprint phase is Gate 5 — Future Product Architecture, but Gate 5 is
+**NOT AUTHORIZED** until a new Architect plan is created.

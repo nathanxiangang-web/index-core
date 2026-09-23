@@ -1,171 +1,112 @@
 # Index Core — Next Actions
 
-## Current phase
+## Current state
 
-**Gate 4 — Reference Consumer Integration**
+**Gate 4 — Reference Consumer Integration — CLOSED**
 
 Architecture / acceptance owner: **ChatGPT Architect**
 
-Execution owner: **Codex**
+Execution owner: **none currently**
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status:
 
-Active execution issue:
+**NO ACTIVE IMPLEMENTATION GATE**
 
-**#50 — [CODEX][GATE-4] Reference Consumer Integration**
+Accepted Gate-4 merge commits:
 
-Authoritative IndexCore baseline:
+- IndexCore verification fixture PR #53:
+  `9bc98fb7759f16d5c6b772cf4442dea133e2012b`
+- Reference Web PR #2:
+  `8f7062216dc9924f64d9ae0367e504c279704857`
+- IndexCore authoritative findings PR #52:
+  `9d23b24f0ed715fce6128c031da99f6e111257ed`
 
-**`main@f7edc518dfc99a43cfc464e332e6fe3bfcda601c`** (Gate 3 merged and closed).
+Authoritative Gate-4 report:
 
-## Gate 4 objective
+`docs/gate4/GATE4-REFERENCE-CONSUMER-REPORT.md`
 
-Validate that a brand-new Consumer can use IndexCore cleanly through the public
-read-only HTTP contract without inheriting CloudSite history or IndexCore internals.
+Final executable evidence:
 
-```text
-Browser
-   ↓
-Reference Web
-   ↓ server-side
-IndexCore HTTP /v1
-   ↓
-Canonical Inventory / Journal
-```
+`PASS=52 FAIL=0`
 
-## Repository decision
+`INDEXCORE_FROZEN_CONTRACT_CHANGES: NONE`
 
-Create a separate repository:
+## Gate 4 conclusion
 
-**`nathanxiangang-web/indexcore-reference-web`**
+The public read-only `/v1` Query Contract is sufficient for a clean new
+server-side Consumer.
 
-This repository is:
+The accepted Reference Web proves:
 
-- disposable;
-- an integration/reference client;
-- not CloudSite 2;
-- not the formal successor product;
-- not a long-term compatibility promise.
+- Q1–Q9 consumption without direct Store access;
+- hierarchy and generation-bound pagination;
+- explicit path ambiguity;
+- active and removed views;
+- per-root Journal semantics;
+- stale-cursor handling;
+- retained DEPRECATED/DELETED audit navigation;
+- IndexCore unavailable/restart behavior;
+- zero PostgreSQL / IndexCore-internal / provider / CloudSite coupling.
 
-Do not put the Reference Web inside the IndexCore repository.
+The Reference Web remains a disposable validation artifact. It is not the formal
+successor product.
 
-## Technology lock
+CloudSite 1.0 remains **Legacy / Frozen Product**.
 
-Reference Web:
+## Next blueprint phase
 
-- Next.js + TypeScript;
-- App Router;
-- server components / route handlers where appropriate;
-- server-side `INDEXCORE_BASE_URL`;
-- no separate FastAPI service;
-- no database / ORM;
-- no Redis;
-- no auth framework;
-- lightweight UI only.
+**Gate 5 — Future Product Architecture**
 
-## Required Consumer coverage
+Current status:
 
-Exercise all frozen Query operations over HTTP:
+**NOT AUTHORIZED**
 
-- Q1 get_root;
-- Q2 list_roots;
-- Q3 get_resource;
-- Q4 list_resources hierarchy;
-- Q5 resolve_path and ambiguity;
-- Q6 list_active_resources;
-- Q7 list_removed;
-- Q8 read_journal;
-- Q9 get_root_status.
+The next action belongs to the Architect, not the Worker.
 
-Minimum pages:
+Before any new repository/product implementation begins, Gate 5 planning must
+define at least:
 
-- `/` status summary;
-- `/roots`;
-- `/roots/[rootId]` hierarchy + pagination;
-- `/resources/[resourceId]`;
-- `/resolve`;
-- `/removed`;
-- `/journal`.
+- formal successor-product responsibility boundary;
+- Web/UI scope;
+- auth / user / admin ownership;
+- search / catalog responsibility;
+- share / favorite / history / playback responsibility;
+- preview / download / 302 behavior;
+- IndexCore client boundary and deployment topology;
+- data ownership outside IndexCore;
+- migration/cutover policy, if any;
+- explicit relationship to CloudSite Legacy/Frozen.
 
-## Boundary rules
+## Not authorized yet
 
-Reference Web must have:
+Do not begin:
 
-- 0 direct PostgreSQL access;
-- 0 IndexCore Go imports;
-- 0 AList/OpenList access;
-- 0 rclone dependency;
-- 0 CloudSite runtime/code dependency;
-- 0 application database;
-- 0 canonical mutation path.
-
-The browser must not call IndexCore directly.
-
-## CloudSite policy
-
-CloudSite 1.0 is now **Legacy / Frozen Product**.
-
-Allowed:
-
-- critical security/operational maintenance when separately requested;
-- historical UX/product-requirement research.
-
-Not part of Gate 4:
-
-- IndexCore integration into CloudSite;
-- CloudSite V2 refactor continuation;
-- migration of CloudSite SQLite models into IndexCore;
-- copying CloudSite backend/frontend wholesale.
-
-## Work order
-
-Follow Issue #50 P0-P10.
-
-Recommended execution sequence:
-
-1. create/reference repo + config + typed client;
-2. Q1-Q9 pages and error states;
-3. real IndexCore E2E + stale-cursor UX;
-4. boundary proof;
-5. write `docs/gate4/GATE4-REFERENCE-CONSUMER-REPORT.md` in IndexCore;
-6. stop for Architect review.
-
-If the Reference Web finds a missing capability, classify it first as:
-
-```text
-IndexCore responsibility
-Consumer responsibility
-Future product responsibility
-Out of scope
-```
-
-Do **not** silently expand IndexCore.
-
-## Explicitly forbidden in Gate 4
-
-- CloudSite integration/migration;
-- formal successor product;
-- login/register/auth/user/admin;
-- search engine/catalog;
+- a formal CloudSite successor;
+- CloudSite migration;
+- auth/user/admin;
+- search/catalog;
 - favorites/history/playback;
-- shares;
+- share subsystem;
 - preview/player/Office;
 - download gateway / 302 product behavior;
 - 115 downloader;
 - AI;
 - CMS;
-- write APIs into IndexCore;
+- direct IndexCore write APIs;
 - direct browser-to-IndexCore public exposure;
-- direct IndexCore PostgreSQL access;
-- silent changes to Gate 1B/1C or Gate-3 accepted runtime semantics.
+- changes to frozen Gate 1B/1C semantics;
+- Scanner Resume / native delta / multi-daemon HA unless separately planned.
 
-## Review handoff
+## Recovery rule
 
-Gate 4 requires:
+If a future session asks to “continue” without a new Gate-5 architecture plan,
+do **not** start coding.
 
-- one implementation PR in `indexcore-reference-web`;
-- one findings/report PR in `index-core` if needed for the final Gate-4 report.
+First read:
 
-The Worker does not merge either PR.
+- `PROJECT-STATE.md`;
+- this file;
+- `docs/gate4/GATE4-REFERENCE-CONSUMER-REPORT.md`;
+- the blueprint Gate-5 section.
 
-Use Issue #50 final status template and stop for ChatGPT Architect review.
+Then create/approve the Gate-5 architecture plan before assigning Worker work.

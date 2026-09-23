@@ -20,7 +20,7 @@ Gate 2 PoC) and merged to `main` at `410050d0b084d999063cde1a4be8d2051fbcb88f`.
 Gate 3 MVP Alpha authorized by Architect in Issue #47, accepted at PR #49
 head `055402da83235e6dc5f88f45206378fb210a7672`, and merged to `main` at
 `f7edc518dfc99a43cfc464e332e6fe3bfcda601c` (Issue #47 completed).
-Gate 4 Reference Consumer Integration is authorized by Architect in Issue #50.
+Gate 4 Reference Consumer Integration was Architect-accepted in Issue #50. Verification fixture PR #53 merged at `9bc98fb7759f16d5c6b772cf4442dea133e2012b`; Reference Web PR #2 merged at `8f7062216dc9924f64d9ae0367e504c279704857`; authoritative findings PR #52 merged at `9d23b24f0ed715fce6128c031da99f6e111257ed`.
 
 ## Execution model
 
@@ -44,52 +44,36 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
-**Gate 4 — Reference Consumer Integration**
+**Gate 4 — Reference Consumer Integration — CLOSED**
 
-Gate 1C, Gate 2, and Gate 3 are **CLOSED**. Gate 3 merged to `main` at
-`f7edc518dfc99a43cfc464e332e6fe3bfcda601c`; Issue #47 is completed.
+Gate 1C, Gate 2, Gate 3, and Gate 4 are **CLOSED / ARCHITECT_ACCEPTED**.
+
+Gate 4 final accepted artifacts:
+
+- IndexCore verification fixture PR #53 merged at `9bc98fb7759f16d5c6b772cf4442dea133e2012b`;
+- Reference Web PR #2 merged at `8f7062216dc9924f64d9ae0367e504c279704857`;
+- authoritative Gate-4 findings PR #52 merged at `9d23b24f0ed715fce6128c031da99f6e111257ed`;
+- final rendered E2E evidence: `PASS=52 FAIL=0`;
+- `INDEXCORE_FROZEN_CONTRACT_CHANGES: NONE`.
+
+Gate 4 proved that a brand-new application can consume IndexCore through the
+server-side read-only `/v1` Query Contract without depending on IndexCore
+internals, PostgreSQL, AList/OpenList, rclone, or CloudSite architecture.
+
+CloudSite 1.0 remains **Legacy / Frozen Product**.
+
+### Next blueprint phase
+
+**Gate 5 — Future Product Architecture**
 
 Status:
 
-**AUTHORIZED / IN PROGRESS**
+**NOT AUTHORIZED / ARCHITECT PLANNING REQUIRED**
 
-Active execution issue:
-
-**#50 — [CODEX][GATE-4] Reference Consumer Integration**
-
-Execution surfaces:
-
-- `nathanxiangang-web/index-core` — frozen/accepted core; only consumer findings/report changes are expected unless a separately reviewed true IndexCore contract gap is found;
-- `nathanxiangang-web/indexcore-reference-web` — new, separate, disposable Reference Web repository to be created in Gate 4.
-
-Architect-locked Gate-4 shape:
-
-```text
-Browser
-   ↓
-Reference Web
-   ↓ server-side BFF / proxy
-IndexCore HTTP /v1
-   ↓
-IndexCore
-```
-
-Rules:
-
-- CloudSite 1.0 is **Legacy / Frozen Product**, not the Gate-4 integration target;
-- do not continue CloudSite V2 refactors;
-- do not copy CloudSite application code into the Reference Web;
-- Reference Web uses Next.js + TypeScript and has no application database;
-- browser does not connect directly to IndexCore;
-- all IndexCore access is server-side over the public read-only `/v1` HTTP contract;
-- Q1–Q9 must be exercised;
-- zero direct PostgreSQL, AList/OpenList, rclone, Go-package, or CloudSite runtime coupling;
-- Gate 4 validates the Consumer boundary only; it is **not** the formal successor product.
-
-Still deferred: formal next-generation product architecture, auth/user/admin, search/catalog,
-favorites/history/playback, shares, previews/player, download/302 product behavior, 115,
-AI, Scanner Resume, native delta/true incremental, destructive-safe provider COMPLETE,
-multi-daemon HA/distributed leases.
+There is no active Gate-5 execution issue and no Worker implementation task.
+Do not start a formal successor product, auth/user system, search/catalog,
+preview/download product path, 115 integration, AI, or other deferred product
+work until a new Architect plan explicitly authorizes it.
 
 ## Accepted architecture
 
@@ -247,6 +231,34 @@ Deliberately deferred after Gate 3:
   completeness evidence
 - multi-daemon HA / distributed leases
 
+### Gate 4 — Reference Consumer Integration
+
+Status: **ACCEPTED / CLOSED** (ARCHITECT FINAL ACCEPTANCE — Issue #50)
+
+Evidence:
+
+- `docs/gate4/GATE4-REFERENCE-CONSUMER-REPORT.md` — authoritative findings;
+- IndexCore verification fixture PR #53 → `9bc98fb7759f16d5c6b772cf4442dea133e2012b`;
+- Reference Web PR #2 → `8f7062216dc9924f64d9ae0367e504c279704857`;
+- IndexCore report PR #52 → `9d23b24f0ed715fce6128c031da99f6e111257ed`;
+- real rendered Reference Web E2E: `PASS=52 FAIL=0`.
+
+Accepted results:
+
+- separate disposable Reference Web — PASS;
+- server-side-only IndexCore access — PASS;
+- Q1–Q9 coverage — PASS;
+- hierarchy, ambiguity, active/removed, Journal and stale cursor behavior — PASS;
+- retained DEPRECATED/DELETED partition navigation — PASS;
+- IndexCore unavailable/restart behavior — PASS;
+- zero direct PostgreSQL / IndexCore Go / provider / CloudSite coupling — PASS;
+- no public IndexCore contract gap found.
+
+`INDEXCORE_FROZEN_CONTRACT_CHANGES: NONE`
+
+Gate 4 did **not** create CloudSite 2 and did not authorize the formal successor
+product. The Reference Web remains a disposable validation artifact.
+
 ## Gate 1C scope (CLOSED)
 
 All six Gate 1C deliverables are delivered, Architect-accepted, and frozen:
@@ -289,15 +301,18 @@ All six Gate 1C deliverables are delivered, Architect-accepted, and frozen:
 
 ## Implementation status
 
-**GATE 4 REFERENCE CONSUMER INTEGRATION — AUTHORIZED**
+**GATE 4 REFERENCE CONSUMER INTEGRATION — CLOSED**
 
-Gate 3 MVP Alpha is merged and closed at
-`f7edc518dfc99a43cfc464e332e6fe3bfcda601c`.
+Gate 4 has completed Architect Final Acceptance and all three accepted artifacts
+are merged.
 
-Gate 4 is authorized through Issue #50 and
-`docs/gate4/GATE4-REFERENCE-CONSUMER-PLAN.md`.
+Current execution status:
 
-CloudSite is no longer the direct integration target. It remains a legacy/frozen
-product and historical reference. Gate 4 uses a new disposable Reference Web to
-validate the IndexCore Consumer Contract before any formal successor product is
-designed.
+```text
+Gate 4: CLOSED
+Gate 5: NOT AUTHORIZED
+Active Worker task: NONE
+```
+
+Next action is Architect planning for Gate 5 only. No successor-product
+implementation is authorized by this closeout.
