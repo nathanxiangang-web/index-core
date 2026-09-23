@@ -1,8 +1,9 @@
 # Gate 3 — IndexCore Alpha Deployment
 
+> **Historical Gate 3 evidence.** For current operator documentation use [../QUICKSTART.md](../QUICKSTART.md), [../CLI.md](../CLI.md), [../COLLECTORS.md](../COLLECTORS.md), and [../OPERATIONS.md](../OPERATIONS.md). The commands below remain valid for the accepted Alpha runtime.
+
 Single `indexcore` binary + PostgreSQL 18. rclone is an **external runtime
-dependency** (never linked into the Kernel). CloudSite integration and UI are out
-of scope (Gate 4+).
+dependency** (never linked into the Kernel). Product UI/auth/search/download concerns remain outside IndexCore; Gate 4 later verified a separate server-side Reference Consumer.
 
 ## Build
 
