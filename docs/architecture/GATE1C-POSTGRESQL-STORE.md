@@ -3,7 +3,7 @@
 > Implementation-facing contract for the PostgreSQL realization of the already
 > accepted Gate 1A **Store Interface**.
 > Produced by the Codex Executor (Worker) for ChatGPT Architect review.
-> Status: **PARTIAL_FOR_ARCH_REVIEW** — reworked per PR #43 Architect review; A/B/C are NOT FROZEN.
+> Status: **FROZEN** — Architect-approved in the PR #43 Final Freeze Decision (final verification against head `09faf41`). Part of the frozen Gate 1C A/B/C contract.
 > Baseline: remote `main` = `6a131f17657807d9aee2921be1f286ceaff784e4`.
 > Accepted inputs: `GATE1B-DOMAIN-MODEL.md`, `GATE1B-SNAPSHOT-COMPLETENESS.md`,
 > `GATE1B-SAFE-RECONCILE.md`, `GATE1B-ADVERSARIAL-CASES.md`,

@@ -3,7 +3,7 @@
 > Implementation-facing contract for the minimal provider-neutral, read-only
 > Consumer surface over the Canonical Inventory and the Canonical Change Journal.
 > Produced by the Codex Executor (Worker) for ChatGPT Architect review.
-> Status: **PARTIAL_FOR_ARCH_REVIEW** — reworked per PR #43 Architect review (round 2); A/B/C are NOT FROZEN.
+> Status: **FROZEN** — Architect-approved in the PR #43 Final Freeze Decision (final verification against head `09faf41`). Part of the frozen Gate 1C A/B/C contract.
 > Baseline: remote `main` = `6a131f17657807d9aee2921be1f286ceaff784e4`.
 > Depends on `GATE1C-POSTGRESQL-STORE.md` (A) and `GATE1C-TRANSACTION-BOUNDARY.md` (B).
 
