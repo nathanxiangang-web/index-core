@@ -216,3 +216,44 @@ FROZEN_CONTRACT_CHANGES: NONE
 Tests: real PostgreSQL 18.6 integration + real rclone v1.75.1 process-boundary run;
 62 test functions; `go vet` and `gofmt` clean.
 
+---
+
+# Round 4 rework (PR #46 Round-3 review, R3-1..R3-8)
+
+Head: **`aac9b0e`**. The safe sequence is now the production path via
+`Coordinator.ProcessSnapshot`:
+`SUBMITTED -> atomic Stage-1 admission -> generation-consistent evaluation/final
+identity (under the per-root lock) -> Stage-2 reconcile`.
+
+| Item | Fix |
+|------|-----|
+| R3-1 | Removal-decision context is derived from the SAME identity resolution as reconcile (reappearance-reset + imposter/old-still-missing outcomes), not path membership. A reappearance after MISSING is no longer an IO3 NOOP and resets evidence. |
+| R3-2 | Corroboration requires a qualifying earlier **admitted** observation (admission_seq < current; SUCCESS, no error, confirmed no skips, positive freshness, STRONG) that independently observed the same reduced **scope signature** (from actual entries, not metadata); insignificant shrink never corroborates; unrelated earlier observations do not. |
+| R3-3 | Evaluation/final IO3 identity runs UNDER the per-root lock in Stage 2, bound to the canonical generation being reconciled. |
+| R3-4 | Stage-1 `AdmitSnapshot` is one atomic short transaction (lock root -> validate Snapshot exists + SUBMITTED + same root -> allocate seq -> INSERT PENDING); Stage 2 loads the head admission and verifies the root/snapshot binding. |
+| R3-5 | Stale/out-of-order restored to distinct **STALE_INPUT** (admission + reconcile result), Snapshot REJECTED, no canonical mutation. |
+| R3-6 | `Config.Validate()` runs fail-closed in the coordinator before any mutation. |
+| R3-7 | `query.ReadOptions` separates removed / deprecated-root / deleted-root dimensions; Q4 real hierarchy (parent_resource_id maintained on ADD and MOVE) with a generation-bound cursor; `RootStatus` honors root visibility. |
+| R3-8 | `Coordinator.ProcessSnapshot` makes the safe sequence the normal path; end-to-end fixtures exercise it. |
+
+## Round 4 status template
+
+```
+STATUS: READY_FOR_ARCH_REVIEW — GATE 2 POC (Round 4)
+
+POSTGRESQL_STORE: PASS
+TRANSACTION_BOUNDARY: PASS
+KERNEL_EVALUATION: PASS
+SAFE_RECONCILE: PASS
+CHANGE_JOURNAL: PASS
+QUERY_CONTRACT: PASS
+FIXTURE_POC: PASS
+RCLONE_ADAPTER_ADDITIVE: PASS (additive only; destructive-safe COMPLETE explicitly unsupported)
+
+FROZEN_CONTRACT_CHANGES: NONE
+```
+
+Tests: real PostgreSQL 18.6 + real rclone v1.75.1 process-boundary run; 65 test
+functions; `go vet` / `gofmt` clean.
+
+
