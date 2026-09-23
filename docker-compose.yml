@@ -1,8 +1,8 @@
-# Gate 3 Alpha local deployment. PostgreSQL 18 with a persistent volume.
+# IndexCore Alpha local deployment. PostgreSQL 18 with a persistent volume.
 # rclone runs inside the indexcore image as an external process.
 #
 # Fresh-environment bootstrap: the one-shot `migrate` service runs to completion
-# BEFORE `serve` starts, so `serve` never auto-migrates (G3-R8).
+# BEFORE `serve` starts, so `serve` never auto-migrates.
 services:
   postgres:
     image: postgres:18
@@ -36,7 +36,7 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
-      # Explicit non-loopback bind for container reachability; Gate 3 has no auth.
+      # Explicit non-loopback bind for container reachability; current Alpha has no built-in auth.
       INDEXCORE_DATABASE_URL: postgres://indexcore:indexcore@postgres:5432/indexcore?sslmode=disable
       INDEXCORE_HTTP_ADDR: 0.0.0.0:8080
     ports:
