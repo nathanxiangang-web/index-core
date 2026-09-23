@@ -8,9 +8,11 @@
 
 ## Main branch
 
-Latest accepted baseline at this governance transition:
+Always verify the current remote `main` before execution.
 
-`7dcc89bcfa74af2d872358b79fb7638bf309f6fa`
+Governance transition commit:
+
+`24a084c51f88a2eafd4ec7d30569963192619f96`
 
 Accepted content includes:
 
