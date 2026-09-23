@@ -354,5 +354,4 @@ boundary.)
 2. Should `CredentialRef` be part of this contract or handled entirely above
    the Collector (by an orchestrator)? This document puts it at the Collector
    boundary but not in the Kernel contract.
-3. `adapter_generation` is marked DEFERRED_TO_GATE1B. Confirm this is not
-   needed for Gate 1A boundary freezing.
+3. `adapter_generation` / provider-cursor semantics are deferred to Post-MVP Incremental and are not needed for Gate 1A boundary freezing.
