@@ -173,3 +173,46 @@ CANDIDATE implementation choices (chosen for PoC ≠ newly frozen architecture):
 provider assurance hint, entry `ParentRef` = parent canonical path, enum storage
 as constrained text, T8 primary key = six C-AS1 columns, migration runner, lock/CAS
 mechanism, shrink threshold 0.5 (D-DEFER-7).
+---
+
+# Round 3 rework (PR #46 Round-2 review, R2-1..R2-12)
+
+Head: **`a01104c`**.
+
+| Item | Fix |
+|------|-----|
+| R2-1 | R1 now requires the CURRENT entry's own `provider_identity_assurance = STABLE_WITHIN_SCOPE`; nil/UNVERIFIED/UNSTABLE never qualifies as STRONG. |
+| R2-2 | A present hash contradiction never falls through to the size+mtime move fallback; hash-present entries match only by hash. |
+| R2-3 | `MISSING_EVIDENCE` / `REMOVAL_CANDIDATE` / `RESET_REMOVAL_EVIDENCE` are evidence-only and do NOT advance `current_generation`; they persist in the zero-mutation Stage-2 path. |
+| R2-4 | A Kernel-derived removal-decision context (first absence vs independent confirmation vs reappearance reset, no snapshot_id/timing) is included in the final IO3 digest, so identical later independent COMPLETE observations confirm removal. |
+| R2-5 | Orchestration is `SUBMITTED -> Stage-1 admission_seq -> evaluation -> final identity -> Stage-2 reconcile`; admission precedes evaluation. |
+| R2-6 | `scope_shrink_corroboration` is derived from persisted admitted snapshots; the caller-injected verdict is removed. |
+| R2-7 | `MinIndependentConfirmations > 1` is rejected; `missing_last_snapshot_id` prevents double-counting one observation. |
+| R2-8 | `RemovalGracePeriod >= MoveRecognitionHorizon` enforced via `Config.Validate` and an effective grace never shorter than the horizon. |
+| R2-9 | IdentityEvidence `observed_at` = the Snapshot observation time, not DB processing time. |
+| R2-10 | `entry_count` derived from normalized entries; digest entry sort is a total canonical order. |
+| R2-11 | Query gains Q1 `get_root` and Q4 `list_resources`; root visibility enforced on resource reads (DELETED/DEPRECATED children do not leak by default); multi-statement reads (RootStatus, ResolvePath) use one read-only consistent transaction. |
+| R2-12 | FAILED (and non-EVALUATED) snapshots are REJECTED, never APPLIED/RECONCILED. |
+
+Migration `0003` adds `missing_last_snapshot_id`.
+
+## Round 3 status template
+
+```
+STATUS: READY_FOR_ARCH_REVIEW — GATE 2 POC (Round 3)
+
+POSTGRESQL_STORE: PASS
+TRANSACTION_BOUNDARY: PASS
+KERNEL_EVALUATION: PASS
+SAFE_RECONCILE: PASS      # implemented paths obey frozen R1/R3/R4/R5/R8/R10/R11; R6/R7 nuance still not exhaustive
+CHANGE_JOURNAL: PASS
+QUERY_CONTRACT: PASS
+FIXTURE_POC: PASS
+RCLONE_ADAPTER_ADDITIVE: PASS (additive only; destructive-safe COMPLETE explicitly unsupported)
+
+FROZEN_CONTRACT_CHANGES: NONE
+```
+
+Tests: real PostgreSQL 18.6 integration + real rclone v1.75.1 process-boundary run;
+62 test functions; `go vet` and `gofmt` clean.
+
