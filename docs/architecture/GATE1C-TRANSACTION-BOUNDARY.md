@@ -3,6 +3,7 @@
 > Implementation-facing contract for the exact transaction / CAS / locking
 > semantics of one per-root reconcile.
 > Produced by the Codex Executor (Worker) for ChatGPT Architect review.
+> Status: **PARTIAL_FOR_ARCH_REVIEW** — reworked per PR #43 Architect review; A/B/C are NOT FROZEN.
 > Baseline: remote `main` = `6a131f17657807d9aee2921be1f286ceaff784e4`.
 > Depends on `GATE1C-POSTGRESQL-STORE.md` (deliverable A).
 
@@ -86,7 +87,7 @@ before reconcile work can run").
 | Step | Action | Tag |
 |------|--------|-----|
 | R1 | Acquire per-root serialization for the reconcile | `DERIVED` |
-| R2 | Select the lowest `PENDING` `admission_seq` for the root (ordered) | `DERIVED` (IO5) |
+| R2 | Select the lowest `PENDING` `admission_seq` for the root whose claim is free or lease-expired; reclaim it reusing the SAME `admission_seq` (ordered) | `DERIVED` (IO5; PR #43 review #2) |
 | R3 | Load `index_root` (lifecycle, `current_generation`, `latest_admission_seq`) | `DERIVED` |
 | R4 | Reject if `lifecycle_state = 'DELETED'` -> record `REJECTED`, no mutation | `DERIVED` |
 | R5 | Idempotency check against `index_applied_snapshot` (IO3) | `DERIVED` |
@@ -98,6 +99,31 @@ before reconcile work can run").
 | R11 | Advance generation with CAS | `DERIVED` |
 | R12 | Record `index_admission.status='APPLIED'` + `index_applied_snapshot` | `DERIVED` |
 | R13 | Commit atomically | `DERIVED` |
+
+> `DERIVED` (Architect, PR #43 review #1) — journal events are ordered per root by
+> `event_seq`; the global `event_id` is opaque identity only and is NOT a
+> commit-order cursor (doc A Sec 3.9). Under concurrent roots, allocation order is
+> not commit-visibility order. Cross-root consumers track a **per-root cursor
+> vector** `{root_id: event_seq}`. `FACT`.
+
+### 1.3 Crash recovery and lease reclaim (PR #43 review #2)
+
+> `DERIVED` (Architect) — process death after Stage 1 MUST NOT head-of-line block
+> a root forever, and a claimed-but-not-committed input must be reclaimable. The
+> schema is `index_admission.status='PENDING'` plus
+> `claimed_by`/`claimed_at`/`lease_expires_at` (doc A `C-A4`). `FACT`.
+
+| # | Rule | Tag |
+|---|------|-----|
+| RC1 | The lowest `PENDING` input is claimable when `claimed_by IS NULL` or `lease_expires_at < now()`. | `PROPOSED` |
+| RC2 | A reclaim keeps the SAME `admission_seq`; sequences are never re-numbered or reassigned to other inputs. | `DERIVED` |
+| RC3 | Claiming sets `claimed_by`/`claimed_at`/`lease_expires_at` in a short transaction before reconcile work; Stage 2 then runs normally. | `PROPOSED` |
+| RC4 | If a later `admission_seq` for the same root has already committed while an older input was stranded, the older input is `STALE_INPUT` per IO4 and MUST NOT overwrite canonical state. | `DERIVED` |
+| RC5 | A rolled-back reconcile sets `status='FAILED'` in a separate later transaction (T-AT5); `FAILED` is terminal and does not head-of-line block later inputs. | `PROPOSED` |
+
+> `DERIVED` `FAILED` is distinct from `PENDING`: a `FAILED` input is not
+> auto-retried by reclaim unless an explicit retry policy re-admits it under the
+> SAME `admission_seq`. `INFERENCE`.
 
 ---
 
@@ -155,7 +181,7 @@ UPDATE index_root
 
 | Step | Behavior |
 |------|----------|
-| Compute `snapshot_identity` | Collector-declared stable token scoped to root (doc A Sec 3.8). |
+| Compute `snapshot_identity` | Frozen provider-neutral contract (doc A Sec 3.8): stable adapter/native revision token OR versioned deterministic digest; no wall-clock/admission/DB timing. |
 | Look up `index_applied_snapshot(root_id, snapshot_identity)` | If present AND `applied_generation = current_generation` -> NO-OP. |
 | NO-OP | No canonical write, no journal event, no generation bump. Set `index_admission.status='NOOP'`. |
 | Replay after canonical advanced | `applied_generation < current_generation` -> normal reconcile against the newer generation (NOT a no-op). |
@@ -163,8 +189,10 @@ UPDATE index_root
 > `DERIVED` "Same snapshot" = same snapshot identity AND same canonical generation
 > observed at load (GATE1B-SAFE-RECONCILE Sec 2.4). `FACT`.
 
-> `CANDIDATE` — the `snapshot_identity` key is not frozen by Gate 1B (R-LC-6).
-> Escalated to Architect (doc A Sec 3.8, Sec 9).
+> `DERIVED` (Architect, PR #43 review #3) — the `snapshot_identity` key is now
+> frozen in doc A Sec 3.8. Identical observed content collected at a different
+> `observed_at` yields the SAME identity; adapter E maps concrete sources later.
+> `FACT`.
 
 ---
 
@@ -184,7 +212,8 @@ Definitions:
 | `own_seq <= applied_max` AND snapshot is a duplicate of an applied input | `NOOP` (IO3) | no mutation |
 | `own_seq <= applied_max` AND NOT a duplicate | `STALE_INPUT` (IO4) | no canonical mutation; record `index_reconcile_result.outcome='STALE_INPUT'` |
 | `own_seq > applied_max` AND no lower `PENDING` exists | normal | process against current generation (IO5) |
-| `own_seq > applied_max` AND a lower `PENDING` exists | ordering violation | MUST NOT commit before the lower input (IO5/IO6); wait/skip/reorder under the per-root lock |
+| `own_seq > applied_max` AND a lower `PENDING`/claimed input exists | ordering / recovery | MUST NOT commit before the lower input is resolved (IO5/IO6); reclaim it via lease expiry (Sec 1.3), or if it is terminal `FAILED`, proceed only after IO4 classification |
+| lower input stranded `PENDING` after process death, a newer input present | recovery / IO4 | the newer input MUST NOT overwrite canonical state on behalf of the older; reclaim the older with the SAME `admission_seq`, or mark it `STALE_INPUT` (Sec 1.3 RC4, T-AT7) |
 
 > `DERIVED` An older input MUST NOT overwrite canonical state committed by a newer
 > admitted input (IO2). `FACT`.
@@ -210,7 +239,9 @@ Definitions:
 | T-AT2 | On any error before commit, `ROLLBACK` leaves durable state unchanged. | `DERIVED` |
 | T-AT3 | A failed commit leaves previous canonical truth intact (INV-013). | `DERIVED` |
 | T-AT4 | No partial journal append, no partial generation bump is durable. | `DERIVED` |
-| T-AT5 | The `index_admission` row for a failed reconcile is set to `REJECTED`/`FAILED` in a SEPARATE, later transaction (so the failure itself is recorded without violating atomicity). | `PROPOSED` |
+| T-AT5 | The `index_admission` row for a failed reconcile is set to `FAILED` (terminal) in a SEPARATE, later transaction, so the failure is recorded without violating atomicity. This matches doc A `index_admission.status` and the Section 6/11 state machine. | `PROPOSED` |
+| T-AT6 | A `PENDING` input stranded by process death is reclaimed via lease expiry / claim release with the SAME `admission_seq` (Sec 1.3); the root is never head-of-line blocked forever. | `DERIVED` (PR #43 review #2) |
+| T-AT7 | If an older `admission_seq` is stranded while a newer one is processed, the newer MUST NOT silently write over it: the older is reclaimed (T-AT6) or classified `STALE_INPUT` per IO4. | `DERIVED` |
 
 > `INFERENCE` for T-AT5: recording the failure cannot be part of the rolled-back
 > transaction; it must be a subsequent write. This is a Worker proposal.
@@ -223,11 +254,12 @@ Definitions:
 |------------------|----------------------|-----|
 | 1 — Identity UNRESOLVED | no canonical mutation; conflict into `index_reconcile_result`; continue other entries; commit the rest | `DERIVED` |
 | 2 — Snapshot PARTIAL | additive-only writes; MUST NOT touch `removal_evidence_state`/`missing_since`/`consecutive_complete_missing`; no `resource-removed`; commit | `DERIVED` |
-| 3 — internal error | `ROLLBACK`; record failure (T-AT5) | `DERIVED` |
+| 3 — internal error | `ROLLBACK`; set `index_admission.status='FAILED'` in a later tx (T-AT5); no durable canonical mutation | `DERIVED` |
 | 4 — same snapshot replay | NO-OP; no writes; no generation bump; `status='NOOP'` | `DERIVED` |
 | 5 — stale generation | CAS returns 0 rows -> `ROLLBACK`; retry (reload+recompute) or abort per policy | `DERIVED` |
 | 6 — concurrent same-root | per-root serialization + ascending `admission_seq`; exactly one commits per generation | `DERIVED` |
 | 7 — commit failure | `ROLLBACK`; previous truth preserved | `DERIVED` |
+| 8 — worker crash after admission | input durably `PENDING`; reclaimed by lease expiry with the SAME `admission_seq` (Sec 1.3, T-AT6) | `DERIVED` |
 
 > `DERIVED` Consolidated guarantee: any uncommitted reconcile MUST NOT destroy
 > previous canonical truth (GATE1B-SAFE-RECONCILE Sec 2.8; INV-013). `FACT`.
@@ -278,7 +310,8 @@ Definitions:
 | `CAS_FAIL` retry vs abort | `CANDIDATE` | Sec 4. |
 | Isolation level | `CANDIDATE` | Sec 7. |
 | `latest_applied_admission_seq` high-water mark column | `CANDIDATE` | Sec 4. |
-| Failure recording transaction (T-AT5) shape | `PROPOSED` | Sec 5. |
+| Failure recording transaction shape | `PROPOSED` (defined) | T-AT5: a later tx sets terminal `FAILED`. Sec 5. |
+| Admission lease duration / reclaim trigger | `CANDIDATE` | Correctness fixed by Sec 1.3 / doc A `C-A4`; exact timing is operational config. |
 | Two-stage vs single-transaction admission+reconcile | `CANDIDATE` | Sec 1; both satisfy IO1-IO7, two-stage matches IO1 wording more literally. |
 
 ---
@@ -294,6 +327,9 @@ Definitions:
 | T5 | Internal error mid-reconcile | rollback; `index_admission` set `FAILED` in a later tx. |
 | T6 | Confirmed removal | tombstone UPDATE + `resource-removed` INSERT + generation CAS + applied record, one commit. |
 | T7 | DELETED root | R4 rejects before any write. |
+| T8 | Worker crash leaves the lowest input `PENDING` | No process holds the claim; a later worker reclaims with the SAME `admission_seq` (Sec 1.3) and completes the reconcile; the root is never permanently blocked. |
+| T9 | Two different roots reconcile concurrently | Both commit independently; no global ordering token is consulted; consumers use a per-root cursor vector (doc A Sec 3.9). |
+| T10 | Older `PENDING` stranded while a newer input arrives | The newer MUST NOT commit over the older; the older is reclaimed (T-AT6) or becomes `STALE_INPUT` (IO4, T-AT7). |
 
 ---
 

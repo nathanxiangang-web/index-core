@@ -3,6 +3,7 @@
 > Implementation-facing contract for the PostgreSQL realization of the already
 > accepted Gate 1A **Store Interface**.
 > Produced by the Codex Executor (Worker) for ChatGPT Architect review.
+> Status: **PARTIAL_FOR_ARCH_REVIEW** — reworked per PR #43 Architect review; A/B/C are NOT FROZEN.
 > Baseline: remote `main` = `6a131f17657807d9aee2921be1f286ceaff784e4`.
 > Accepted inputs: `GATE1B-DOMAIN-MODEL.md`, `GATE1B-SNAPSHOT-COMPLETENESS.md`,
 > `GATE1B-SAFE-RECONCILE.md`, `GATE1B-ADVERSARIAL-CASES.md`,
@@ -85,6 +86,7 @@ C1.1, C2.3; principle 9). The schema below is Store-internal.
 | M6 | RemovalEvidenceState is Kernel-internal and MUST NOT be exposed as consumer-visible resource status. | `DERIVED` | GATE1B-SAFE-RECONCILE Sec 1.3 (Blocker F); `FACT` |
 | M7 | Logical tombstones (`REMOVED`, `DELETED` root) are retained, not physically erased. | `DERIVED` | GATE1B-DOMAIN-MODEL Sec 10.3; GATE1B-SAFE-RECONCILE Sec 1.3.4; `FACT` |
 | M8 | Provider-native delta is never persisted as canonical state or as a journal event. | `DERIVED` | principle 8, J2/J3/J7; `FACT` |
+| M9 | `canonical_path` is an observed/derived coordinate, NOT canonical identity. Multiple live resources MAY share a path (path reuse / imposter, R8); persistence MUST represent the overlap rather than force false uniqueness. | `DERIVED` | GATE1B R8; PR #43 review #5; `FACT` |
 
 ---
 
@@ -99,7 +101,7 @@ schema (the Kernel does not depend on these names).
 | T1 | `index_root` | ResourceRoot + lifecycle + per-root generation cursor + admission high-water mark | `DERIVED` (fields) / `PROPOSED` (shape) |
 | T2 | `index_generation` | Generation record per root | `DERIVED` |
 | T3 | `index_canonical_resource` | CanonicalResource + tombstone + RemovalEvidenceState + current attributes | `DERIVED` |
-| T4 | `index_identity_evidence` | IdentityEvidence aggregate + evidence sources | `DERIVED` |
+| T4 | `index_identity_evidence_observation` (+ `_current`) | IdentityEvidence append-only history (authoritative) + current aggregate (projection/cache) | `DERIVED` |
 | T5 | `index_snapshot` | Snapshot metadata/evidence + Kernel acceptance classification | `DERIVED` |
 | T6 | `index_snapshot_entry` | SnapshotEntry records (audit/replay) | `CANDIDATE` |
 | T7 | `index_admission` | Per-root serialized admission sequence (IO1) | `DERIVED` (semantic) / `PROPOSED` (shape) |
@@ -211,10 +213,17 @@ Constraints (correctness):
 - `C-C1` PRIMARY KEY (`resource_id`).
 - `C-C2` (`DERIVED`): `resource_id` and `root_id` are write-once (immutability,
   M3). Enforced by no-UPDATE policy on those columns.
-- `C-C3` (`PROPOSED`): partial UNIQUE index on (`root_id`, `canonical_path`)
-  `WHERE resource_presence = 'PRESENT'` — at most one live resource per path per
-  root. Tombstones are excluded so a removed path may be re-added as a fresh
-  resource (Safe Reconcile 1.3.4).
+- `C-C3` (`REJECTED` — Architect, PR #43 review #5): a partial UNIQUE index on
+  (`root_id`, `canonical_path`) `WHERE resource_presence = 'PRESENT'` is INVALID.
+  Gate 1B R8 explicitly permits the old resource to remain `PRESENT` with MISSING
+  evidence while a new resource receives a new `resource_id` at the SAME path. A
+  false uniqueness constraint MUST NOT paper over this. `FACT` (Architect).
+- `C-C3a` (`DERIVED`): NO uniqueness constraint on (`root_id`, `canonical_path`).
+  Multiple `PRESENT` rows MAY share a path; they are distinguished by
+  `resource_id` and `removal_evidence_state`. Persistence MUST represent the
+  overlap. `FACT` (Architect; Gate 1B R8).
+- `C-C3b` (`PROPOSED`): a NON-unique index on (`root_id`, `canonical_path`,
+  `removal_evidence_state`) supports deterministic path resolution (doc C Q5).
 - `C-C4` (`PROPOSED`): CHECK `(content_hash IS NULL) = (hash_algorithm IS NULL)`.
 - `C-C5` (`DERIVED`): CHECK `resource_presence = 'REMOVED'` implies
   `removal_evidence_state` is a terminal value and the row is retained (M7).
@@ -225,7 +234,7 @@ Indexes:
 
 - `I-C1` (`PROPOSED`): (`root_id`, `resource_presence`) — active-resource scans.
 - `I-C2` (`PROPOSED`): (`root_id`, `parent_resource_id`) — hierarchy listing.
-- `I-C3` (`PROPOSED`): (`root_id`, `canonical_path`) — path resolution.
+- `I-C3` (`PROPOSED`): (`root_id`, `canonical_path`) — path resolution (NON-unique; see `C-C3a`).
 - `I-C4` (`PROPOSED`): (`root_id`, `removal_evidence_state`) `WHERE
   resource_presence = 'PRESENT'` — removal-candidate sweep.
 - `I-C5` (`PROPOSED`): (`root_id`, `removal_evidence_state`, `missing_since`) —
@@ -235,23 +244,25 @@ Indexes:
 > as consumer-visible resource status (M6). The Query Contract (doc C) exposes
 > only `resource_presence`. `FACT` (Safe Reconcile Sec 1.3 Blocker F).
 
-### 3.4 T4 `index_identity_evidence` — IdentityEvidence
+### 3.4 T4 `index_identity_evidence_observation` — IdentityEvidence (append-only, authoritative)
 
-Two options are recorded; the Worker recommends **Option A**.
+> `DERIVED` (Architect decision, PR #43 review #4) — Gate 1B states evidence is
+> multi-sourced and versioned. A mutable aggregate row cannot preserve the
+> historical evidence values that produced earlier decisions, especially when
+> full SnapshotEntry persistence is optional. Therefore the **normalized
+> append-only observation history is authoritative**, and a current aggregate is
+> a rebuildable projection/cache only. `FACT` (Architect).
 
-- **Option A (`PROPOSED`, recommended):** one row per (`resource_id`) holding the
-  current aggregate evidence, plus a `evidence_sources` `jsonb` array of
-  `(snapshot_id, collector_ref, observed_at)`.
-- **Option B (`CANDIDATE`):** normalized child table
-  `index_identity_evidence_source(resource_id, snapshot_id, collector_ref,
-  observed_at, ...)` for full history.
-
-Option A columns:
+Authoritative table `index_identity_evidence_observation` (append-only):
 
 | Column | Type | Null | Notes |
 |--------|------|------|-------|
-| `resource_id` | `uuid` | NO | PK, FK -> `index_canonical_resource`. |
-| `provider_object_id` | `text` | YES | OPTIONAL. NOT identity by itself. |
+| `observation_id` | `bigserial` | NO | PK. Surrogate; NEVER an ordering cursor. |
+| `resource_id` | `uuid` | NO | FK -> `index_canonical_resource`. |
+| `snapshot_id` | `uuid` | NO | FK -> `index_snapshot`; the observation source. |
+| `source_ref` | `text` | YES | Collector/adapter provenance of this observation. |
+| `observed_at` | `timestamptz` | NO | When THIS observation was made. |
+| `provider_object_id` | `text` | YES | OPTIONAL, NOT identity by itself. |
 | `provider_object_id_scope` | `text` | YES | Required iff `provider_object_id` present. |
 | `provider_identity_assurance` | `text` | NO | CHECK IN (`STABLE_WITHIN_SCOPE`,`UNVERIFIED`,`UNSTABLE`,`UNAVAILABLE`). |
 | `content_hash` | `text` | YES | Fingerprint, NOT identity. |
@@ -261,16 +272,39 @@ Option A columns:
 | `size` | `bigint` | YES | Weak. |
 | `mtime` | `timestamptz` | YES | Weak; absent is not positive evidence. |
 | `is_dir` | `boolean` | NO | Affects move matching (R6). |
-| `evidence_sources` | `jsonb` | NO | List of contributing (snapshot_id, collector_ref, observed_at). |
+| `extra_evidence` | `jsonb` | YES | Opaque; not a domain input (M2). |
 
 Constraints:
 
-- `C-E1` (`PROPOSED`): CHECK `(provider_object_id IS NULL) =
+- `C-E1` PK (`observation_id`).
+- `C-E2` (`DERIVED`): append-only. No UPDATE/DELETE; a later observation is a new
+  row, never a mutation of an earlier one. `FACT` (Architect; Gate 1B versioned
+  evidence).
+- `C-E3` (`PROPOSED`): indexes (`resource_id`, `observed_at`) and (`resource_id`,
+  `snapshot_id`).
+- `C-E4` (`PROPOSED`): CHECK `(provider_object_id IS NULL) =
   (provider_object_id_scope IS NULL)`.
-- `C-E2` (`DERIVED`): only `provider_identity_assurance = 'STABLE_WITHIN_SCOPE'`
+- `C-E5` (`DERIVED`): only `provider_identity_assurance = 'STABLE_WITHIN_SCOPE'`
   makes `provider_object_id` STRONG evidence (GATE1B 1.6; `FACT`). The Store does
   not enforce this; it is Kernel matching logic. Stored as data for audit.
+- `C-E6` (`DERIVED`): canonical-decision evidence MUST remain durably
+  reconstructable from here even when `index_snapshot_entry` persistence is
+  disabled (PR #43 accepted direction). `FACT` (Architect).
 
+Projection/cache table `index_identity_evidence_current` (NOT authoritative):
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `resource_id` | `uuid` | NO | PK, FK -> `index_canonical_resource`. |
+| (current aggregate fields) | | | Latest folded values from the observation history. |
+| `derived_from_observation_id` | `bigint` | YES | Last observation folded in. |
+| `rebuilt_at` | `timestamptz` | NO | |
+
+> `DERIVED` `index_identity_evidence_current` is a **projection/cache**: it MAY be
+> dropped and rebuilt from `index_identity_evidence_observation` at any time, and
+> is never the source of truth for audit or reconcile (Architect decision, PR #43
+> review #4). `FACT`.
+>
 > `DERIVED` `observed_parent_ref` remains Collector-local and is never the
 > canonical `resource_id` (GATE1A frozen boundary; `FACT`).
 
@@ -313,7 +347,10 @@ Indexes:
 
 ### 3.6 T6 `index_snapshot_entry` — SnapshotEntry (audit/replay)
 
-`CANDIDATE` — persisting full entries is optional. It supports audit, replay, and
+`CANDIDATE` — persisting full entries is optional (PR #43 accepted direction),
+**provided** that evidence used for canonical decisions remains durably
+reconstructable elsewhere (see `index_identity_evidence_observation` `C-E6` and
+the `index_snapshot` evidence columns). It supports audit, replay, and
 re-derivation, at storage cost. PoC target is 100k+ resources (blueprint Sec 15
 PoC-1).
 
@@ -345,8 +382,11 @@ Constraints: `C-SE1` PK (`snapshot_id`, `entry_local_id`).
 | `admission_seq` | `bigint` | NO | Per-root monotonic. Kernel-owned order token. |
 | `snapshot_id` | `uuid` | NO | FK -> `index_snapshot`. |
 | `admitted_at` | `timestamptz` | NO | |
-| `status` | `text` | NO | CHECK IN (`PENDING`,`APPLIED`,`NOOP`,`REJECTED`,`STALE_INPUT`). |
+| `status` | `text` | NO | CHECK IN (`PENDING`,`APPLIED`,`NOOP`,`REJECTED`,`STALE_INPUT`,`FAILED`). |
 | `applied_generation` | `bigint` | YES | Set when `APPLIED`. |
+| `claimed_by` | `text` | YES | Worker/claim id currently processing this input (`PROPOSED`). |
+| `claimed_at` | `timestamptz` | YES | Claim time (`PROPOSED`). |
+| `lease_expires_at` | `timestamptz` | YES | Reclaimable after this time (`PROPOSED`). |
 
 Constraints:
 
@@ -357,6 +397,19 @@ Constraints:
 - `C-A3` (`PROPOSED`): the admission high-water mark is
   `index_root.latest_admission_seq`, advanced in the same short admission
   transaction that allocates the sequence.
+- `C-A4` (`DERIVED`, Architect decision, PR #43 review #2): crash recovery MUST
+  be defined:
+  - the lowest `PENDING` input remains **reclaimable** after process death (via
+    lease expiry or explicit claim release);
+  - process death MUST NOT head-of-line block a root forever;
+  - a reclaim/retry keeps the SAME `admission_seq` (it is never re-numbered);
+  - if a later `admission_seq` has already committed, the older input becomes
+    `STALE_INPUT` per IO4.
+  `FACT` (Architect).
+
+> `DERIVED` `FAILED` is a valid terminal status (a reconcile that errored and was
+> rolled back); the schema and doc B state machine MUST agree (PR #43 review #2).
+> `FACT`.
 
 > `DERIVED` An older admission sequence MUST NOT overwrite canonical state
 > committed by a newer admitted input (IO2/IO4). Doc B defines the enforcement
@@ -369,7 +422,8 @@ Constraints:
 | Column | Type | Null | Notes |
 |--------|------|------|-------|
 | `root_id` | `uuid` | NO | FK -> `index_root`. |
-| `snapshot_identity` | `text` | NO | Dedup key for "same snapshot". |
+| `snapshot_identity` | `text` | NO | Stable revision token OR deterministic normalized-content digest. See contract below. |
+| `snapshot_identity_version` | `text` | NO | Version of the identity algorithm (required for the digest form). |
 | `snapshot_id` | `uuid` | NO | |
 | `applied_generation` | `bigint` | NO | Generation at which it was applied. |
 | `applied_admission_seq` | `bigint` | NO | |
@@ -381,12 +435,17 @@ Constraints:
 - `C-AS2` (`PROPOSED`): replay of the same `snapshot_identity` at the same
   canonical generation is a NO-OP (Safe Reconcile 2.4, IO3).
 
-> `CANDIDATE` — the exact `snapshot_identity` key is not frozen by Gate 1B
-> (R-LC-6 dedup key is CANDIDATE pending identity work). The Worker proposes the
-> key be a Collector-declared stable content/cursor token scoped to the root,
-> e.g. `sha256(root_id || source_ref || observed_at || entry_count ||
-  byte_count)`, with `UNKNOWN` where a Collector cannot supply a stable token.
-> Architect decision required.
+> `DERIVED` (Architect decision, PR #43 review #3) — the `snapshot_identity`
+> contract is provider-neutral and MUST NOT include wall-clock, admission timing,
+> or DB timing. It is exactly one of:
+> 1. a stable adapter/native **revision token** whose stability the adapter
+>    declares explicitly, or
+> 2. a **versioned deterministic digest** over the normalized immutable Snapshot
+>    semantics/content (the SnapshotEntry set plus relevant evidence), tagged
+>    with `snapshot_identity_version`.
+> Identical observed content collected at a different `observed_at` MUST yield
+> the SAME identity. Adapter E maps concrete sources to this contract later; A/B
+> fix the key semantics now. `FACT` (Architect).
 
 ### 3.9 T9 `index_journal_event` — Canonical Change Journal (append-only)
 
@@ -396,7 +455,7 @@ Constraints:
 |--------|------|------|-------|
 | `root_id` | `uuid` | NO | FK -> `index_root`. |
 | `event_seq` | `bigint` | NO | Per-root logical sequence, gap-free per committed transaction. |
-| `event_id` | `bigserial` | NO | Global physical order for cross-root cursor consumption. `PROPOSED`. |
+| `event_id` | `bigserial` | YES | Opaque surrogate identity ONLY. **MUST NOT** be used as an ordering or consumption cursor (allocation order != commit order). |
 | `generation_number` | `bigint` | NO | Generation the event belongs to. |
 | `intra_generation_seq` | `integer` | NO | Orders the RENAME/MOVE + UPDATE pair within one generation (Blocker H). |
 | `event_type` | `text` | NO | CHECK IN (`resource-added`,`resource-updated`,`resource-renamed`,`resource-moved`,`resource-removed`,`root-deprecated`,`root-deleted`). |
@@ -419,14 +478,17 @@ Constraints (correctness):
 Indexes:
 
 - `I-J1` (`PROPOSED`): (`root_id`, `event_seq`) — per-root replay/cursor.
-- `I-J2` (`PROPOSED`): (`event_id`) — global cursor.
+- `I-J2` (`PROPOSED`): (`event_id`) — opaque identity lookup only; NOT an ordering/cursor index.
 - `I-J3` (`PROPOSED`): (`root_id`, `generation_number`).
 
-> `CANDIDATE` — global vs per-root sequence. The Worker recommends: **per-root
-> logical `event_seq`** is authoritative (aligns with per-root generation and
-> gap-free per-root ordering), and **global `event_id`** exists only as a
-> convenience cursor for cross-root consumers. This must be accepted by the
-> Architect (Issue #40 deliverable D).
+> `DERIVED` (Architect decision, PR #43 review #1) — the authoritative Journal
+> ordering/cursor is the **per-root `event_seq`**. A global `bigserial`
+> allocation order is NOT commit visibility order: under concurrent root
+> transactions a consumer could observe id=11, advance, then transaction id=10
+> commits later and is permanently skipped. `event_id` is therefore retained
+> only as an opaque surrogate identity, never as a cross-root cursor. Cross-root
+> consumers use a **vector of per-root cursors** (`{root_id: event_seq, ...}`)
+> unless a future explicit commit-order mechanism is designed. `FACT` (Architect).
 
 ### 3.10 T10 `index_root_config` — per-root policy
 
@@ -492,8 +554,8 @@ Constraints:
 | CanonicalResource | `current_attributes` | `current_attributes` + denormalized cols | `DERIVED` |
 | CanonicalResource | `canonical_path` | `canonical_path` | `DERIVED` |
 | Generation | `generation_number, produced_by, produced_at, summary` | `index_generation` + `index_root.current_generation` | `DERIVED` |
-| IdentityEvidence | all fields | `index_identity_evidence` | `DERIVED` |
-| IdentityEvidence | `evidence_sources` | `evidence_sources` jsonb | `DERIVED` |
+| IdentityEvidence | versioned observation history (authoritative) | `index_identity_evidence_observation` | `DERIVED` |
+| IdentityEvidence | current folded aggregate (rebuildable projection/cache) | `index_identity_evidence_current` | `DERIVED` |
 | Journal | 7 event types | `index_journal_event.event_type` | `DERIVED` |
 | Journal | intra-generation ordering | `intra_generation_seq` | `DERIVED` |
 | Admission ordering | IO1 sequence | `index_admission.admission_seq` | `DERIVED` |
@@ -517,7 +579,7 @@ Sec 1-3 and Sec 10).
 | Generation monotonic per root | `C-G2`; CAS in doc B | `DERIVED` |
 | Removal evidence not consumer-visible | Query Contract excludes it (doc C) | `DERIVED` |
 | No Collector-specific domain field | M2; `extra_evidence`/`metadata` opaque only | `DERIVED` |
-| Path uniqueness among live resources | `C-C3` partial unique index | `PROPOSED` |
+| Path is a NON-unique coordinate; live rows MAY overlap on a path | NO unique constraint; `C-C3` REJECTED, `C-C3a` (no uniqueness), `I-C3` non-unique index | `DERIVED` |
 
 ---
 
@@ -570,8 +632,10 @@ atomicity and ordering. It does not define the transaction itself.
 
 | Item | Tag | Note |
 |------|-----|------|
-| Global vs per-root journal sequence | `CANDIDATE` | Worker recommends per-root logical + global physical (Sec 3.9). Deliverable D. |
-| `snapshot_identity` dedup key | `CANDIDATE` | Not frozen by Gate 1B (R-LC-6). Sec 3.8. |
+| ~~Global vs per-root journal sequence~~ | `DERIVED` (CLOSED — Architect, PR #43 review #1) | Per-root `event_seq` is authoritative; `event_id` is opaque identity only, never a cursor; cross-root consumption uses a per-root cursor vector. Sec 3.9. |
+| ~~`snapshot_identity` dedup key~~ | `DERIVED` (CLOSED — Architect, PR #43 review #3) | Provider-neutral contract frozen: stable adapter/native revision token OR versioned deterministic digest; MUST NOT include wall-clock/admission/DB timing. Sec 3.8. |
+| Global commit-order cursor (should a future consumer require one) | `DEFERRED` | No commit-order mechanism is designed in Gate 1C; consumers use the per-root cursor vector (Sec 3.9). |
+| Admission lease duration / reclaim policy | `CANDIDATE` | `C-A4` fixes the correctness rule; exact lease timing is operational config (doc B). |
 | Persisting full SnapshotEntry | `CANDIDATE` | Storage cost vs audit/replay. Sec 3.6. |
 | Root lifecycle transition enforcement (trigger vs application) | `CANDIDATE` | Sec 3.1 `C-R2`. |
 | Enum storage (text+CHECK vs native enum) | `CANDIDATE` | Sec 3 preamble. |
@@ -607,15 +671,15 @@ atomicity and ordering. It does not define the transaction itself.
 | G4 | Confirmed removal | UPDATE `resource_presence='REMOVED'`; INSERT `resource-removed` event; same transaction. |
 | G5 | Replay same snapshot | `index_applied_snapshot` hit -> no writes, no generation bump. |
 | G6 | Stale input (older admission_seq) | Reject; record `index_reconcile_result.outcome='STALE_INPUT'`; no canonical mutation. |
-| G7 | Path reused by imposter | Old row marked MISSING (not removed); new row INSERT with new `resource_id`; partial unique index `C-C3` satisfied because old is MISSING but still PRESENT — see note below. |
+| G7 | Path reused by imposter while the old resource is only MISSING | Old row stays `PRESENT` with `MISSING_CONFIRMED_BY_COMPLETE_SNAPSHOT` evidence; new row INSERTs with a new `resource_id` at the SAME `canonical_path`; BOTH rows coexist. No uniqueness constraint is violated (`C-C3` REJECTED; `C-C3a`). `resolve_path` (doc C Q5) MUST surface the overlap explicitly, never an arbitrary single winner. |
 | G8 | RENAME + UPDATE in one pass | Two journal events same generation, `intra_generation_seq` 1 then 2. |
+| G9 | Concurrent reconciles on two different roots | Both commit independently. Journal consumption MUST NOT assume a global `event_id` allocation order equals commit-visibility order: a consumer that advanced past a higher `event_id` MUST still be able to read a later-committed lower `event_id` via the per-root `event_seq` cursor vector. |
+| G10 | Worker crashes after Stage 1 commit, leaving the lowest `PENDING` admission | The input stays durably `PENDING` with its `admission_seq`. A later worker reclaims it (lease expiry / claim release), reuses the SAME `admission_seq` (never re-numbered) and processes it. The root is not head-of-line blocked forever (`C-A4`). |
+| G11 | Same immutable snapshot content collected twice at different `observed_at` | Both scans map to the SAME `snapshot_identity` (revision token or versioned deterministic digest), so the second is an IO3 NO-OP. `observed_at` MUST NOT enter the identity. |
+| G12 | A path is repeatedly impersonated before the old MISSING resource is removed | Each imposter gets a distinct new `resource_id`; at any instant multiple `PRESENT` rows MAY share the path, each addressable by `resource_id` and distinguished by `removal_evidence_state`. Persistence never collapses them into one row, and path resolution reports the ambiguity. |
 
-> Note on G7: `C-C3` allows only one `PRESENT` row per path. A path reused by an
-> imposter while the old resource is only MISSING (still `PRESENT`) would violate
-> `C-C3`. This is a **real design question** raised by the Worker: `FACT`
-> (GATE1B R8 marks the old resource MISSING, `resource_presence` unchanged) vs
-> `INFERENCE` (a unique live-path constraint). Resolution options:
-> (a) drop `C-C3` and rely on Kernel invariant only;
-> (b) scope uniqueness to `PRESENT` AND `removal_evidence_state='NONE'`;
-> (c) treat imposter as CONFLICT until the old resource resolves.
-> **UNKNOWN -> escalated to Architect** (do not silently pick).
+> Resolution of G7 (Architect, PR #43 review #5): the earlier note posed this as an
+> `UNKNOWN`. The Architect ruled that `UNIQUE(root_id, canonical_path)` is invalid
+> and MUST NOT be reintroduced; Gate 1B R8 is not silently changed. The Store
+> represents genuine path overlap and exposes it through `resource_id`/history and
+> an explicit `resolve_path` ambiguity result (doc C). `FACT` (Architect).
