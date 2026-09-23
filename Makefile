@@ -2,8 +2,13 @@ GO ?= go
 PG_CONTAINER ?= indexcore-pg
 PG_PORT ?= 55432
 TEST_DSN ?= postgres://indexcore:indexcore@localhost:$(PG_PORT)/indexcore?sslmode=disable
+VERSION ?= 0.3.0-alpha
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+PKG ?= github.com/nathanxiangang-web/index-core/internal/runtime/version
+LDFLAGS ?= -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).Date=$(DATE)
 
-.PHONY: pg-up pg-down build test fmt
+.PHONY: pg-up pg-down build bin test fmt
 
 pg-up:
 	@docker rm -f $(PG_CONTAINER) >/dev/null 2>&1 || true
@@ -22,9 +27,14 @@ pg-down:
 build:
 	$(GO) build ./...
 
+# Gate 3 Alpha binary with build identity.
+bin:
+	$(GO) build -ldflags "$(LDFLAGS)" -o bin/indexcore ./cmd/indexcore
+
 fmt:
 	$(GO) fmt ./...
 
-# Gate 2 tests run against a real PostgreSQL 18 (Issue #44 requirement).
+# Tests run against a real PostgreSQL 18 (Gate 2/Gate 3 requirement).
+# -p 1 serializes packages so DB-backed packages do not reset the same schema concurrently.
 test:
-	INDEXCORE_TEST_DATABASE_URL="$(TEST_DSN)" $(GO) test ./... $(ARGS)
+	INDEXCORE_TEST_DATABASE_URL="$(TEST_DSN)" $(GO) test -p 1 ./... $(ARGS)
