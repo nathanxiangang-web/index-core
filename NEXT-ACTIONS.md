@@ -2,79 +2,50 @@
 
 ## Current phase
 
-**Gate 2 — PoC**
+**Gate 2 — PoC — ARCHITECT ACCEPTED**
 
 Architecture / acceptance owner: **ChatGPT Architect**
 
 Execution owner: **Codex**
 
-Active task: **#44 — [CODEX][GATE-2] Index Core PoC** (replaces Issue #40).
+Status: **AWAITING ARCHITECT NEXT-PHASE PLANNING** — no new phase has been
+assigned yet. Do not start new work without an Architect phase decision.
 
-Branch: **`poc/gate2-indexcore`**. Stack (Architect-locked, PR #45 / #44):
-**Go 1.27.x + PostgreSQL 18 + pgx/v5** — SQL-first migrations, no ORM,
-real-PostgreSQL integration tests.
+## Gate 2 — ACCEPTED
 
-## Gate 1C — CLOSED
+PR #46 received **ARCHITECT FINAL ACCEPTANCE — Gate 2 PoC** at final verification
+head `846a270`, and is authorized to merge to `main`; Issue #44 closes on that
+merge.
 
-PR #43 received **ARCHITECT FINAL ACCEPTANCE — Gate 1C CLOSED** at final
-verification head `7a3b32f`, and is authorized to merge to `main`.
+- PostgreSQL Store — PASS
+- Transaction Boundary — PASS
+- Kernel Evaluation — PASS
+- Safe Reconcile — PASS
+- Change Journal / J6 — PASS
+- Query Contract — PASS
+- V1/V2 Fixture PoC — PASS
+- rclone additive-only — PASS
 
-- A `GATE1C-POSTGRESQL-STORE.md` — FROZEN
-- B `GATE1C-TRANSACTION-BOUNDARY.md` — FROZEN
-- C `GATE1C-QUERY-CONTRACT.md` — FROZEN
-- D `GATE1C-JOURNAL-PERSISTENCE.md` — FROZEN
-- E `GATE1C-COLLECTOR-ADAPTER-CONTRACT.md` — FROZEN
-- ADR-001 Collector Boundary — ACCEPTED
-- ADR-002 PostgreSQL Store — ACCEPTED
+`FROZEN_CONTRACT_CHANGES: NONE`
 
-## Immediate objective
+## Next step (pending Architect)
 
-Begin the Gate 2 PoC on the frozen Gate 1C contracts: realize the PostgreSQL
-Store, expose the read-only Query Contract, implement Journal persistence, and
-validate the Collector Adapter Contract with **rclone as the first real Collector
-for additive-safe validation only**.
+The next phase is not yet defined. Wait for the Architect to plan the next phase
+and open its single execution issue. Until then, this status closeout is the only
+authorized change (status documents only; no code / architecture semantics).
 
-## Codex work package (Gate 2 PoC)
+## Gate 2 artifacts
 
-Preconditions: Gate 1C CLOSED (met); execution issue #44 (received).
+- Code and tests on branch `poc/gate2-indexcore` (PR #46, head `846a270`).
+- Verification report: `docs/gate2/GATE2-POC-VERIFICATION-REPORT.md`.
 
-Planned scope (to be confirmed by the Gate 2 issue):
-
-1. PostgreSQL Store realization of the frozen A/B/C contracts.
-2. Journal persistence + projection catch-up per frozen D.
-3. Read-only Query Contract surface per frozen C.
-4. rclone Collector adapter for the additive-only role (E / ADR-001). It MUST NOT
-   claim destructive-safe COMPLETE while `skipped_scopes` is UNKNOWN.
-5. COMPLETE/removal Kernel logic validated with **controlled Snapshot V1/V2
-   fixtures**.
-6. Destructive COMPLETE deferred until a provider proves a positive completeness
-   signal (per-provider exhaust/truncation evidence).
-
-## Constraints carried forward
-
-- Domain != PostgreSQL schema/ORM.
-- failed commit preserves prior canonical truth.
-- canonical + journal + generation + input-order state commit atomically.
-- incomplete inputs cannot advance removal state.
-- append-only journal; root/resource_id immutability; consumer write prohibition.
-- Collector replaceability.
-
-## Forbidden
+## Forbidden (until a new Architect phase authorizes otherwise)
 
 - CloudSite integration
 - UI
 - Scanner Resume
 - native delta / true incremental
+- destructive-safe provider COMPLETE
 - new gate names
 - silent change to Gate 1B/1C semantics
 - license-incompatible donor code copying
-
-## Gate 2 exit direction
-
-Gate 2 PoC succeeds when:
-
-1. Snapshot -> PostgreSQL Inventory works against the frozen A/B/C/D contracts.
-2. Reconcile is validated with controlled V1/V2 fixtures, including
-   COMPLETE/removal.
-3. rclone (additive-only) is validated as the first real Collector.
-4. No Kernel semantics were changed without an Architect decision.

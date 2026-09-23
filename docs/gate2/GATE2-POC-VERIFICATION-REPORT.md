@@ -1,7 +1,8 @@
 # Gate 2 — Index Core PoC Verification Report
 
 > Execution: Issue #44. Stack (Architect-locked, PR #45): **Go 1.27.x + PostgreSQL 18
-> + pgx/v5**. Branch: **`poc/gate2-indexcore`**. Status: **READY_FOR_ARCH_REVIEW**.
+> + pgx/v5**. Branch: **`poc/gate2-indexcore`**. Status: **ARCHITECT_ACCEPTED**
+> (ARCHITECT FINAL ACCEPTANCE — Gate 2 PoC, final verification head `846a270`).
 > Rule: PASS is claimed only where tests actually exercise the behavior.
 
 ## 1. Branch and commits
@@ -272,7 +273,7 @@ Head: **`548404e`**.
 ## Round 5 status template
 
 ```
-STATUS: READY_FOR_ARCH_REVIEW — GATE 2 POC (Round 5)
+STATUS: ARCHITECT_ACCEPTED — GATE 2 POC (ARCHITECT FINAL ACCEPTANCE, head 846a270)
 
 POSTGRESQL_STORE: PASS
 TRANSACTION_BOUNDARY: PASS

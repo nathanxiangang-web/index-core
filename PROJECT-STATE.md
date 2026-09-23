@@ -14,7 +14,9 @@ Latest accepted architecture milestone:
 
 Gate 1B accepted at `9291ac0706af6d584684498d75b714c408b9ffbe`.
 Gate 1C accepted at PR #43 head `7a3b32f` (ARCHITECT FINAL ACCEPTANCE — Gate 1C
-CLOSED); PR #43 is authorized to merge to `main`.
+CLOSED).
+Gate 2 PoC accepted at PR #46 head `846a270` (ARCHITECT FINAL ACCEPTANCE —
+Gate 2 PoC); PR #46 is authorized to merge to `main`.
 
 ## Execution model
 
@@ -38,22 +40,23 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
-**Gate 2 — PoC**
+**Gate 2 — PoC — ARCHITECT ACCEPTED**
 
-Gate 1C is **CLOSED** (ARCHITECT FINAL ACCEPTANCE on PR #43); PR #43 is
-authorized to merge to `main`, and Issue #40 closes on that merge.
+Gate 1C is **CLOSED** (ARCHITECT FINAL ACCEPTANCE on PR #43). The Gate 2 PoC is
+**ARCHITECT ACCEPTED** (ARCHITECT FINAL ACCEPTANCE — Gate 2 PoC on PR #46);
+PR #46 is authorized to merge to `main`, and Issue #44 closes on that merge.
 
 Status:
 
-**IN PROGRESS (Gate 2 PoC)**
+**AWAITING ARCHITECT NEXT-PHASE PLANNING**
 
 Active execution issue:
 
-**#44 — [CODEX][GATE-2] Index Core PoC**
+**#44 — [CODEX][GATE-2] Index Core PoC** (closes on PR #46 merge)
 
 Branch:
 
-**`poc/gate2-indexcore`** (from `main` @ `1a420df`)
+**`poc/gate2-indexcore`**
 
 Technology stack (Architect-locked via PR #45 / Issue #44):
 
@@ -61,7 +64,8 @@ Technology stack (Architect-locked via PR #45 / Issue #44):
 real-PostgreSQL integration tests, `log/slog`, env/flag config; no ORM, no
 Gin/Fiber/Echo, no Redis/Kafka, no DI framework.
 
-No CloudSite integration or UI is authorized yet.
+Still deferred: CloudSite integration, UI, Scanner Resume, native delta / true
+incremental, and destructive-safe provider COMPLETE.
 
 ## Accepted architecture
 
@@ -146,6 +150,36 @@ Key frozen Gate 1C semantics:
 - `completeness_flag` is a non-authoritative Collector hint; Kernel `acceptance_state` is authoritative
 - rclone RC cannot establish confirmed-no-skips; `skipped_scopes` stays UNKNOWN (never `[]`) without a positive completeness signal
 
+### Gate 2 — Index Core PoC
+
+Status: **ACCEPTED** (ARCHITECT FINAL ACCEPTANCE — Gate 2 PoC, PR #46, final
+verification head `846a270`)
+
+Evidence:
+
+- `docs/gate2/GATE2-POC-VERIFICATION-REPORT.md` (fixture matrix, failure paths,
+  CANDIDATE choices: "chosen for PoC ≠ newly frozen architecture")
+- Go 1.27.1 + PostgreSQL 18.6 + pgx/v5; safe `Coordinator.ProcessSnapshot` /
+  `ProcessHead`; real rclone v1.75.1 local-backend process-boundary run
+
+Accepted area results:
+
+- PostgreSQL Store — PASS
+- Transaction Boundary — PASS
+- Kernel Evaluation — PASS
+- Safe Reconcile — PASS
+- Change Journal / J6 — PASS
+- Query Contract — PASS
+- V1/V2 Fixture PoC — PASS
+- rclone additive-only — PASS
+
+`FROZEN_CONTRACT_CHANGES: NONE`
+
+Deliberately NOT supported by this PoC (deferred):
+
+- destructive-safe provider COMPLETE (rclone skip evidence stays UNKNOWN)
+- CloudSite integration, UI, Scanner Resume, native delta / true incremental
+
 ## Gate 1C scope (CLOSED)
 
 All six Gate 1C deliverables are delivered, Architect-accepted, and frozen:
@@ -188,7 +222,9 @@ All six Gate 1C deliverables are delivered, Architect-accepted, and frozen:
 
 ## Implementation status
 
-**NO PRODUCT MVP CODE YET**
+**GATE 2 POC ACCEPTED — NO PRODUCT MVP CODE YET**
 
-Gate 1C is ChatGPT Architect-accepted (PR #43, Gate 1C CLOSED); **Gate 2 PoC is
-unblocked**.
+Gate 1C is Architect-accepted (PR #43, Gate 1C CLOSED). The Gate 2 Index Core PoC
+is Architect-accepted (PR #46, ARCHITECT FINAL ACCEPTANCE — Gate 2 PoC). Awaiting
+Architect next-phase planning; no further code changes are authorized in this
+closeout.
