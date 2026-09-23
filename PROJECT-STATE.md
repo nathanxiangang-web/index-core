@@ -17,9 +17,10 @@ Gate 1C accepted at PR #43 head `7a3b32f` (ARCHITECT FINAL ACCEPTANCE — Gate 1
 CLOSED).
 Gate 2 PoC accepted at PR #46 head `846a270` (ARCHITECT FINAL ACCEPTANCE —
 Gate 2 PoC) and merged to `main` at `410050d0b084d999063cde1a4be8d2051fbcb88f`.
-Gate 3 MVP Alpha authorized by Architect in Issue #47, then accepted at PR #49
-head `055402da83235e6dc5f88f45206378fb210a7672` (ARCHITECT FINAL ACCEPTANCE —
-Gate 3 MVP Alpha).
+Gate 3 MVP Alpha authorized by Architect in Issue #47, accepted at PR #49
+head `055402da83235e6dc5f88f45206378fb210a7672`, and merged to `main` at
+`f7edc518dfc99a43cfc464e332e6fe3bfcda601c` (Issue #47 completed).
+Gate 4 Reference Consumer Integration is authorized by Architect in Issue #50.
 
 ## Execution model
 
@@ -43,46 +44,52 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
-**Gate 3 — MVP Alpha / Standalone Runtime & Scale**
+**Gate 4 — Reference Consumer Integration**
 
-Gate 1C is **CLOSED**. Gate 2 PoC is **CLOSED** and merged to `main` at
-`410050d0b084d999063cde1a4be8d2051fbcb88f`. Issue #44 is completed.
-
-Gate 3 MVP Alpha is **ARCHITECT ACCEPTED** at PR #49 head
-`055402da83235e6dc5f88f45206378fb210a7672` (ARCHITECT FINAL ACCEPTANCE — Gate 3
-MVP Alpha).
+Gate 1C, Gate 2, and Gate 3 are **CLOSED**. Gate 3 merged to `main` at
+`f7edc518dfc99a43cfc464e332e6fe3bfcda601c`; Issue #47 is completed.
 
 Status:
 
-**ARCHITECT ACCEPTED / READY_TO_MERGE**
+**AUTHORIZED / IN PROGRESS**
 
 Active execution issue:
 
-**#47 — [CODEX][GATE-3] Standalone Alpha Runtime & Scale**
+**#50 — [CODEX][GATE-4] Reference Consumer Integration**
 
-Executor branch:
+Execution surfaces:
 
-**`alpha/gate3-runtime`**.
+- `nathanxiangang-web/index-core` — frozen/accepted core; only consumer findings/report changes are expected unless a separately reviewed true IndexCore contract gap is found;
+- `nathanxiangang-web/indexcore-reference-web` — new, separate, disposable Reference Web repository to be created in Gate 4.
 
-Architect-locked Gate-3 runtime shape:
+Architect-locked Gate-4 shape:
 
-- one standalone Go binary: `indexcore`;
-- explicit `migrate`, `serve`, root administration, and `scan --root` CLI paths;
-- PostgreSQL 18.x + pgx/v5 remain the Store realization;
-- single active write-orchestration daemon per database for Gate 3;
-- bounded concurrency across different roots inside the daemon;
-- standard-library `net/http` read-only `/v1` Query transport;
-- unauthenticated Alpha HTTP binds to loopback by default;
-- rclone remains external and additive-safe only;
-- Gate-3 final acceptance also requires a real AList/OpenList Collector integration
-  validation, still behind the Collector boundary and initially additive-safe;
-- >=20,000-resource real-PostgreSQL scale validation is mandatory;
-- CloudSite integration remains Gate 4.
+```text
+Browser
+   ↓
+Reference Web
+   ↓ server-side BFF / proxy
+IndexCore HTTP /v1
+   ↓
+IndexCore
+```
 
-Still deferred: product UI, auth/account/tenant system, Scanner Resume/provider
-traversal checkpoints, native delta/true incremental, destructive-safe provider
-COMPLETE without positive evidence, multi-daemon HA/distributed leases, Redis/Kafka,
-Search/Catalog/AI/downloader features.
+Rules:
+
+- CloudSite 1.0 is **Legacy / Frozen Product**, not the Gate-4 integration target;
+- do not continue CloudSite V2 refactors;
+- do not copy CloudSite application code into the Reference Web;
+- Reference Web uses Next.js + TypeScript and has no application database;
+- browser does not connect directly to IndexCore;
+- all IndexCore access is server-side over the public read-only `/v1` HTTP contract;
+- Q1–Q9 must be exercised;
+- zero direct PostgreSQL, AList/OpenList, rclone, Go-package, or CloudSite runtime coupling;
+- Gate 4 validates the Consumer boundary only; it is **not** the formal successor product.
+
+Still deferred: formal next-generation product architecture, auth/user/admin, search/catalog,
+favorites/history/playback, shares, previews/player, download/302 product behavior, 115,
+AI, Scanner Resume, native delta/true incremental, destructive-safe provider COMPLETE,
+multi-daemon HA/distributed leases.
 
 ## Accepted architecture
 
@@ -230,9 +237,10 @@ Accepted area results:
 The 20k Stage-1 admission stays O(1) (~1.5–2.6 ms) with entry writes outside the
 root lock, so the runtime transaction boundary is accepted.
 
-Deliberately NOT authorized (deferred):
+Deliberately deferred after Gate 3:
 
-- CloudSite integration — Gate 4, **NOT yet authorized**
+- direct CloudSite integration is no longer the Gate-4 plan; CloudSite 1.0 is legacy/frozen
+- formal successor product architecture
 - product UI / auth / account / tenant
 - Scanner Resume, provider-native delta / true incremental
 - destructive-safe provider COMPLETE without separately accepted positive
@@ -281,11 +289,15 @@ All six Gate 1C deliverables are delivered, Architect-accepted, and frozen:
 
 ## Implementation status
 
-**GATE 3 MVP ALPHA ARCHITECT ACCEPTED — READY_TO_MERGE**
+**GATE 4 REFERENCE CONSUMER INTEGRATION — AUTHORIZED**
 
-Gate 3 MVP Alpha is accepted at PR #49 head
-`055402da83235e6dc5f88f45206378fb210a7672`. After the administrative closeout
-diff is verified, PR #49 may merge to `main` and Issue #47 closes.
+Gate 3 MVP Alpha is merged and closed at
+`f7edc518dfc99a43cfc464e332e6fe3bfcda601c`.
 
-Gate 4 (CloudSite integration and the blueprint's next stage) is **NOT yet
-authorized**; no CloudSite work begins until the Architect opens it.
+Gate 4 is authorized through Issue #50 and
+`docs/gate4/GATE4-REFERENCE-CONSUMER-PLAN.md`.
+
+CloudSite is no longer the direct integration target. It remains a legacy/frozen
+product and historical reference. Gate 4 uses a new disposable Reference Web to
+validate the IndexCore Consumer Contract before any formal successor product is
+designed.
