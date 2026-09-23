@@ -1,36 +1,8 @@
-# Gate 1B Worker B -- Snapshot + Completeness Acceptance
+# Gate 1B — Snapshot + Completeness Acceptance
 
-> Phase: Gate 1B -- Core Semantics
-> Worker: B (w02)
-> Task-ID: gate1b-wb
-> Baseline: `7aa798a`
-> Branch: `architecture/gate1b-core-semantics`
-> Date: 2026-09-23
-> Status: REWORKED_GATE1B_BLOCKER_BCD (Architect Review Blocker B/C/D + subagent wrapper removal)
-> Output target: `.work/gate1b/W-B-SNAPSHOT-COMPLETENESS.md`
->
-> Scope rule: this document defines the Snapshot lifecycle and Completeness
-> Acceptance semantics only. It does NOT design stable identity (Worker A),
-> Safe Reconcile state machine (Worker C), Change Journal (Worker C),
-> PostgreSQL schema/SQL/migration, product code, final Collector selection,
-> or Scanner checkpoint/resume. It does NOT let the Collector set
-> complete=true. It does NOT trigger provider re-scan for completeness
-> verification.
->
-> Rework note (2026-09-23): this revision applies Architect Review Blocker
-> B (canonical state preservation under incomplete observation), Blocker C
-> (provider-neutral freshness evidence), Blocker D (collector completeness
-> assurance), and removes the subagent organization-layer wrapper (sections
-> 6 and 7) per the Gate 1B rework brief. All reworked passages are tagged
-> ACCEPTED_SEMANTIC. No Gate 1D references remain; the official route is
-> Gate 1A -> Gate 1B -> Gate 1C -> Gate 2 PoC. Items not scheduled on that
-> route are marked POST_MVP or DEFERRED_UNSCHEDULED.
->
-> Evidence base: ARCHITECTURE-INVARIANTS (INV-001..INV-020), PROJECT-CONTEXT,
-> PROJECT-STATE Gate 1A frozen boundaries, NEXT-ACTIONS Worker B section,
-> Gate 1A accepted documents (GATE1A-RESPONSIBILITY-BOUNDARY.md,
-> GATE1A-COLLECTOR-CONTRACT-SKELETON.md, GATE1A-BOUNDARY-ATTACK-REPORT.md),
-> D02 report (AList/OpenList), D03 report (rclone/fsspec).
+> Normative Gate 1B architecture contract.
+> Finalized by ChatGPT Architect from accepted discovery evidence and Gate 1B rework.
+> Historical execution-role labels are non-normative.
 
 ---
 
@@ -114,13 +86,13 @@ Rules:
 - R-LC-6: A Snapshot may be submitted at most once. Re-submission of the
   same Snapshot object is rejected as a duplicate. -- CANDIDATE (dedup
   mechanism is an implementation detail; the semantic rule is
-  ACCEPTED_SEMANTIC, the dedup key is CANDIDATE pending Worker A identity
+  ACCEPTED_SEMANTIC, the dedup key is CANDIDATE pending Identity contract identity
   work).
 - R-LC-7: Concurrent Snapshot submission for the same root is not resolved
-  here. That is Worker C concurrent-batch conflict resolution scope
-  (NEXT-ACTIONS Worker C). This document only states that each Snapshot is
+  here. That is Safe Reconcile contract concurrent-batch conflict resolution scope
+  (NEXT-ACTIONS Safe Reconcile contract). This document only states that each Snapshot is
   independently evaluated; ordering and conflict resolution are deferred.
-  -- DEFERRED (to Worker C).
+  -- DEFERRED (to Safe Reconcile contract).
 
 ### 1.3 How a Snapshot is created
 
@@ -326,6 +298,29 @@ missing field is treated as `UNKNOWN_FAILURE_VISIBILITY`. -- ACCEPTED_SEMANTIC
 (BLOCKER D: known-silent-error Collectors must not easily obtain COMPLETE;
 D02 section 4: `storage.List` error swallowed when `virtualFiles` non-empty).
 
+#### 3.1.3 Scope-shrink corroboration (ACCEPTED_SEMANTIC)
+
+`scope_shrink_corroboration` is normalized evidence used only when the current
+Snapshot shows a significant reduction in entry_count relative to prior
+canonical state.
+
+Values:
+
+| Value | Meaning |
+|---|---|
+| `NONE` | No independent corroboration of the shrink exists. |
+| `CORROBORATED` | A later, independently admitted observation with the same root/scope, fresh evidence, no errors/skips, and STRONG_FAILURE_VISIBILITY independently confirms the reduced scope/count pattern. |
+| `CONTRADICTED` | A later independent observation contradicts the shrink. |
+
+A significant shrink with `NONE` is SUSPICIOUS. A significant shrink may
+become eligible for COMPLETE only when `CORROBORATED` and every other COMPLETE
+dimension is positive. Corroboration never comes from reusing the same
+observation that first raised the shrink signal.
+
+The exact persistence/adapter mechanism is Gate 1C. Gate 1B freezes the semantic
+requirement so legitimate bulk deletions do not become permanently impossible
+while unexpected truncation remains non-destructive by default.
+
 ### 3.2 MUST NOT (ACCEPTED_SEMANTIC)
 
 The classification function MUST NOT:
@@ -364,9 +359,9 @@ most conservative (most restrictive) state wins.
 | C-4 | `error_summary` is non-empty AND `traversal_status != failed` | `PARTIAL` | ACCEPTED_SEMANTIC | GATE1A B3.1: errors captured; non-empty errors mean incomplete coverage |
 | C-5 | `skipped_scopes` is non-empty | `PARTIAL` | ACCEPTED_SEMANTIC | GATE1A B3.1: skipped subtrees are unknown territory (INV-003) |
 | C-6 | `freshness_evidence` in {`STALE`} OR (`freshness_evidence` = `UNKNOWN` AND the Collector reported a cache was used) | `STALE` | ACCEPTED_SEMANTIC | BLOCKER C: provider-neutral freshness; D02 section 4: cache may contain ghosts or miss new entries; D02 W-D Q3.3 |
-| C-7 | `traversal_status = success` AND prior canonical was non-empty AND `entry_count` decline exceeds Kernel-configured threshold | `SUSPICIOUS` | ACCEPTED_SEMANTIC | D02 section 5: weak sanity check; possible silent truncation; INV-004 conservative gating |
+| C-7 | `traversal_status = success` AND prior canonical was non-empty AND `entry_count` decline exceeds the configured significant-shrink threshold AND `scope_shrink_corroboration != CORROBORATED` | `SUSPICIOUS` | ACCEPTED_SEMANTIC | A significant uncorroborated shrink is a possible truncation signal; count decline is weak evidence, so it blocks destructive action until independently corroborated. |
 | C-8 | `traversal_status = success` AND prior canonical was non-empty AND `entry_count = 0` | `SUSPICIOUS` | ACCEPTED_SEMANTIC | Scenario 7: empty result for non-empty root is anomalous until proven otherwise |
-| C-9 | `traversal_status = success` AND all of: `error_summary` empty, `skipped_scopes` empty, `freshness_evidence` in {`FRESH_DIRECT`, `FRESH_REFRESHED`, `CACHED_FRESH`}, `collector_completeness_assurance` = `STRONG_FAILURE_VISIBILITY`, no entry count decline, prior canonical consistent or root is new | `COMPLETE` | ACCEPTED_SEMANTIC | BLOCKER C + BLOCKER D: convergent positive evidence across traversal, errors, scope, freshness, and failure-visibility; the only path to COMPLETE |
+| C-9 | `traversal_status = success` AND all of: `error_summary` empty, `skipped_scopes` empty, `freshness_evidence` in {`FRESH_DIRECT`, `FRESH_REFRESHED`, `CACHED_FRESH`}, `collector_completeness_assurance` = `STRONG_FAILURE_VISIBILITY`, no **uncorroborated significant** entry-count decline, prior canonical consistent or root is new | `COMPLETE` | ACCEPTED_SEMANTIC | Convergent positive evidence across traversal, errors, scope, freshness, failure-visibility and shrink safety; small/non-significant decline does not permanently block legitimate deletion, while significant shrink requires independent corroboration. |
 | C-9a | `traversal_status = success` AND all of C-9 dimensions positive EXCEPT `collector_completeness_assurance` in {`WEAK_FAILURE_VISIBILITY`, `UNKNOWN_FAILURE_VISIBILITY`} | `SUSPICIOUS` | ACCEPTED_SEMANTIC | BLOCKER D: weak/unknown failure-visibility Collectors cannot reach destructive-safe COMPLETE on a single scan; downgraded to SUSPICIOUS pending corroboration or Gate 1C adapter strengthening |
 | C-10 | None of the above matched (ambiguous / unclassified evidence) | `PARTIAL` | ACCEPTED_SEMANTIC | Conservative default: when in doubt, block destructive reconcile (INV-004) |
 
@@ -379,7 +374,7 @@ COMPLETE requires convergent positive evidence across ALL dimensions:
 3. `skipped_scopes` empty (no skipped subtrees)
 4. `freshness_evidence` in {`FRESH_DIRECT`, `FRESH_REFRESHED`, `CACHED_FRESH`} (provider-neutral freshness proof; BLOCKER C)
 5. `collector_completeness_assurance` = `STRONG_FAILURE_VISIBILITY` (success is trustworthy; BLOCKER D)
-6. No significant entry count decline relative to prior canonical
+6. No uncorroborated significant entry-count decline relative to prior canonical; a significant decline is acceptable only after independent `CORROBORATED` shrink evidence
 7. No silent truncation suspicion signal
 
 Failure of any single dimension blocks COMPLETE promotion. The Snapshot
@@ -435,7 +430,7 @@ INV-003 (missing != deleted); principle 4; task MUST DEFINE hard rule.
 Destructive reconcile = reconcile that may remove entries from Canonical
 Inventory. Specifically: entries present in prior canonical state but
 absent from the Snapshot are marked as removal candidates and, subject to
-the Safe Reconcile state machine (Worker C scope), confirmed removed.
+the Safe Reconcile state machine (Safe Reconcile contract scope), confirmed removed.
 
 Additive-only reconcile = add new entries + update changed entries, but
 do NOT produce removal candidates for absent entries. Absent entries
@@ -443,7 +438,7 @@ remain in canonical state with their prior identity.
 
 Evidence: blueprint section 8 (Missing -> Removal Candidate -> Validation
 -> Confirmed Removed); INV-003 (missing != deleted). The full Safe
-Reconcile state machine is Worker C scope; this document only defines
+Reconcile state machine is Safe Reconcile contract scope; this document only defines
 which acceptance states gate entry into the destructive path.
 
 ### 4.4 Conservative gating principle (ACCEPTED_SEMANTIC)
@@ -479,7 +474,7 @@ STALE / SUSPICIOUS Snapshot, the reconcile MUST:
 Only a destructive-eligible COMPLETE observation (section 3.4, all
 dimensions positive, including `STRONG_FAILURE_VISIBILITY`) may produce
 canonical MISSING evidence for a previously PRESENT resource, and only
-then through the Safe Reconcile state machine (Worker C scope).
+then through the Safe Reconcile state machine (Safe Reconcile contract scope).
 
 Rationale: incomplete input must not rewrite canonical absence (INV-003
 missing != deleted; INV-004 incomplete input cannot authorize destructive
@@ -506,7 +501,7 @@ backend truncation).
 Classification: `traversal_status = success` alone is necessary but not
 sufficient for COMPLETE (R-EV-2, section 3.4). The Kernel requires
 convergent positive evidence. If all other dimensions are positive
-(fresh, no skips, no entry count decline, STRONG_FAILURE_VISIBILITY),
+(fresh, no skips, no uncorroborated significant entry-count decline, STRONG_FAILURE_VISIBILITY),
 C-9 fires -> COMPLETE. If any dimension is negative, the appropriate
 restrictive rule fires. If the Collector has WEAK_/UNKNOWN_FAILURE_VISIBILITY,
 C-9a fires -> SUSPICIOUS even on a clean success (BLOCKER D). If the
@@ -638,16 +633,16 @@ D02 section 5; D03 Q3).
 
 ---
 
-## 6. Worker Counterexample Review
+## 6. Safe Reconcile contractounterexample Review
 
 I reviewed my own COMPLETE promotion rules (section 3.3, C-9 / C-9a) to
 verify no scenario wrongly permits destructive reconcile. This is a Worker
-self-check, not a delegated subagent analysis.
+self-check, not a delegated temporary helper agent analysis.
 
 ### 6.1 Attack: cached snapshot with traversal_status=success
 
 Can a cached snapshot (`freshness_evidence` = `STALE`) with
-`traversal_status = success` and no entry count decline be promoted to
+`traversal_status = success` and no uncorroborated significant entry-count decline be promoted to
 COMPLETE?
 
 Result: C-6 fires before C-9 (cascade order). State = STALE. Destructive
@@ -710,15 +705,15 @@ Two snapshots for the same root both classify as COMPLETE. Which one
 authorizes destructive reconcile?
 
 Result: Out of scope. Concurrent snapshot ordering and conflict resolution
-is Worker C scope (NEXT-ACTIONS Worker C; R-LC-7 deferred). This document
+is Safe Reconcile contract scope (NEXT-ACTIONS Safe Reconcile contract; R-LC-7 deferred). This document
 guarantees each snapshot is independently classified; it does not define
 which wins. NOT ATTACKED here (DO NOT: design concurrent conflict
-resolution). -- DEFERRED (to Worker C).
+resolution). -- DEFERRED (to Safe Reconcile contract).
 
 ### 6.9 Attack: weak failure-visibility Collector on clean success
 
 Can a `WEAK_FAILURE_VISIBILITY` Collector with `traversal_status = success`,
-fresh data, no skips, no entry count decline reach COMPLETE?
+fresh data, no skips, no uncorroborated significant entry-count decline reach COMPLETE?
 
 Result: C-9 requires `collector_completeness_assurance` =
 `STRONG_FAILURE_VISIBILITY`. C-9a fires -> SUSPICIOUS. Destructive BLOCKED.
@@ -749,7 +744,7 @@ REMOVAL_CANDIDATE. SAFE. -- PASS (BLOCKER B).
 | 6.5 | COMPLETE from failed + matching count | BLOCKED by C-1 (FAILED) |
 | 6.6 | COMPLETE with permission_denied | BLOCKED by C-4 (PARTIAL) |
 | 6.7 | COMPLETE from unclassified evidence | BLOCKED by C-10 (PARTIAL default) |
-| 6.8 | Concurrent COMPLETE conflict | DEFERRED to Worker C |
+| 6.8 | Concurrent COMPLETE conflict | DEFERRED to Safe Reconcile contract |
 | 6.9 | COMPLETE from weak failure-visibility success | BLOCKED by C-9a (SUSPICIOUS) |
 | 6.10 | PARTIAL rewriting canonical PRESENT to MISSING | BLOCKED by section 4.5 (BLOCKER B) |
 
@@ -762,10 +757,10 @@ sound under all tested scenarios. -- ACCEPTED_SEMANTIC.
 
 ## 7. Worker Self-Check
 
-Per the Gate 1B rework brief, the subagent organization-layer wrapper is
+Per the Gate 1B rework brief, the temporary helper agent organization-layer wrapper is
 removed. The evidence verification below is a Worker self-check: I read the
-cited sources directly and recorded the findings. No subagent was dispatched;
-no Subagent Ledger is maintained.
+cited sources directly and recorded the findings. No temporary helper agent was dispatched;
+no legacy verification wrapper is maintained.
 
 ### 7.1 Evidence verification (Worker self-check)
 
@@ -798,9 +793,9 @@ no Subagent Ledger is maintained.
 | INV-004 (incomplete input cannot authorize destructive reconcile) | Sections 3.2 R-EV-2/R-EV-3, section 4.2 hard rule, section 4.4 conservative gating, section 4.5 canonical freeze. COMPLETE requires convergent positive evidence (section 3.4). |
 | INV-007 (Collector does not own canonical state) | R-LC-1: after submission, Snapshot is Kernel-owned. Collector cannot set complete=true (section 1.3, GATE1A B4). |
 | INV-009 (snapshot/change input is explicit boundary) | Submission crosses a defined contract boundary (section 1.4). Kernel performs syntactic validation. |
-| INV-010 (identity != path) | Not in scope (Worker A). This document does not use path as identity. SnapshotEntry path is observed path, not identity (GATE1A B2). |
+| INV-010 (identity != path) | Not in scope (Identity contract). This document does not use path as identity. SnapshotEntry path is observed path, not identity (GATE1A B2). |
 | INV-011 (driver capability != universal) | Classification uses only evidence fields defined as optional/driver-dependent in GATE1A B2/B3. Does not require hash or provider_object_id. |
-| INV-012 (native delta != change journal) | Not in scope (Worker C). This document treats all input as snapshot evidence (GATE1A B1: CollectorMode full_snapshot). |
+| INV-012 (native delta != change journal) | Not in scope (Safe Reconcile contract). This document treats all input as snapshot evidence (GATE1A B1: CollectorMode full_snapshot). |
 | INV-013 (previous canonical truth survives failed commit) | R-LC-3/R-LC-4: FAILED -> REJECTED, no reconcile. Prior canonical truth preserved. |
 | INV-020 (keep kernel small) | Completeness evaluation is read-only inspection of submitted evidence + prior canonical state. No re-scan, no statistical model, no provider traversal (R-EV-1, R-EV-4). |
 
@@ -810,33 +805,29 @@ no Subagent Ledger is maintained.
 
 | Constraint | Status |
 |------------|--------|
-| Did not design identity matching (Worker A) | Honored -- not referenced |
-| Did not design Safe Reconcile state machine (Worker C) | Honored -- section 4.3 references it as Worker C scope; only defines acceptance gate |
-| Did not design Change Journal (Worker C) | Honored -- not referenced |
+| Did not design identity matching (Identity contract) | Honored -- not referenced |
+| Did not design Safe Reconcile state machine (Safe Reconcile contract) | Honored -- section 4.3 references it as Safe Reconcile contract scope; only defines acceptance gate |
+| Did not design Change Journal (Safe Reconcile contract) | Honored -- not referenced |
 | Did not design PostgreSQL schema/SQL/migration | Honored -- not referenced |
 | Did not write product code | Honored -- design document only |
 | Did not select final Collector | Honored -- not referenced |
 | Did not design Scanner checkpoint/resume | Honored -- not referenced |
 | Did not let Collector set complete=true | Honored -- section 1.3, R-EV-5, GATE1A B4 cited |
 | Did not trigger provider re-scan for completeness verification | Honored -- R-EV-1, Gate 1A frozen boundary cited |
-| Did not use subagent organization-layer wrapper | Honored -- sections 6 and 7 reworked to Worker Self-Check; no Subagent Ledger |
-| Did not reference Gate 1D | Honored -- official route Gate 1A -> Gate 1B -> Gate 1C -> Gate 2 PoC; off-route items marked POST_MVP / DEFERRED_UNSCHEDULED |
+| Did not use temporary helper agent organization-layer wrapper | Honored -- sections 6 and 7 reworked to Worker Self-Check; no legacy verification wrapper |
+| Did not reference an extra gate | Honored -- official route Gate 1A -> Gate 1B -> Gate 1C -> Gate 2 PoC; off-route items marked POST_MVP / DEFERRED_UNSCHEDULED |
 | Did not bind freshness to a provider-specific switch | Honored -- section 3.1.1 provider-neutral freshness enum (BLOCKER C) |
 | Did not treat all Collectors' success as equally trustworthy | Honored -- section 3.1.2 collector completeness assurance (BLOCKER D) |
 | Did not let incomplete observation rewrite canonical absence | Honored -- section 4.5 canonical state preservation (BLOCKER B) |
 
 ---
 
-## 10. Open questions for Foreman cross-check
+## 10. Open questions for Architect cross-check
 
 0. **Official route**: Gate 1A -> Gate 1B -> Gate 1C -> Gate 2 PoC. No
-   Gate 1D is on the route. Items not scheduled on that route are marked
+   an extra gate is on the route. Items not scheduled on that route are marked
    POST_MVP or DEFERRED_UNSCHEDULED. -- ACCEPTED_SEMANTIC.
-1. **Entry count decline threshold**: C-7 references a "Kernel-configured
-   threshold" for significant entry count decline. The threshold value is
-   an implementation/configuration concern (Gate 1C or runtime config),
-   not a Gate 1B semantic. The semantic rule is: decline exists -> blocks
-   COMPLETE. The threshold is CANDIDATE.
+1. **Entry count decline guard**: the threshold defining a significant shrink is Gate 1C/runtime configuration. Gate 1B semantics are fixed: small/non-significant decline does not by itself block COMPLETE; a significant shrink is SUSPICIOUS until independently corroborated, after which it may reach COMPLETE if all other dimensions are positive.
 2. **Freshness enum translation**: the Collector adapter must translate
    provider-specific signals into the normalized `freshness_evidence` enum
    (section 3.1.1). The exact translation rules are Gate 1C adapter scope.
@@ -851,15 +842,15 @@ no Subagent Ledger is maintained.
    "unless freshness evidence proves the data is current". The exact
    promotion condition is CANDIDATE. The conservative default
    (STALE -> additive-only) is ACCEPTED_SEMANTIC.
-5. **Concurrent snapshot conflict**: R-LC-7 deferred to Worker C. This
+5. **Concurrent snapshot conflict**: R-LC-7 deferred to Safe Reconcile contract. This
    document does not define which of two concurrent COMPLETE snapshots
-   wins. Foreman should confirm Worker C covers this.
+   wins. Architect should confirm Safe Reconcile contract covers this.
 6. **Root lifecycle interaction**: C-9 references "root is new" as a
    condition for COMPLETE on empty result. The root lifecycle state
-   machine (new / active / deprecated) is Worker A scope (ResourceRoot,
-   NEXT-ACTIONS Worker A). This document assumes the Kernel can query
+   machine (new / active / deprecated) is Identity contract scope (ResourceRoot,
+   NEXT-ACTIONS Identity contract). This document assumes the Kernel can query
    prior canonical state for the root; the root state model itself is
-   Worker A.
+   Identity contract.
 
 ---
 
@@ -867,11 +858,11 @@ no Subagent Ledger is maintained.
 
 | ID | Item | Deferred to | Reason |
 |----|------|-------------|--------|
-| D-DEFER-7 | Entry count decline threshold value | Gate 1C / runtime config | Semantic rule is ACCEPTED; threshold is implementation |
+| D-DEFER-7 | Significant-shrink threshold value | Gate 1C / runtime config | Semantic rule and corroboration requirement are ACCEPTED; threshold is implementation |
 | D-DEFER-8 | Freshness enum translation rules (provider-specific -> normalized) | Gate 1C adapter | Semantic enum is ACCEPTED (BLOCKER C); translation is adapter implementation |
-| D-DEFER-9 | Concurrent snapshot conflict resolution | Worker C (Gate 1B) | NEXT-ACTIONS Worker C owns concurrent-batch conflict |
-| D-DEFER-10 | Root lifecycle state machine | Worker A (Gate 1B) | NEXT-ACTIONS Worker A owns ResourceRoot |
-| D-DEFER-11 | Snapshot dedup key | Worker A (Gate 1B) | R-LC-6 semantic accepted; dedup key depends on identity work |
+| D-DEFER-9 | Concurrent snapshot conflict resolution | Safe Reconcile contract (Gate 1B) | NEXT-ACTIONS Safe Reconcile contract owns concurrent-batch conflict |
+| D-DEFER-10 | Root lifecycle state machine | Identity contract (Gate 1B) | NEXT-ACTIONS Identity contract owns ResourceRoot |
+| D-DEFER-11 | Snapshot dedup key | Identity contract (Gate 1B) | R-LC-6 semantic accepted; dedup key depends on identity work |
 | D-DEFER-12 | Stale promotion exact condition | Gate 1C / runtime config | Conservative default accepted; promotion condition is CANDIDATE |
 | D-DEFER-13 | Collector assurance characterization per adapter | Gate 1C adapter | Semantic assurance levels are ACCEPTED (BLOCKER D); classifying an adapter's failure visibility is adapter implementation |
 | D-DEFER-14 | Weak/unknown assurance Collector corroboration mechanism | POST_MVP | Gate 1B defines the gate; the corroboration mechanism is post-MVP |
@@ -900,12 +891,12 @@ This document defines:
    (section 4.5, BLOCKER B) forbids rewriting canonical absence from
    incomplete input. When in doubt, block.
 5. **All 8 scenarios handled** (section 5).
-6. **Worker Counterexample Review** (section 6): 9 attacks on COMPLETE
+6. **Safe Reconcile contractounterexample Review** (section 6): 9 attacks on COMPLETE
    promotion / canonical mutation, all blocked. 1 concurrent conflict
-   deferred to Worker C.
+   deferred to Safe Reconcile contract.
 7. **Worker Self-Check** (section 7): evidence claims verified by the
-   Worker against cited sources; subagent wrapper removed.
+   Worker against cited sources; temporary helper agent wrapper removed.
 8. **No DO NOT violations** (section 9).
 9. **Official route** (section 10 item 0): Gate 1A -> Gate 1B -> Gate 1C
-   -> Gate 2 PoC. No Gate 1D; off-route items are POST_MVP or
+   -> Gate 2 PoC. No an extra gate; off-route items are POST_MVP or
    DEFERRED_UNSCHEDULED.
