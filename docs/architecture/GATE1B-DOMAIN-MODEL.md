@@ -1,17 +1,8 @@
-# Gate 1B Worker A — Domain Model + Stable Identity v1
+# Gate 1B — Domain Model + Stable Identity v1
 
-> Status: DESIGN_MODEL (not implementation)
-> Author: Worker A (w01)
-> Date: 2026-09-23
-> Baseline: 7aa798a
-> Branch: architecture/gate1b-core-semantics
-> Rework: 2026-09-23 — Gate 1B Rework (Issue #30). Point fixes for Architect
->   Review blockers A1-A5, Root Lifecycle wording, Subagent wrapper removal,
->   Gate 1D reference removal. Original correct content preserved; only
->   flagged defects changed.
-> Evidence base: Accepted principles (non-overridable) + Gate 1A boundary
->   (.work/gate1a/W-A-KERNEL-BOUNDARY.md) + D02 research
->   (docs/research/d02/W-A-ALIST-OPENLIST-INDEXING.md)
+> Normative Gate 1B architecture contract.
+> Finalized by ChatGPT Architect from the Gate 1B design/rework evidence.
+> Historical Worker/Architect execution roles are not part of the active project governance.
 
 ---
 
@@ -92,7 +83,7 @@ a Change Journal entry (principle 8).
 
 **Immutability.** A Snapshot, once submitted, is never mutated. Reconcile reads
 it; it does not rewrite it. This supports audit and the Change Journal
-(Worker C).
+(Safe Reconcile contract).
 
 **Explicitly NOT.** A Snapshot is NOT canonical state, NOT a provider native
 delta (principle 8), and does NOT carry final identity (Gate 1A A3: stable
@@ -162,7 +153,7 @@ identity continuity (Gate 1A A1.2).
 | root_id | REQUIRED | The ResourceRoot partition this resource belongs to. Immutable (Section 3: disjoint partitions). |
 | introduced_at_generation | REQUIRED | The generation at which this resource first entered canonical state. |
 | last_confirmed_generation | REQUIRED | The generation at which this resource was last confirmed present by an accepted snapshot. |
-| status | REQUIRED | PRESENT or MISSING. MISSING != DELETED (principle 3). DELETED is a separate explicit transition (Worker C). |
+| resource_presence | REQUIRED | `PRESENT` or `REMOVED`. `REMOVED` is a logical canonical tombstone, not physical erasure. Active queries normally exclude REMOVED; exact storage/query mechanics are Gate 1C. |\n| removal_evidence_state | REQUIRED | `NONE`, `MISSING_CONFIRMED_BY_COMPLETE_SNAPSHOT`, or `REMOVAL_CANDIDATE`. Kernel safety metadata only; it is not provider state and is not equivalent to consumer-visible absence. |
 | current_attributes | REQUIRED | Current canonical attributes (name, size, mtime, hash, etc.) as last reconciled. |
 | identity_evidence | REQUIRED | The IdentityEvidence supporting this resource's identity claim (see 1.6). |
 | canonical_path | OPTIONAL | The canonical path within the root, if the Kernel maintains one. Derived, NOT identity. |
@@ -280,14 +271,14 @@ so the Kernel can reason about identity with whatever evidence exists.
 The identity matcher returns exactly one of these results for each SnapshotEntry
 against the current Canonical Inventory of the entry's root. UNRESOLVED and
 CONFLICT are FIRST-CLASS results, NOT errors. They are valid outcomes that
-Safe Reconcile (Worker C) must handle without data loss.
+Safe Reconcile (Safe Reconcile contract) must handle without data loss.
 
-| State | Meaning | Reconcile implication (outline; state machine is Worker C) |
+| State | Meaning | Reconcile implication (outline; state machine is Safe Reconcile contract) |
 |-------|---------|-------------------------------------------------------------|
 | MATCHED | Identity confirmed. The entry corresponds to exactly one existing CanonicalResource. | Update current_attributes and last_confirmed_generation of the matched resource. |
 | NEW_RESOURCE | No existing CanonicalResource matches. | Create a new CanonicalResource with a Kernel-assigned resource_id. |
-| UNRESOLVED | Ambiguous: evidence is insufficient to determine MATCHED vs NEW_RESOURCE, but no contradiction exists. | Do NOT force-match (R11). Hold the entry; do not mutate canonical state destructively. Worker C defines the hold/staging behavior. |
-| CONFLICT | Contradictory evidence: multiple candidates match, or an identity claim contradicts existing canonical state. | Do NOT pick a winner automatically. Record the conflict for resolution (Gate 1A B3; policy deferred). Worker C defines conflict staging. |
+| UNRESOLVED | Ambiguous: evidence is insufficient to determine MATCHED vs NEW_RESOURCE, but no contradiction exists. | Do NOT force-match (R11). Hold the entry; do not mutate canonical state destructively. Safe Reconcile contract defines the hold/staging behavior. |
+| CONFLICT | Contradictory evidence: multiple candidates match, or an identity claim contradicts existing canonical state. | Do NOT pick a winner automatically. Record the conflict for resolution (Gate 1A B3; policy deferred). Safe Reconcile contract defines conflict staging. |
 
 **Non-overridable.** UNRESOLVED and CONFLICT MUST be producible by the rules
 below. The matcher MUST NOT collapse them into MATCHED or NEW_RESOURCE to
@@ -365,7 +356,7 @@ review, but the structure is fixed.
 **Why CANDIDATE not ACCEPTED.** The principle that fallback is needed is
 ACCEPTED (principle 6: provider capability optional; principle 7: hash optional).
 The specific combination and thresholds are CANDIDATE pending Gate 1B review and
-Worker B completeness interaction.
+Completeness contract completeness interaction.
 
 **Evidence.** Principle 6 (provider capability optional). D02 Q7/Q8: real
 systems operate without provider_object_id, so fallback MUST exist.
@@ -456,7 +447,7 @@ hash for matching).
    UNRESOLVED. The content may have changed in place or the path may have been
    reused by a different object; without hash or stable id, the Kernel cannot
    confirm identity continuity. Do NOT MATCHED on same path + same size alone
-   (A2 rework). Worker C defines the hold/staging behavior.
+   (A2 rework). Safe Reconcile contract defines the hold/staging behavior.
 4. If mtime is absent on either side -> UNRESOLVED. Absent mtime is NOT positive
    match evidence (A2 rework). size + path without mtime is insufficient to
    confirm canonical identity.
@@ -528,8 +519,8 @@ option.
   UNOBSERVED (left MISSING), per R11. The Kernel does NOT force-match descendants
   to preserve directory coherence.
 - Rationale: v1 prioritizes safety. Batch descendant propagation would require
-  coordination with Safe Reconcile staging (Worker C) and completeness assessment
-  (Worker B), and a partial snapshot could mis-recognize descendants. v1 does
+  coordination with Safe Reconcile staging (Safe Reconcile contract) and completeness assessment
+  (Completeness contract), and a partial snapshot could mis-recognize descendants. v1 does
   not guarantee that all descendant identity is automatically preserved across a
   directory move; it guarantees that no descendant is wrongly force-matched.
   Batch propagation is POST_MVP.
@@ -616,7 +607,7 @@ provider_object_id.
 Do NOT immediately reassign its identity. The resource may reappear in a later
 snapshot (transient provider issue, pagination, rate limit). R5 may re-recognize
 it if it reappears at a new path with matching content. Transition to
-CONFIRMED_REMOVED (if defined by Worker C) MUST respect the Move/Removal Horizon
+CONFIRMED_REMOVED (if defined by Safe Reconcile contract) MUST respect the Move/Removal Horizon
 Invariant (Section 2.4, A4 rework): a resource still inside the rename/move
 recognition horizon cannot be CONFIRMED_REMOVED.
 
@@ -642,7 +633,7 @@ a DIFFERENT provider_object_id than the canonical resource's recorded one.
   -> CONFLICT (two canonical resources claim the same path; needs resolution).
 - Else -> UNRESOLVED. Cannot determine whether (a) the same object's
   provider_object_id changed (e.g., provider reissued ids), or (b) a new object
-  replaced the old one at this path. Do NOT force-match either way. Worker C
+  replaced the old one at this path. Do NOT force-match either way. Safe Reconcile contract
   defines the staging/hold behavior for UNRESOLVED.
 
 **Evidence.** Principle 5 (path != identity: a path's occupant can change).
@@ -710,7 +701,7 @@ the old resource be deleted.
 > recognition horizon MUST NOT already be CONFIRMED_REMOVED.
 
 Equivalently: removal confirmation (transition MISSING -> CONFIRMED_REMOVED,
-which Worker C may define) MUST NOT occur before the rename/move recognition
+which Safe Reconcile contract may define) MUST NOT occur before the rename/move recognition
 horizon for that resource has expired.
 
 **Definitions (concept-level; exact durations are runtime config, Gate 1C).**
@@ -755,7 +746,7 @@ system has no horizon relationship; this invariant is the Kernel-owned fix.
 
 **Scope.** This section defines the relationship only. Exact durations, the
 MISSING -> CONFIRMED_REMOVED transition state machine, and retention policy are
-Worker C / runtime config (Gate 1C). Gate 1B freezes the invariant and the
+Safe Reconcile contract / runtime config (Gate 1C). Gate 1B freezes the invariant and the
 relationship.
 
 ---
@@ -842,15 +833,15 @@ NO_BATCH_DESCENDANT_PROPAGATION.
 
 ## 5. Worker Self-Check
 
-> Rework note: the original "Subagent Ledger" wrapper (self-run
+> Rework note: the original "legacy verification wrapper" wrapper (self-run
 > counterexample-hunter / contract-consistency-checker / evidence-reader
-> subagents) is removed. The valuable analysis is retained as direct Worker
-> self-checks. No subagent organization layer remains.
+> temporary helper agents) is removed. The valuable analysis is retained as direct Worker
+> self-checks. No temporary helper agent organization layer remains.
 
 | Check | Question | Result | Verification | Decision |
 |-------|----------|--------|--------------|----------|
 | Scenario counterexample check | Do the identity rules R0-R11 produce a wrong result for any of the 11 scenarios, or allow force-matching? | No scenario is force-matched. UNRESOLVED reachable in 2,4,7,9,10. CONFLICT reachable in 1(multi-id),4,7,9,10. R0 prevents cross-root identity leak. R9 never deletes. R11 enforces conservative fallback. R6 v1 (NO_BATCH_DESCENDANT_PROPAGATION) does not force-match descendants. A1 rework: copy -> NEW_RESOURCE, not MATCHED. A2 rework: absent mtime never positive. A4 rework: horizons closed (2.4). | VERIFIED (Worker re-checked each rule against its scenario and the evidence citations) | ADOPT (rules R0-R5, R7-R11); R6 ADOPTED as v1 NO_BATCH_DESCENDANT_PROPAGATION |
-| Contract consistency check | Are the Domain Model (Section 1) and Identity Rules (Section 2) mutually consistent, and consistent with Gate 1A frozen boundaries? | Consistent. resource_id != path != provider_object_id (1.4 vs 1.3). parent_ref remains Collector-local (1.3). hash and provider_object_id remain OPTIONAL (1.3, 1.6, R1-R4). provider_identity_assurance qualifies provider_object_id (1.6, R1). Generation is per-root (1.5) matching disjoint partitions (Section 3). Snapshot is immutable input (1.2) matching Gate 1A A3. CanonicalResource.status MISSING != DELETED (1.4) matching principle 3. R4 and R8 now consistent (A2 rework). R3 requires continuity context (A1 rework). Move/Removal horizon invariant defined (2.4, A4 rework). No Safe Reconcile state machine designed (deferred to Worker C). No completeness acceptance designed (deferred to Worker B). No Change Journal format designed (deferred to Worker C). | VERIFIED (Worker cross-checked each Section 1 field against Gate 1A A1-A5 and the DO NOT list) | ADOPT |
+| Contract consistency check | Are the Domain Model (Section 1) and Identity Rules (Section 2) mutually consistent, and consistent with Gate 1A frozen boundaries? | Consistent. resource_id != path != provider_object_id (1.4 vs 1.3). parent_ref remains Collector-local (1.3). hash and provider_object_id remain OPTIONAL (1.3, 1.6, R1-R4). provider_identity_assurance qualifies provider_object_id (1.6, R1). Generation is per-root (1.5) matching disjoint partitions (Section 3). Snapshot is immutable input (1.2) matching Gate 1A A3. CanonicalResource.status MISSING != DELETED (1.4) matching principle 3. R4 and R8 now consistent (A2 rework). R3 requires continuity context (A1 rework). Move/Removal horizon invariant defined (2.4, A4 rework). No Safe Reconcile state machine designed (deferred to Safe Reconcile contract). No completeness acceptance designed (deferred to Completeness contract). No Change Journal format designed (deferred to Safe Reconcile contract). | VERIFIED (Worker cross-checked each Section 1 field against Gate 1A A1-A5 and the DO NOT list) | ADOPT |
 | Evidence citation check | Do all ACCEPTED_SEMANTIC rules cite a principle, D02 finding, or Gate 1A boundary? | Yes. R0: principle 5 + A1.3 + D02 Q11. R1: A1.2 + D02 Q7/Q8 + A3 rework. R3: principle 7 + principle 5 + D02 Q12 + A1 rework. R4: principle 7 + principle 5 + principle 4 + D02 Q5 + A2 rework. R5: principle 3 + D02 Q12 + A4 rework. R6: principle 3 + principle 4 + D02 Q12 + A5 rework. R7: principle 4 + D02 Q9 + A2 rework. R8: principle 5 + principle 4 + D02 Q12 + A2 rework. R9: principle 3 + D02 Q10 + A4 rework. R10: principle 5 + principle 6 + A1.2. R11: DO NOT + principle 4. Section 2.4: principle 3 + principle 4 + A4 rework. Section 3: A1.3 + D02 Q11 + principle 9. | VERIFIED (every ACCEPTED_SEMANTIC tag has at least one citation) | ADOPT |
 
 ---
@@ -860,8 +851,8 @@ NO_BATCH_DESCENDANT_PROPAGATION.
 | Marker | Count | Items |
 |--------|-------|-------|
 | ACCEPTED_SEMANTIC | Domain: 6 concepts (1.1-1.6) + Root ownership (Section 3) + Identity Result States (2.1) + Rules R0, R1, R3, R4, R5, R6, R7, R8, R9, R10, R11 + Rule Precedence (2.3) + Move/Removal Horizon Invariant (2.4) + Root Lifecycle (Section 10) | Core model and conservative identity rules |
-| CANDIDATE | R2 (fallback signal combination) | Subject to Gate 1B review / Worker C reconcile design |
-| DEFERRED | Safe Reconcile state machine (Worker C); completeness acceptance (Worker B); Change Journal format (Worker C); conflict resolution policy (Gate 1A B3, deferred); Collector selection (Gate 1C); Store adapter (Gate 1C); exact horizon durations (Gate 1C runtime config) | Out of scope per DO NOT |
+| CANDIDATE | R2 (fallback signal combination) | Subject to Gate 1B review / Safe Reconcile contract reconcile design |
+| DEFERRED | Safe Reconcile state machine (Safe Reconcile contract); completeness acceptance (Completeness contract); Change Journal format (Safe Reconcile contract); conflict resolution policy (Gate 1A B3, deferred); Collector selection (Gate 1C); Store adapter (Gate 1C); exact horizon durations (Gate 1C runtime config) | Out of scope per DO NOT |
 | POST_MVP | Identity v2; cross-root dedup; batch descendant propagation for directory move (R6 v2) | Deferred unscheduled; not in Gate 1C scope |
 | REJECTED | Option B (overlapping root partitions) | Section 3 |
 
@@ -878,9 +869,9 @@ ACCEPTED_SEMANTIC (NO_BATCH_DESCENDANT_PROPAGATION); batch propagation is POST_M
 |------------|--------|
 | Did not require hash or provider_object_id as mandatory | Honored — 1.3 and 1.6 mark both OPTIONAL; R1/R3 are conditional on presence; R4/R7 handle absence |
 | Did not design PostgreSQL schema/SQL/migration | Honored — all fields are concept contracts; no table/column/type specified (principle 9) |
-| Did not design Safe Reconcile state machine | Honored — 2.1 gives reconcile IMPLICATIONS only as outline; state machine deferred to Worker C |
-| Did not design completeness acceptance | Honored — completeness_flag is referenced as Gate 1A A3/A1.4/B2; acceptance criteria deferred to Worker B |
-| Did not design Change Journal | Honored — referenced as Gate 1A A1.6; format deferred to Worker C |
+| Did not design Safe Reconcile state machine | Honored — 2.1 gives reconcile IMPLICATIONS only as outline; state machine deferred to Safe Reconcile contract |
+| Did not design completeness acceptance | Honored — completeness_flag is referenced as Gate 1A A3/A1.4/B2; acceptance criteria deferred to Completeness contract |
+| Did not design Change Journal | Honored — referenced as Gate 1A A1.6; format deferred to Safe Reconcile contract |
 | Did not write product code | Honored — design document only |
 | Did not select final Collector | Honored — owning_collector_ref is OPTIONAL; selection deferred to Gate 1C |
 | Did not design Scanner checkpoint/resume | Honored — not in model; Gate 1A REJECTED it from Kernel (principle 10) |
@@ -891,23 +882,23 @@ ACCEPTED_SEMANTIC (NO_BATCH_DESCENDANT_PROPAGATION); batch propagation is POST_M
 | A3: did not treat provider_object_id field presence as STRONG | Honored — provider_identity_assurance qualifies the id; only STABLE_WITHIN_SCOPE is STRONG (1.6, R1) |
 | A4: did not leave move and removal horizons unrelated | Honored — Section 2.4 freezes removal_grace_period >= move_recognition_horizon |
 | A5: did not leave R6 as CANDIDATE | Honored — R6 frozen as ACCEPTED_SEMANTIC, NO_BATCH_DESCENDANT_PROPAGATION; batch propagation is POST_MVP |
-| Rework: did not use subagents / Subagent Ledger | Honored — Section 5 is Worker Self-Check; no subagent organization layer |
-| Rework: did not reference Gate 1D | Honored — no Gate 1D references; POST_MVP / DEFERRED_UNSCHEDULED used for unscheduled items |
+| Rework: did not use temporary helper agents / legacy verification wrapper | Honored — Section 5 is Worker Self-Check; no temporary helper agent organization layer |
+| Rework: uses only the formal gate route | Honored — no Gate 1D references; POST_MVP / DEFERRED_UNSCHEDULED used for unscheduled items |
 
 ---
 
 ## 8. DEFERRED Items (explicit handoff)
 
-> Rework note: no Gate 1D references remain. Unscheduled items use POST_MVP or
+> Rework note: the formal gate route is clean. Unscheduled items use POST_MVP or
 > DEFERRED_UNSCHEDULED. Formal route: Gate 1A -> Gate 1B -> Gate 1C -> Gate 2 PoC.
 
 | Item | Owner | Reason |
 |------|-------|--------|
-| Safe Reconcile state machine (staging, atomicity, UNRESOLVED/CONFLICT hold behavior, MISSING -> CONFIRMED_REMOVED transition) | Worker C (Gate 1B) | DO NOT constraint; R6/R9/R10 outcomes need reconcile staging; must respect Move/Removal Horizon Invariant (2.4) |
-| Completeness acceptance criteria (beyond the flag) | Worker B (Gate 1B) | DO NOT constraint; interacts with R4/R5 move recognition |
-| Canonical Change Journal format | Worker C (Gate 1B) | DO NOT constraint; records the identity-preserving transitions R3/R5/R6 produce |
+| Safe Reconcile state machine (staging, atomicity, UNRESOLVED/CONFLICT hold behavior, MISSING -> CONFIRMED_REMOVED transition) | Safe Reconcile contract (Gate 1B) | DO NOT constraint; R6/R9/R10 outcomes need reconcile staging; must respect Move/Removal Horizon Invariant (2.4) |
+| Completeness acceptance criteria (beyond the flag) | Completeness contract (Gate 1B) | DO NOT constraint; interacts with R4/R5 move recognition |
+| Canonical Change Journal format | Safe Reconcile contract (Gate 1B) | DO NOT constraint; records the identity-preserving transitions R3/R5/R6 produce |
 | Conflict resolution policy (for CONFLICT results) | Gate 1B (Gate 1A B3 deferred) | CONFLICT is produced by R7/R8/R10; resolution policy is a separate design |
-| R2 fallback signal combination thresholds | Gate 1B review | CANDIDATE; needs Worker B completeness interaction |
+| R2 fallback signal combination thresholds | Gate 1B review | CANDIDATE; needs Completeness contract completeness interaction |
 | Exact move_recognition_horizon and removal_grace_period durations | Gate 1C runtime config | Section 2.4 freezes the relationship; durations are deployment config |
 | Collector selection per root | Gate 1C | owning_collector_ref OPTIONAL until then |
 | provider_identity_assurance mapping per Collector/Adapter | Gate 1C | Section 1.6 defines the concept; Gate 1C maps AList/rclone/adapters |
@@ -927,10 +918,10 @@ ACCEPTED_SEMANTIC (NO_BATCH_DESCENDANT_PROPAGATION); batch propagation is POST_M
 | Identity v1 rules cover all 11 scenarios | Yes | Section 4 coverage table; rules R0-R11 |
 | Identity Result states defined | Yes | Section 2.1 (MATCHED, NEW_RESOURCE, UNRESOLVED, CONFLICT) |
 | Root ownership resolved (A or B with justification) | Yes | Section 3 (Option A, disjoint, with 5-point justification) |
-| Worker Self-Check present (rework: was Subagent Ledger) | Yes | Section 5 |
+| Worker Self-Check present (rework: was legacy verification wrapper) | Yes | Section 5 |
 | Move/Removal Horizon Invariant defined (A4 rework) | Yes | Section 2.4 |
 | No DO NOT violations | Yes | Section 7 |
-| No Gate 1D references (rework) | Yes | Section 8 uses POST_MVP / DEFERRED_UNSCHEDULED |
+| Formal gate-route check | Yes | Section 8 uses POST_MVP / DEFERRED_UNSCHEDULED |
 
 ---
 
@@ -963,11 +954,9 @@ validated by Gate 1A boundaries and D02 source-code evidence.
 
 ---
 
-## 10. Root Lifecycle (Foreman consolidation — resolves VIOLATION scenario 20)
+## 10. Root Lifecycle — ACCEPTED_SEMANTIC
 
-> This section is added by the Foreman to resolve the VIOLATION identified by
-> Worker D scenario 20 (root delete/recreate: root lifecycle undefined).
-> It is a minimal lifecycle definition consistent with Worker A's ResourceRoot
+> This section resolves the previously identified root delete/recreate gap and is part of the final Gate 1B contract. It is consistent with the ResourceRoot model
 > (Sec 1.1) and Root Ownership Option A (disjoint partitions, Sec 3).
 > Rework (Issue #30): wording corrected per Architect Review. DELETED is a
 > logical retirement, not physical erasure; retention is an explicit policy,
@@ -978,7 +967,7 @@ validated by Gate 1A boundaries and D02 source-code evidence.
 | State | Meaning | Reconcile behavior |
 |-------|---------|-------------------|
 | NEW | Root created, no snapshot received yet | No canonical resources exist for this root |
-| ACTIVE | Root is being reconciled normally | Snapshots accepted; reconcile proceeds per Worker C |
+| ACTIVE | Root is being reconciled normally | Snapshots accepted; reconcile proceeds per Safe Reconcile contract |
 | DEPRECATED | Root is being retired; no new snapshots expected | Existing canonical resources preserved; snapshots still accepted if submitted (defensive) |
 | DELETED | Root is logically retired / tombstoned. The root_id and its canonical partition are retired in the Canonical Inventory. This is NOT "the database row physically does not exist" — it is a logical state. | No new snapshots accepted; canonical resources for this root are not reconciled |
 
@@ -1017,7 +1006,7 @@ Root recreation is modeled as creating a NEW root with a new root_id. It is
 NOT a lifecycle transition of the old root. The old root remains DELETED
 forever. The new root starts fresh with no canonical resources.
 
-This resolves Worker D scenario 20: root delete/recreate has defined behavior
+This resolves Adversarial review scenario 20: root delete/recreate has defined behavior
 (old root logically retired + new root created), explicit retention of the old
 partition for audit/history, and no root_id reuse (immutable). Consumer default
 visibility of DEPRECATED/DELETED roots is a Gate 1C Query semantics decision,
