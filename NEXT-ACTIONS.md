@@ -6,11 +6,11 @@
 
 Architecture / acceptance owner: **ChatGPT Architect**
 
-Execution owner: **Codex Executor / Worker only for the Architect-authorized P6 scheduler-orchestration issue**
+Execution owner: **Codex Executor / Worker only for the Architect-authorized P7 manual incremental command issue**
 
 Status:
 
-**P0 TARGETED SCOPED REFRESH — ARCHITECT_ACCEPTED / P1 HOT-SCOPE POLLING FEASIBILITY — ARCHITECT_ACCEPTED / P2 DIRTY-SCOPE STATE DESIGN — ARCHITECT_ACCEPTED / P3 STATE PERSISTENCE — ARCHITECT_ACCEPTED / P4 ONE-SHOT DIRTY EXECUTOR — ARCHITECT_ACCEPTED / P5 BOUNDED EXECUTOR LOOP — ARCHITECT_ACCEPTED / P6 SCHEDULER ORCHESTRATION — AUTHORIZED AFTER PLAN MERGE / PRODUCTION SCHEDULER NOT AUTHORIZED**
+**P0 TARGETED SCOPED REFRESH — ARCHITECT_ACCEPTED / P1 HOT-SCOPE POLLING FEASIBILITY — ARCHITECT_ACCEPTED / P2 DIRTY-SCOPE STATE DESIGN — ARCHITECT_ACCEPTED / P3 STATE PERSISTENCE — ARCHITECT_ACCEPTED / P4 ONE-SHOT DIRTY EXECUTOR — ARCHITECT_ACCEPTED / P5 BOUNDED EXECUTOR LOOP — ARCHITECT_ACCEPTED / P6 SCHEDULER ORCHESTRATION — ARCHITECT_ACCEPTED / P7 MANUAL INCREMENTAL COMMAND — AUTHORIZED AFTER PLAN MERGE / PRODUCTION SCHEDULER NOT AUTHORIZED**
 
 Current architecture planning:
 
@@ -32,9 +32,11 @@ Current architecture planning:
 - P5 plan: `docs/architecture/INCREMENTAL-P5-BOUNDED-EXECUTOR-LOOP-PROTOTYPE.md`
 - Issue #79 / PR #80 — P5 bounded executor loop (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `88e3e8ffa9c791f0ae6b04529cf82a65a6431d1e`)
 - P6 plan: `docs/architecture/INCREMENTAL-P6-SCHEDULER-ORCHESTRATION-PROTOTYPE.md`
+- Issue #82 / PR #83 — P6 scheduler orchestration (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `3aa02bb9f6cf9c6de52ac5fb88310d17c735af12`)
+- P7 plan: `docs/architecture/INCREMENTAL-P7-MANUAL-INCREMENTAL-COMMAND-PROTOTYPE.md`
 - Accepted D0 report: `docs/research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md`
 
-Research and P0–P5 are complete. The next bounded step is **P6 Scheduler Orchestration Prototype**: in one manually-invoked finite cycle, materialize at most 5 persisted due watches through the accepted atomic `EmitDuePoll`, then invoke one accepted P5 bounded executor cycle, all under a total wall-time cap of 60 seconds. Production scheduling/cadence/continuous execution remains **NOT AUTHORIZED**.
+Research and P0–P6 are complete. The next bounded step is **P7 Manual Incremental Command Prototype**: add `indexcore incremental run` as a one-shot operator entrypoint that acquires the existing writer advisory lock, invokes the accepted P6 cycle exactly once, emits structured JSON, and exits. Production scheduling/cadence/continuous execution remains **NOT AUTHORIZED**.
 
 Accepted Gate-4 merge commits:
 
@@ -98,7 +100,7 @@ CloudSite 1.0 remains **Legacy / Frozen Product**.
 
 This is a separate IndexCore infrastructure extension and does **not** consume or authorize Gate 5.
 
-Capability discovery and P0–P5 are complete. The current task is **P6 scheduler-orchestration prototype**.
+Capability discovery and P0–P6 are complete. The current task is **P7 manual incremental command prototype**.
 
 Compare:
 
@@ -119,9 +121,9 @@ Primary question:
 
 The accepted D0 report establishes the evidence baseline for 115/OpenList/AList/Xiaoya/rclone, request amplification, cache behavior, rate-limit/account risk, large-directory behavior, and remaining live-test UNKNOWNs.
 
-The Architect accepted P0 scoped refresh, P1 bounded hot-scope polling feasibility, P2 durable state design, P3 persistence, P4 one-shot execution, and P5 bounded draining. P5 exit decision is **AUTHORIZE_SCHEDULER_ORCHESTRATION_PROTOTYPE**.
+The Architect accepted P0 scoped refresh, P1 bounded hot-scope polling feasibility, P2 durable state design, P3 persistence, P4 one-shot execution, P5 bounded draining, and P6 finite scheduler orchestration. P6 exit decision is **AUTHORIZE_MANUAL_INCREMENTAL_COMMAND_PROTOTYPE**.
 
-P6 may add only a finite manually-invoked orchestration runner that snapshots due watches once, attempts at most 5 atomic `EmitDuePoll` materializations, then invokes P5 exactly once with at most 5 execution items under a total wall budget <=60s. It must not add ticker/cadence, sleep-until-due, continuous daemon execution, automatic RetryReady/Resume/Repair/Recovery, Mutation Hint API, native delta/provider cursor, production `sync`, or destructive behavior.
+P7 may add only a one-shot `indexcore incremental run` operator command that acquires the existing writer advisory lock, composes the accepted Scan -> P4 -> P5 -> P6 chain, invokes P6 exactly once, emits structured JSON, and exits. It must not add ticker/cadence, sleep-until-due, continuous daemon execution, automatic RetryReady/Resume/Repair/Recovery, Mutation Hint API, native delta/provider cursor, or destructive behavior.
 
 ## Next product blueprint phase
 
@@ -168,7 +170,7 @@ Do not begin:
 - Scanner Resume / multi-daemon HA unless separately planned.
 - native delta implementation unless a future provider capability review explicitly authorizes it;
 - production adaptive polling / scheduler or continuous dirty executor;
-- orchestration behavior outside the bounded P6 manually-invoked prototype;
+- incremental command behavior outside the bounded P7 one-shot operator prototype;
 - Mutation Hint production integration until separately authorized.
 
 ## Recovery rule
@@ -182,4 +184,4 @@ First read:
 - `docs/gate4/GATE4-REFERENCE-CONSUMER-REPORT.md`;
 - the blueprint Gate-5 section.
 
-Then follow the active Architect-authorized phase. For incremental work, P6 is the bounded manually-invoked scheduler-orchestration prototype; for product work, Gate 5 still requires a separate architecture plan.
+Then follow the active Architect-authorized phase. For incremental work, P7 is the one-shot manual incremental command prototype; for product work, Gate 5 still requires a separate architecture plan.
