@@ -92,7 +92,9 @@ change on replay.
 ## 7. Work-state evidence (real PostgreSQL)
 
 - **Active first hint** (`TestP8ActiveRootFirstHint`): one row, `PENDING`,
-  `signal_seq=1`, `pending_source_set={MUTATION_HINT}`, `pending_priority=HIGH`,
+  `signal_seq=1`, `pending_source_set={MUTATION_HINT}`,
+  `pending_reason_set={POSSIBLE_CHANGE}` (the empty/default-reason path persists
+  its reason provenance), `pending_priority=HIGH`,
   `pending_first_seen_at = pending_not_before = last_seen_at = accepted_at`.
 - **Duplicate/replay** (`TestP8DuplicateReplayCoalesces`): still one row,
   `signal_seq=2`, de-duplicated sets, earliest `first_seen`, latest `last_seen`.
@@ -122,9 +124,13 @@ both during the claim and after `VERIFIED`, and exactly one provider refresh is
 issued — hint-only execution does not count as poll-schedule health.
 
 `TestP8CoalescedPollAndHintAttribution` coalesces `POLL_SCHEDULE` + `MUTATION_HINT`
-in one pending epoch: source sets contain both, one execution satisfies the epoch
-(no extra signal), the work reaches `VERIFIED`, and watch attribution occurs
-because `POLL_SCHEDULE` was actually claimed.
+in one pending epoch. Using the same blocking-scanner pattern as the hint-only
+test, it reads the Work row **while the attempt is in flight** and asserts
+`IN_FLIGHT` with `claimed_source_set` containing **both** `POLL_SCHEDULE` and
+`MUTATION_HINT` — direct proof the hint was not dropped during coalesced claim
+attribution. After release, one execution satisfies the epoch (no extra signal),
+the work reaches `VERIFIED`, and watch attribution occurs because
+`POLL_SCHEDULE` was actually claimed.
 
 ## 9. No provider I/O at ingress
 
@@ -201,5 +207,23 @@ history/idempotency table, Canonical/Journal/removal write, production polling
 scheduler, native delta/provider cursor, direct 115 integration, destructive
 removal, or Gate 5. P8 performs validation + one `MergeSignal` + return; a trusted
 caller must still run the accepted executor elsewhere to actually verify the hint.
+
+`FROZEN_CONTRACT_CHANGES: NONE`
+## 16. Round 1 evidence closeout (Issue #88 review)
+
+The P8 Round 1 review found no production-code blocker and required two
+test-only evidence details, both now landed inside
+`internal/runtime/incrementalhint/**` (no production change):
+
+1. **Persisted first-hint reason provenance.** `TestP8ActiveRootFirstHint` now
+   asserts `pending_reason_set == {POSSIBLE_CHANGE}` for the empty/default-reason
+   path, closing the real-PostgreSQL persistence evidence end-to-end.
+2. **Direct coalesced claimed-source proof.**
+   `TestP8CoalescedPollAndHintAttribution` now uses the blocking-scanner pattern to
+   read the in-flight Work row and assert `IN_FLIGHT` with `claimed_source_set`
+   containing both `POLL_SCHEDULE` and `MUTATION_HINT`, then releases the scanner
+   and keeps the one-execution / `VERIFIED` / watch-attribution assertions.
+
+P8 tests remain 22 (unit 9 + integration 13).
 
 `FROZEN_CONTRACT_CHANGES: NONE`

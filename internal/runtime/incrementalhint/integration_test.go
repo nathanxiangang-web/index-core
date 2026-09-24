@@ -269,6 +269,10 @@ func TestP8ActiveRootFirstHint(t *testing.T) {
 	if !p8Contains(w.PendingSourceSet, state.SourceMutationHint) || len(w.PendingSourceSet) != 1 {
 		t.Fatalf("pending_source_set = %v, want [MUTATION_HINT]", w.PendingSourceSet)
 	}
+	// The empty/default-reason first-hint path must persist POSSIBLE_CHANGE.
+	if len(w.PendingReasonSet) != 1 || w.PendingReasonSet[0] != state.ReasonPossibleChange {
+		t.Fatalf("pending_reason_set = %v, want [POSSIBLE_CHANGE]", w.PendingReasonSet)
+	}
 	if w.PendingPriority == nil || *w.PendingPriority != state.PriorityHigh {
 		t.Fatalf("pending_priority = %v, want HIGH", w.PendingPriority)
 	}
@@ -668,13 +672,39 @@ func TestP8CoalescedPollAndHintAttribution(t *testing.T) {
 	}
 	seq := coalesced.SignalSeq
 
-	cycle := p8CycleRunner(t, p8RealExecutor(t, st, now))
-	res, err := cycle.Run(ctx, incrementalexec.CycleConfig{MaxItems: 5, MaxWallTime: 30 * time.Second})
-	if err != nil {
-		t.Fatalf("cycle: %v", err)
+	realSvc := scan.New(st, "", "", 10*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	block := &p8BlockingScanner{inner: realSvc, entered: make(chan struct{}), release: make(chan struct{})}
+	cycle := p8CycleRunner(t, p8ExecutorWithScanner(t, st, block, now))
+
+	type outcome struct {
+		res incrementalexec.CycleResult
+		err error
 	}
-	if res.SelectedItems != 1 || res.Succeeded != 1 {
-		t.Fatalf("one execution must satisfy the coalesced epoch, got %+v", res)
+	done := make(chan outcome, 1)
+	go func() {
+		res, err := cycle.Run(ctx, incrementalexec.CycleConfig{MaxItems: 5, MaxWallTime: 30 * time.Second})
+		done <- outcome{res: res, err: err}
+	}()
+	<-block.entered
+
+	// Directly observe claim-scoped attribution while the attempt is in flight:
+	// the coalesced epoch must carry BOTH sources into claimed_source_set.
+	inFlight := p8GetWork(t, st, ctx, p8RootActive, "/")
+	if inFlight.WorkState != state.WorkInFlight {
+		t.Fatalf("state = %s, want IN_FLIGHT", inFlight.WorkState)
+	}
+	if !p8Contains(inFlight.ClaimedSourceSet, state.SourcePollSchedule) ||
+		!p8Contains(inFlight.ClaimedSourceSet, state.SourceMutationHint) {
+		t.Fatalf("claimed_source_set must include both sources, got %v", inFlight.ClaimedSourceSet)
+	}
+
+	close(block.release)
+	got := <-done
+	if got.err != nil {
+		t.Fatalf("cycle: %v", got.err)
+	}
+	if got.res.SelectedItems != 1 || got.res.Succeeded != 1 {
+		t.Fatalf("one execution must satisfy the coalesced epoch, got %+v", got.res)
 	}
 	final := p8GetWork(t, st, ctx, p8RootActive, "/")
 	if final.WorkState != state.WorkVerified {
