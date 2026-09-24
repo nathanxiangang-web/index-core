@@ -48,7 +48,7 @@ The experimental subagent topology is retired.
 
 Operating mode: **Stable Alpha Foundation / Maintenance**
 
-**Post-MVP Incremental D0 Change Discovery — COMPLETE / ARCHITECT_ACCEPTED.** **P0 Targeted Scoped Refresh — COMPLETE / ARCHITECT_ACCEPTED** (Issue #62 / PR #64). **P1 Adaptive Hot-Scope Polling Feasibility — COMPLETE / ARCHITECT_ACCEPTED** (Issue #66 / PR #67). **P2 Dirty / Hot Scope Durable State Design — COMPLETE / ARCHITECT_ACCEPTED** (Issue #69 / PR #70 merged at `e1f9c734e30502a133e5e7df8f54b2d1e3e1338a`). P2 exit decision: **AUTHORIZE_STATE_PERSISTENCE_PROTOTYPE**. P3 persistence prototype is the next bounded step; production scheduler/executor remains **NOT AUTHORIZED**.
+**Post-MVP Incremental D0 Change Discovery — COMPLETE / ARCHITECT_ACCEPTED.** **P0 Targeted Scoped Refresh — COMPLETE / ARCHITECT_ACCEPTED** (Issue #62 / PR #64). **P1 Adaptive Hot-Scope Polling Feasibility — COMPLETE / ARCHITECT_ACCEPTED** (Issue #66 / PR #67). **P2 Dirty / Hot Scope Durable State Design — COMPLETE / ARCHITECT_ACCEPTED** (Issue #69 / PR #70). **P3 State Persistence Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #72 / PR #73 merged at `c7c7091412a92c66e35d4d70f65a326ddc82a132`). P3 exit decision: **AUTHORIZE_ONE_SHOT_DIRTY_EXECUTOR_PROTOTYPE**. P4 one-shot executor is the next bounded step; production scheduler/continuous executor remains **NOT AUTHORIZED**.
 
 **Gate 4 — Reference Consumer Integration — CLOSED**
 
@@ -82,14 +82,15 @@ Status:
 
 There is no active Gate-5 execution issue.
 
-Separately, IndexCore Issue #57 tracks the incremental architecture umbrella. Issue #59 completed D0 research. Issue #62 / PR #64 completed P0 scoped refresh. Issue #66 / PR #67 completed P1 bounded hot-scope polling feasibility. Issue #69 / PR #70 completed P2 durable operational state design.
+Separately, IndexCore Issue #57 tracks the incremental architecture umbrella. Issue #59 completed D0 research. Issue #62 / PR #64 completed P0 scoped refresh. Issue #66 / PR #67 completed P1 bounded hot-scope polling feasibility. Issue #69 / PR #70 completed P2 durable state design. Issue #72 / PR #73 completed P3 durable PostgreSQL state persistence.
 
-The next bounded IndexCore step is P3 **State Persistence Prototype**. P3 may persist the accepted `ScopeWatchState` / `DirtyScopeWork` model using one additive SQL-first migration plus PostgreSQL Store CAS/transaction/recovery primitives and real-PG tests. It does not authorize a production scheduler, long-running executor, Mutation Hint API, native delta, production sync, destructive behavior, or Gate 5.
+The next bounded IndexCore step is P4 **One-shot Dirty Executor Prototype**. P4 may select at most one eligible persisted `DirtyScopeWork`, version-claim it, execute the accepted P0 `ScanScope` path once, and complete through P3 persistence. It does not authorize a production scheduler, continuous executor daemon, Mutation Hint API, native delta, production sync, destructive behavior, or Gate 5.
 Post-MVP Incremental P0: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P1: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P2: COMPLETE / ARCHITECT_ACCEPTED
-Post-MVP Incremental P3: STATE PERSISTENCE PROTOTYPE AUTHORIZED AFTER PLAN MERGE
-Production scheduler/executor: NOT AUTHORIZED
+Post-MVP Incremental P3: COMPLETE / ARCHITECT_ACCEPTED
+Post-MVP Incremental P4: ONE-SHOT DIRTY EXECUTOR AUTHORIZED AFTER PLAN MERGE
+Production scheduler/continuous executor: NOT AUTHORIZED
 
 Do not start a formal successor product, auth/user system, search/catalog,
 preview/download product path, 115 integration, AI, or other deferred product
@@ -335,10 +336,12 @@ Gate 4: CLOSED
 Post-MVP Incremental D0: COMPLETE / ARCHITECT_ACCEPTED (Issue #59 under #57)
 Post-MVP Incremental P0: COMPLETE / ARCHITECT_ACCEPTED (Issue #62 / PR #64)
 Post-MVP Incremental P1: COMPLETE / ARCHITECT_ACCEPTED (Issue #66 / PR #67)
-Post-MVP Incremental P2: DIRTY-SCOPE STATE DESIGN AUTHORIZED
-Post-MVP Incremental production implementation: NOT AUTHORIZED
+Post-MVP Incremental P2: COMPLETE / ARCHITECT_ACCEPTED
+Post-MVP Incremental P3: COMPLETE / ARCHITECT_ACCEPTED
+Post-MVP Incremental P4: ONE-SHOT DIRTY EXECUTOR AUTHORIZED AFTER PLAN MERGE
+Post-MVP Incremental production scheduler/continuous executor: NOT AUTHORIZED
 Gate 5: NOT AUTHORIZED
-Active Worker task: P2 design only
+Active Worker task: none until P4 plan merges
 ```
 
 Next action is Architect planning for Gate 5 only. No successor-product
