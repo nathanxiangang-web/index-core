@@ -68,15 +68,21 @@ Web should see the resource earlier
    115 官方《开发须知》明确禁止「调用非公开接口」。
    → 私有 API 风险等级：**HIGH**（证据级别：DIRECT）。
 
-6. **rclone 提供可选 `ChangeNotify` 接口（14/69 backend，全部 polling，非 webhook），但没有 115 backend。**
+6. **Xiaoya（小雅）是「预生成清单 + 客户端 diff」的成熟实践，不是 provider-native change feed。**
+   `.scan.list.gz` manifest 提供 path + 分钟级时间戳；`Last-Modified` 定义 generation；
+   30 分钟跳过下载；`xiaoya-emby`（MIT）用「双 mirror 内容一致才清理 + 连续两代缺席才删除」做删除保护。
+   → 证明「轻量 manifest + diff」可大幅降低变更发现成本，但**依赖外部生成端**
+   （生成器源码未找到）。（证据级别：DIRECT / 上游 UNAVAILABLE）
+
+7. **rclone 提供可选 `ChangeNotify` 接口（14/69 backend，全部 polling，非 webhook），但没有 115 backend。**
    → 对 115 不适用；对其它 backend 为 DRIVER_DEPENDENT。（证据级别：DIRECT）
 
-7. **没有任何被审查来源（115 官方 / OpenList / AList / rclone / fsspec）提供跨 provider 的
+8. **没有任何被审查来源（115 官方 / OpenList / AList / Xiaoya / rclone / fsspec）提供跨 provider 的
    native delta + durable cursor。**
    → Native Delta 只有在「某个 provider 明确暴露可信 change feed」时才可能落地，
    对 115 而言当前 **不可行**。
 
-8. 当前证据支持的候选方向是 **Hybrid（Mutation Hint + Scoped Refresh + Adaptive Polling +
+9. 当前证据支持的候选方向是 **Hybrid（Mutation Hint + Scoped Refresh + Adaptive Polling +
    Full Scan fallback）**，但：
    - 最终是否采用、先做哪条、SLA 定多少，**由 Architect 决定**；
    - 上传成功后 provider list 何时可见（最终一致性）仍为 **UNKNOWN，需要 live test**。
@@ -104,7 +110,11 @@ Web should see the resource earlier
 | AList | `fb0731a6953012e7b72b89bf5473817caa4625f9`（2026-09-19） | 2026-09-24 | source |
 | `SheltonZhu/115driver` | `542720cb0034954750454e89f32b4852add6e2a9`（2026-09-14） | 2026-09-24 | source |
 | rclone | `cfb90e3ebed479119718e3ae44b1171b060079e9`（D03 记录）；本次复核 `fs/features.go` | 2026-09-24 | source |
-| License | OpenList/AList = AGPL-3.0；115driver = 见其仓库；rclone = MIT；fsspec = BSD-3 | 2026-09-24 | DIRECT |
+| Xiaoya — `universonic/xiaoya-emby` | `2af6db2dd8511e4591e6a69b90604f2b3bd8a74c`（2026-09-13） | 2026-09-24 | source |
+| Xiaoya — `xiaoyaDev/xiaoya_emd_go` | `3161a980453d87281198ae009290950cc0ed55ec`（2026-01-01） | 2026-09-24 | source |
+| Xiaoya — `xiaoyaDev/xiaoya_db` | D01 记录；本轮引用其 `solid.py` 行号 | 2026-09-24 | source |
+| Xiaoya — 上游生成器 | `index.zip` / `update.zip` / `.scan.list.gz` 生成端检索无结果 | 2026-09-24 | UNAVAILABLE |
+| License | OpenList/AList = AGPL-3.0；115driver = 见其仓库；rclone = MIT；fsspec = BSD-3；xiaoya-emby = MIT；xiaoya_emd_go = GPL-3.0；xiaoya_db = 无 LICENSE | 2026-09-24 | DIRECT |
 
 > 115 官方文档 `open.115.com` 为 SPA，直接抓取拿不到正文；本报告采用其公开文档的
 > 社区镜像 `truewhile/MeBox:115doc/115开放平台`（内容标注为官方文档结构），并以
@@ -129,6 +139,21 @@ Web should see the resource earlier
 | rate-limit / quota documentation | 「对所有 API 实施频率控制，细则**不公开**」 | 客户端 `LimitRate`（115 driver 默认 2 r/s）+ 服务端 Unknown | rclone `--tpslimit` 等本地限流 | 官方=UNKNOWN / driver=DIRECT | 见 §10 |
 | token refresh failure semantics | OAuth2：7200s、refresh 轮换、终态错误码 40140116/19/20/37 | Cookie 失效 → 错误 | rclone 各 backend 不同 | DIRECT（官方）/ DRIVER_DEPENDENT | 见 §10 |
 | search / by-time filtering | `ufile/search` 支持 `gte_day`/`lte_day`（天粒度），需 `search_value`/`file_label` | 搜索走内部索引，非 provider 全量 | — | DIRECT | 不足以替代 change feed |
+
+### 3.1 Xiaoya（成熟实践参考，非 provider 能力）
+
+Xiaoya **不是** provider 接口能力的来源，而是「预生成清单 + 客户端 diff」的成熟工程实践参考：
+
+| 实践 | 内容 | Evidence |
+| --- | --- | --- |
+| 轻量 manifest | `/.scan.list.gz`：path + 分钟级时间戳；无 size/hash/id | DIRECT |
+| generation 判断 | HTTP `Last-Modified` 定义 manifest 代；只取最新代 mirror | DIRECT |
+| 低成本跳过 | `Last-Modified` 与本地时间差 ≤ 30 分钟则跳过下载 | DIRECT |
+| file-level diff | 本地文件集 vs manifest 条目集；per-row time base + content identity | DIRECT |
+| 删除保护 | 双 mirror 内容一致才清理；连续两代缺席才删除；>50% / ≥20 文件门控 | DIRECT |
+| 上游生成器 | 未找到 | UNAVAILABLE |
+
+详见 §14。
 
 ---
 
@@ -197,7 +222,16 @@ interval」。D03 已证实：14/69 backend 实现，**全部为 polling，不�
 **rclone 没有 115 backend**（`rclone.org/115` = 404）。
 → 对 115 不适用；对其它 backend 属于 DRIVER_DEPENDENT。
 
-### 5.4 Overall
+### 5.4 Xiaoya（不是 provider change feed）
+
+- Xiaoya 的 `.scan.list.gz` 是**服务端预生成的静态清单**，不是 provider 暴露的 change feed；
+  它不携带 create/update/move/delete 事件语义，也不提供 cursor / replay。
+- 其「generation」是发布方的 `Last-Modified`，只能回答「清单整体是否更新」，
+  不能回答「provider 自某点以来发生了什么」。
+- 因此 Xiaoya 的增量能力**不能**计入 provider-native delta；它属于 §14 的「成熟实践参考」。
+- 结论：**不改变本节对 115/OpenList/rclone 的 native delta = UNAVAILABLE 判定。**
+
+### 5.5 Overall
 
 **没有任何被审查来源为 115 提供可信的 native delta / cursor。**
 即便未来某个 provider 支持，也必须逐 provider 验证 cursor 的持久性、可 replay 性、
@@ -413,6 +447,7 @@ Adaptive Polling 在**不引入 native delta** 的前提下是覆盖「外部变
 | cursor/continuity/fail-closed 语义 | ❌ | ❌ | ❌ | **BUILD_NEW**（若走 native 才需要；当前无 native） |
 | canonical identity / reconcile / journal | ❌ | ❌ | ❌ | **USE_EXISTING（Kernel，已冻结）** |
 | provider 错误传播 / completeness | 弱（静默吞没） | 较强（传播 error） | — | 由 Collector 边界承载，Kernel 不重遍历（INV-023） |
+| 预生成清单 + client-level diff（Xiaoya 参考实践） | ❌（不提供 provider 能力，仅模式参考） | ❌ | ❌ | **ADAPT / 借思想**（见 §14；依赖外部生成端） |
 
 ### 11.1 直接结论
 
@@ -421,6 +456,8 @@ Adaptive Polling 在**不引入 native delta** 的前提下是覆盖「外部变
 - IndexCore 真正需要自己拥有的，是**变更发现策略的编排 + dirty scope + 安全 fallback**，
   以及（未来若真有 native feed 时的）cursor continuity 语义——这是一层薄逻辑，
   **不是** 又一个 provider client。
+- Xiaoya 提供的是**消费端模式参考**（manifest / generation / diff / 跨代删除确认），
+  不是可复用的 provider 能力；其**生成端未找到**，故「清单由谁生成」仍需 IndexCore 自己承担。
 
 ---
 
@@ -459,7 +496,99 @@ Adaptive Polling 在**不引入 native delta** 的前提下是覆盖「外部变
 
 ---
 
-## 14. rclone specific conclusion
+## 14. Xiaoya / xiaoya-* specific conclusion（成熟实践参考）
+
+> 复用既有 `docs/research/XIAOYA-INDEX-ARCHITECTURE-REPORT.md`（Discovery 01）与
+> `d01/W-A`、`d01/W-B`、`d01/W-D`。本轮**不重复调查「小雅是什么」**，只补「变更发现 / 增量」相关缺口。
+> **小雅不是 provider-native change feed 的实现**；它是「预生成索引 / 清单分发 + 客户端 diff」的成熟实践，
+> 用于回答：能否用轻量 manifest / version / scoped refresh 大幅降低变更发现成本。
+
+### 14.1 index.zip / update.zip / .scan.list.gz 如何更新
+
+| 文件 | 生成 / 发布方 | 客户端如何判断更新 | 是否增量 | 证据 |
+| --- | --- | --- | --- | --- |
+| `index.zip`（搜索索引） | 服务端预生成（生成器**未找到**） | 客户端比对 `version.txt`，变化则整包下载替换 | **否（全量替换）** | DIRECT（W-A: `service.sh` version 比对） |
+| `update.zip`（AList `x_storages` 挂载 SQL） | 服务端预生成 | 同上（`version.txt`） | 否（整包替换） | DIRECT（W-B / W-A：`update.zip` 不是索引增量） |
+| `.scan.list.gz`（元数据 manifest） | 服务端 mirror 发布（生成器**未找到**） | `Last-Modified` + generation；并用 30 分钟跳过 | **是（相对客户端本地文件的 file-level diff）** | DIRECT（`xiaoya_emd_go` / `xiaoya-emby` 源码） |
+
+### 14.2 `.scan.list.gz` manifest 语义（DIRECT）
+
+以 `universonic/xiaoya-emby`（MIT，commit `2af6db2`，2026-09-13）与
+`xiaoyaDev/xiaoya_emd_go`（GPL-3.0，commit `3161a98`）源码为准：
+
+- **内容是「路径 + 分钟级时间戳」清单**：每行格式 `YYYY-MM-DD HH:MM /absolute/path`；
+  时间戳**分钟截断**、按生成者**本地时区**写（非 GMT），因此**不能直接与 HTTP `Last-Modified` 比较**
+  （`xiaoya-emby:engine/metadata.go:42-52`）。**manifest 不含 size / hash / object id。**
+- **一次下载替代递归爬取**：xiaoya-emby 原文 "One download replaces the recursive crawl of autoindex pages"。
+- **generation 由 `Last-Modified` 定义**：xiaoya-emby 并发探测所有 mirror，只使用
+  `Last-Modified` **恰好等于最新代**的 mirror，避免混代；持久化的是解析内容的代（bodyHash）
+  而非探测时间戳（`metadata.go:320-372, 2387-2390`）。
+- **低成本「远端是否变了」判断**：`xiaoya_emd_go:checkAndUpdateScanList`（main.go:1515-1560）
+  GET `/.scan.list.gz` → 读 `Last-Modified` → 与持久化 `config.ScanListTime`（或本地 mtime）比较，
+  **`serverTime.Sub(compareTime) <= 30*time.Minute` 直接跳过下载**。
+- **无 manifest 时回退**：所有 mirror 都拿不到 manifest → 回退 legacy HTML 递归爬取（`--force-crawl`）。
+
+### 14.3 真正的 diff / 增量逻辑（DIRECT）
+
+- `xiaoya_emd_go:compareAndPrepareSync`（main.go:857-925）：
+  `toUpdate = !exists OR serverTS - localTS > 600`（10 分钟容差）；`toDelete = 本地有、服务器列表无`。
+- `xiaoya_db/solid.py`（Python）：`need_download`（265-287）按 **不存在 / 大小不同 / 时间戳更新** 判定；
+  另有 `Complete Gate`：`gap = |len(temp) - total_amount| < 10 AND total_amount > 0` 才 purge（465）。
+- **xiaoya-emby 最成熟**：manifest 只给 path+mtime；每个 file row 另带 **time base**
+  （`manifest`/`http`/`unknown`）+ **content identity**（强 ETag 用 `etag:size`，否则 materialization ID）；
+  **时间戳不跨 base 比较**，foreign base 必须先用一次 HTTP HEAD 重新 identify 才能改时间戳（README）。
+
+### 14.4 删除安全（对 IndexCore 最有借鉴价值的部分，DIRECT）
+
+xiaoya-emby（MIT）实现了一组与 IndexCore 蓝图高度同构的删除保护：
+
+- **双 mirror 内容一致才允许 cleanup**：至少两个不同 mirror serving **完全相同最新代 manifest**
+  （`sha256` 相等）才 `cleanupAuthorized`；否则跳过（`metadata.go:800-816`）。
+- **跨代确认删除**：某 path 过去被 manifest 覆盖、现在缺失 → 只有它**连续两个 manifest generation
+  都缺席**（`pending_root_drops` + 代变化）才删除，否则 deferred（`metadata.go:844-877`）。
+  = 「missing 不等于 deleted，需独立再次确认」。
+- **删除数量门控**：拒绝删除超过本地库一半，或任何 ≥20 文件的 root；malformed manifest 直接禁删（README）。
+- 与 Kernel 已冻结的 `INV-003/005/022`、`C-7/C-9`（completeness gate）方向一致——属于**借思想**，
+  而非需要复用的 provider 能力。
+
+### 14.5 刷新调度 / 更新时间判断 / 目录差异模式（可借鉴）
+
+- **调度**：xiaoya-emby 支持 cron（默认 `0 0 * * *`）与手动 `incremental` / `full-relaxed` /
+  `full-strict` 触发；一次只跑一个 job，重入 `409 busy`。
+- **更新时间判断**：`Last-Modified` + 30 分钟跳过（emd-go）；manifest 最新代选择（emby）。
+- **目录差异模式**：`local file set` vs `manifest entry set` 的 path-level diff；
+  per-row time base + content identity 决定是否真正重传。
+- **原子写入 / 软删除**：emd-go 用 `.tmp + os.Rename` 与 `recycle_bin/`；xiaoya-emby 用持久化
+  `full_sync_state`（可恢复 rebuild）与 quarantine。
+
+### 14.6 上游生成器是否找到（本轮待查项）
+
+- `index.zip` / `update.zip` / `.scan.list.gz` 的**服务端生成器源码仍未找到**；
+  本轮 GitHub 代码 / 仓库检索（`scan.list.gz` 生成端、`xiaoya metadata`、mirror/generator）
+  **无结果** → **UNAVAILABLE / UNKNOWN**（与 Discovery 01 结论一致）。
+- 因此 manifest 的**生成成本、更新频率、覆盖范围**不可直接复用；只能借鉴**消费端**的
+  「manifest + Last-Modified/generation + diff + 跨代删除确认」**思想**。
+
+### 14.7 可复用 / 借思想 分类
+
+| 对象 | 分类 | 说明 |
+| --- | --- | --- |
+| `universonic/xiaoya-emby`（MIT） | **ADAPT / 借思想（同构度高）** | manifest generation 选择、per-row time base、跨代删除确认、双 mirror 一致门控 |
+| `xiaoyaDev/xiaoya_emd_go`（GPL-3.0） | **IDEA_ONLY** | `Last-Modified` + 30 分钟跳过、diff 规则 |
+| `xiaoyaDev/xiaoya_db`（无 LICENSE） | **IDEA_ONLY** | `need_download` 三条件、gap Complete Gate |
+| `index.zip` / `update.zip` 分发机制 | **IDEA_ONLY** | `version.txt` 轻量版本判断 |
+| 上游生成器 | **UNAVAILABLE** | 源码未找到 |
+
+### 14.8 小结（供 Architect 判定，非结论）
+
+小雅证明：**「预生成清单 + `Last-Modified`/generation + 客户端 file-level diff + 跨代删除确认」
+确实能把「发现变化」的成本压到「下载一个小清单 + 按需 head/下载」**，而**无需 provider-native
+change feed**。但它依赖一个**外部生成端**持续产出清单；IndexCore 若要复用这种模式，必须先解决
+「清单从哪来」——对 115 只能由 scoped list / 轮询产出，或仅借鉴其**消费端 diff 与删除确认**思想。
+
+---
+
+## 15. rclone specific conclusion
 
 - 提供可选 `ChangeNotifier`（`fs/features.go:569-581`），**polling 非 webhook**；
   D03 证实 14/69 backend 实现。
@@ -471,7 +600,7 @@ Adaptive Polling 在**不引入 native delta** 的前提下是覆盖「外部变
 
 ---
 
-## 15. UNKNOWNs requiring live tests
+## 16. UNKNOWNs requiring live tests
 
 1. **最终一致性**：上传/移动成功后，115 侧 list 何时可见？（决定 Mutation Hint 的 retry/backoff 与可达到的延迟下限）
 2. **OpenList 115 driver 的外部变更可见延迟**：`refresh=true` 后，外部上传在新会话中多久出现？
@@ -482,10 +611,13 @@ Adaptive Polling 在**不引入 native delta** 的前提下是覆盖「外部变
 7. **多 root 共享账号**下的实际风控表现。
 8. **115 官方 open API** 的实际限流、`user_utime` 排序在增量识别中的可用性与精度。
 9. OpenList 版本升级对缓存语义（`CustomCachePolicies`、失效规则）的稳定性影响。
+10. **Xiaoya `.scan.list.gz` 上游生成器**：生成成本、频率、覆盖范围未证实（生成器源码未找到）。
+11. **轻量 manifest 模式对 IndexCore 的适配方式**：「清单由谁生成」尚无证据——115 侧只能由
+    scoped list / 轮询产出，需评估其成本与收益。
 
 ---
 
-## 16. Live test plan（仅在 Architect 授权且有可控账号时执行）
+## 17. Live test plan（仅在 Architect 授权且有可控账号时执行）
 
 > 本阶段禁止对生产账号压测。以下为**候选**测试设计，需显式请求预算与账号隔离。
 
@@ -502,7 +634,7 @@ Adaptive Polling 在**不引入 native delta** 的前提下是覆盖「外部变
 
 ---
 
-## 17. Final options（供 Architect 决策）
+## 18. Final options（供 Architect 决策）
 
 Blueprint §12 要求 D0 结束时由 Architect 从以下选择其一：
 
