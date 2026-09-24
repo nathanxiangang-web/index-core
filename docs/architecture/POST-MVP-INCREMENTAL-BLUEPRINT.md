@@ -1,6 +1,6 @@
 # Post-MVP Incremental Ingestion Blueprint
 
-> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 ACCEPTED / P3 STATE PERSISTENCE PROTOTYPE AUTHORIZED / PRODUCTION SCHEDULER NOT AUTHORIZED**
+> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 ACCEPTED / P3 ACCEPTED / P4 ONE-SHOT DIRTY EXECUTOR AUTHORIZED / PRODUCTION SCHEDULER NOT AUTHORIZED**
 >
 > Architecture tracking: #57
 >
@@ -181,7 +181,15 @@ P3 is defined by:
 
 `docs/architecture/INCREMENTAL-P3-STATE-PERSISTENCE-PROTOTYPE.md`
 
-P3 may add an additive operational migration and PostgreSQL Store state primitives/tests. It does **not** authorize a scheduler, executor, public trigger API, provider cursor, destructive delta, or Gate 5.
+P3 is ARCHITECT_ACCEPTED and merged at `c7c7091412a92c66e35d4d70f65a326ddc82a132`. It persisted the accepted operational model and proved its CAS/transaction/recovery semantics against real PostgreSQL.
+
+P3 exit decision: **AUTHORIZE_ONE_SHOT_DIRTY_EXECUTOR_PROTOTYPE**.
+
+P4 is defined by:
+
+`docs/architecture/INCREMENTAL-P4-ONE-SHOT-DIRTY-EXECUTOR-PROTOTYPE.md`
+
+P4 may prove exactly one persisted-work execution through the existing P0 `ScanScope` path. It does **not** authorize a scheduler, continuous executor, public trigger API, provider cursor, destructive delta, or Gate 5.
 
 ## 5. Capability model — research hypothesis, not accepted contract
 
