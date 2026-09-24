@@ -10,16 +10,17 @@ Execution owner: **none currently**
 
 Status:
 
-**DISCOVERY ACTIVE / NO IMPLEMENTATION AUTHORIZED**
+**D0 RESEARCH COMPLETE / ARCHITECT DECISION REQUIRED / NO IMPLEMENTATION AUTHORIZED**
 
 Current architecture planning:
 
-- Issue #57 — incremental architecture umbrella
-- Issue #59 — active Change Discovery capability research
+- Issue #57 — incremental architecture umbrella (OPEN)
+- Issue #59 — Change Discovery capability research (COMPLETE)
 - Blueprint: `docs/architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md`
-- Research report: `docs/research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md`
+- Accepted D0 report: `docs/research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md`
+- Accepted research PR #60 merged at `5b7fc32e75d70b38a3e30ec120b6f7e60f530bdd`
 
-Research execution is authorized. Production implementation remains **NONE** until Issue #59 is complete and the Architect explicitly selects a strategy.
+Research is complete. Production implementation remains **NONE** until the Architect explicitly selects and authorizes a prototype strategy.
 
 Accepted Gate-4 merge commits:
 
@@ -83,7 +84,7 @@ CloudSite 1.0 remains **Legacy / Frozen Product**.
 
 This is a separate IndexCore infrastructure extension and does **not** consume or authorize Gate 5.
 
-Current task is capability discovery, not solution implementation.
+Capability discovery is complete. The current task is **Architect decision**, not implementation.
 
 Compare:
 
@@ -102,12 +103,9 @@ Primary question:
 > AList/OpenList cache refresh, with small controlled provider requests, without
 > rebuilding mature provider drivers?
 
-Research must settle 115/OpenList/AList/rclone capability, request amplification,
-cache behavior, rate-limit/account risk, large-directory behavior, and realistic
-latency targets.
+The accepted D0 report establishes the evidence baseline for 115/OpenList/AList/Xiaoya/rclone, request amplification, cache behavior, rate-limit/account risk, large-directory behavior, and remaining live-test UNKNOWNs.
 
-Implementation is **NOT AUTHORIZED**. After Issue #59's report, the Architect may
-choose STOP, one prototype path, a hybrid, or full-scan-only.
+Implementation is **NOT AUTHORIZED**. The Architect must now choose whether to STOP, authorize one bounded prototype path, authorize a hybrid prototype, or keep full-scan-only.
 
 ## Next product blueprint phase
 
