@@ -48,7 +48,7 @@ The experimental subagent topology is retired.
 
 Operating mode: **Stable Alpha Foundation / Maintenance**
 
-**Post-MVP Incremental D0 Change Discovery — COMPLETE / ARCHITECT_ACCEPTED.** **P0 Targeted Scoped Refresh — COMPLETE / ARCHITECT_ACCEPTED** (Issue #62 / PR #64). **P1 Adaptive Hot-Scope Polling Feasibility — COMPLETE / ARCHITECT_ACCEPTED** (Issue #66 / PR #67). **P2 Dirty / Hot Scope Durable State Design — COMPLETE / ARCHITECT_ACCEPTED** (Issue #69 / PR #70). **P3 State Persistence Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #72 / PR #73). **P4 One-shot Dirty Executor Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #75 / PR #76). **P5 Bounded Executor Loop Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #79 / PR #80). **P6 Scheduler Orchestration Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #82 / PR #83 merged at `3aa02bb9f6cf9c6de52ac5fb88310d17c735af12`). P6 exit decision: **AUTHORIZE_MANUAL_INCREMENTAL_COMMAND_PROTOTYPE**. P7 manual incremental command is the next bounded step; production scheduler/cadence/continuous executor remains **NOT AUTHORIZED**.
+**Post-MVP Incremental D0 Change Discovery — COMPLETE / ARCHITECT_ACCEPTED.** **P0 Targeted Scoped Refresh — COMPLETE / ARCHITECT_ACCEPTED** (Issue #62 / PR #64). **P1 Adaptive Hot-Scope Polling Feasibility — COMPLETE / ARCHITECT_ACCEPTED** (Issue #66 / PR #67). **P2 Dirty / Hot Scope Durable State Design — COMPLETE / ARCHITECT_ACCEPTED** (Issue #69 / PR #70). **P3 State Persistence Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #72 / PR #73). **P4 One-shot Dirty Executor Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #75 / PR #76). **P5 Bounded Executor Loop Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #79 / PR #80). **P6 Scheduler Orchestration Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #82 / PR #83). **P7 Manual Incremental Command Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #85 / PR #86 merged at `8ae9b01c6a8d2c4b8797077b280e795f71dc712b`). P7 exit decision: **AUTHORIZE_MUTATION_HINT_PROTOTYPE**. P8 mutation-hint ingestion is the next bounded step; production scheduler/cadence/continuous executor remains **NOT AUTHORIZED**.
 
 **Gate 4 — Reference Consumer Integration — CLOSED**
 
@@ -82,9 +82,9 @@ Status:
 
 There is no active Gate-5 execution issue.
 
-Separately, IndexCore Issue #57 tracks the incremental architecture umbrella. Issue #59 completed D0 research. Issue #62 / PR #64 completed P0 scoped refresh. Issue #66 / PR #67 completed P1 bounded hot-scope polling feasibility. Issue #69 / PR #70 completed P2 durable state design. Issue #72 / PR #73 completed P3 durable PostgreSQL state persistence. Issue #75 / PR #76 completed P4 one-shot durable execution. Issue #79 / PR #80 completed P5 bounded executor draining. Issue #82 / PR #83 completed P6 bounded scheduler orchestration.
+Separately, IndexCore Issue #57 tracks the incremental architecture umbrella. Issue #59 completed D0 research. Issue #62 / PR #64 completed P0 scoped refresh. Issue #66 / PR #67 completed P1 bounded hot-scope polling feasibility. Issue #69 / PR #70 completed P2 durable state design. Issue #72 / PR #73 completed P3 durable PostgreSQL state persistence. Issue #75 / PR #76 completed P4 one-shot durable execution. Issue #79 / PR #80 completed P5 bounded executor draining. Issue #82 / PR #83 completed P6 bounded scheduler orchestration. Issue #85 / PR #86 completed P7 one-shot manual incremental operation.
 
-The next bounded IndexCore step is P7 **Manual Incremental Command Prototype**. P7 may add only `indexcore incremental run`: it must acquire the existing single-writer advisory lock, validate schema/config, compose the accepted P4/P5/P6 chain, invoke P6 once, emit structured JSON, and exit. It does not authorize ticker/cadence, background mode, automatic recovery/repair, Mutation Hint API, native delta, destructive behavior, or Gate 5.
+The next bounded IndexCore step is P8 **Mutation Hint Ingestion Prototype**. P8 may add only a trusted in-process provider-neutral service that maps one canonical directory-scope hint to the existing `MUTATION_HINT` DirtySignal provenance and calls `Store.MergeSignal` once. It does not authorize a standalone writer process, hint CLI/HTTP transport, provider traversal during ingress, direct execution, destructive behavior, or Gate 5.
 Post-MVP Incremental P0: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P1: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P2: COMPLETE / ARCHITECT_ACCEPTED
@@ -92,7 +92,8 @@ Post-MVP Incremental P3: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P4: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P5: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P6: COMPLETE / ARCHITECT_ACCEPTED
-Post-MVP Incremental P7: MANUAL INCREMENTAL COMMAND AUTHORIZED AFTER PLAN MERGE
+Post-MVP Incremental P7: COMPLETE / ARCHITECT_ACCEPTED
+Post-MVP Incremental P8: MUTATION HINT INGESTION AUTHORIZED AFTER PLAN MERGE
 Production scheduler/cadence/continuous executor: NOT AUTHORIZED
 
 Do not start a formal successor product, auth/user system, search/catalog,
@@ -344,10 +345,11 @@ Post-MVP Incremental P3: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P4: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P5: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P6: COMPLETE / ARCHITECT_ACCEPTED
-Post-MVP Incremental P7: MANUAL INCREMENTAL COMMAND AUTHORIZED AFTER PLAN MERGE
+Post-MVP Incremental P7: COMPLETE / ARCHITECT_ACCEPTED
+Post-MVP Incremental P8: MUTATION HINT INGESTION AUTHORIZED AFTER PLAN MERGE
 Post-MVP Incremental production scheduler/cadence/continuous executor: NOT AUTHORIZED
 Gate 5: NOT AUTHORIZED
-Active Worker task: none until P7 plan merges
+Active Worker task: none until P8 plan merges
 ```
 
 Next action is Architect planning for Gate 5 only. No successor-product
