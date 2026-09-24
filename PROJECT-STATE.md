@@ -80,7 +80,7 @@ Status:
 
 **NOT AUTHORIZED / ARCHITECT PLANNING REQUIRED**
 
-There is no active Gate-5 execution issue and no Worker implementation task.
+There is no active Gate-5 execution issue. The only active Worker task is the bounded IndexCore P0 prototype in Issue #62.
 
 Separately, IndexCore Issue #57 tracks the incremental architecture umbrella. Issue #59 has completed D0 research. Issue #62 now authorizes a bounded P0 prototype: known scope -> OpenList forced refresh -> PARTIAL additive-safe reconcile. This does not authorize polling, scheduler, native delta, production sync, or Gate 5.
 Do not start a formal successor product, auth/user system, search/catalog,
