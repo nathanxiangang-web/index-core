@@ -1065,13 +1065,21 @@ The desired end state is:
 
 ## 32. Current architecture decision
 
-**Current decision: D0 RESEARCH COMPLETE. P0 Targeted Scoped Refresh prototype is authorized. Production incremental implementation remains unapproved.**
+**Current decision: D0 RESEARCH COMPLETE. P0 Targeted Scoped Refresh is ARCHITECT_ACCEPTED. P1 Adaptive Hot-Scope Polling Feasibility is the next bounded prototype. Production incremental implementation remains unapproved.**
 
-The only design principle accepted before research is:
+Accepted P0 evidence proved that, when a changed directory is known, one bounded OpenList `115 Open` `refresh=true` observation can surface a real out-of-band 115 change earlier than stale cache while preserving PARTIAL additive-safe semantics.
 
-> Any future change-discovery optimization must reuse the existing Kernel safety path and must not become a second direct canonical-write mechanism.
+The remaining 115-specific discovery gap is that the audited public 115 Open API exposes no native change feed/cursor/webhook. Mutation Hint alone cannot detect arbitrary external writes. Therefore P1 tests whether a **small, bounded hot-scope set** can be polled at approximately 1–2 minute cadence with acceptable provider cost and failure behavior.
 
-Everything else remains subject to evidence.
+P1 is defined in:
+
+`docs/architecture/INCREMENTAL-P1-HOT-SCOPE-POLLING-PROTOTYPE.md`
+
+P1 does **not** authorize a production scheduler, persistent dirty-scope state, native delta, provider cursor, production `sync`, destructive delta, or Gate 5.
+
+The governing design principle remains:
+
+> Any change-discovery optimization must reuse the existing Kernel safety path and must not become a second direct canonical-write mechanism.
 
 ### D0 research authorization — completed
 
