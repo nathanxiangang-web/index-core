@@ -207,14 +207,18 @@ This includes:
 
 However stale selection stops the cycle immediately (§8), so it cannot create a tight contention loop.
 
-Before each new `ExecuteOne` call:
+Before each new `ExecuteOne` call, the cycle applies this deterministic boundary precedence:
 
 ```text
-if selected_items >= MaxItems:
-    stop MAX_ITEMS
+1. parent context cancelled/deadline -> CONTEXT_CANCELLED
+2. selected_items >= MaxItems        -> MAX_ITEMS
+3. cycle-owned deadline expired      -> MAX_WALL_TIME
+4. otherwise call ExecuteOne
 ```
 
-Thus P5 never performs an extra selection after the item budget is consumed.
+The cycle-owned deadline **must be checked before calling ExecuteOne**. Once the wall budget is already exhausted, P5 must not enter another selector/Store call and accidentally report the expired context as a systemic Store error.
+
+Thus P5 never performs an extra selection after either finite budget is consumed.
 
 Provider request count remains bounded by the accepted P4 invariant:
 
@@ -314,7 +318,7 @@ The P4 failure transition has already committed.
 
 Increment selected/failed counters.
 
-Continue to another eligible item for these durable classes:
+Continue to another eligible item only when `Result.FailureClass` is present and is one of these durable classes:
 
 ```text
 TRANSIENT_PROVIDER
@@ -325,6 +329,8 @@ INVALID_SCOPE
 CONFIG_INVALID
 ROOT_INACTIVE
 ```
+
+Any `ErrScannerFailed` with a missing/unknown `FailureClass` fails closed as `SYSTEMIC_ERROR` and stops the cycle.
 
 Rationale:
 
@@ -645,18 +651,20 @@ Assert:
 - StopReason SYSTEMIC_ERROR;
 - non-nil error.
 
-Also test an unexpected selector/claim/store error through a fake OneShot.
+Also test an unexpected selector/claim/store error through a fake OneShot, and an `ErrScannerFailed` whose result has no failure class: both must fail closed as SYSTEMIC_ERROR.
 
 ### 15.9 Wall-time budget — before next item
 
-Use a fake one-shot whose first successful execution advances/consumes the budget sufficiently.
-
-If deterministic fake-clock implementation is used, ensure the production implementation still enforces a real context deadline for in-flight work.
+Use a controlled fake one-shot whose first execution returns only after the cycle-owned deadline has expired (it may intentionally ignore the context for this boundary test).
 
 Assert:
 
-- no item starts after wall budget is exhausted;
-- stop MAX_WALL_TIME.
+- the runner checks the expired cycle context before the next ExecuteOne call;
+- no second item/selector invocation starts;
+- stop MAX_WALL_TIME;
+- the expired context is not misreported as a systemic Store/selector error.
+
+Production still must enforce a real derived context deadline for in-flight work.
 
 ### 15.10 Wall-time budget — during an item
 
@@ -771,7 +779,8 @@ P5 passes only if:
 14. provider request count remains bounded by selected items <=5;
 15. real PostgreSQL multi-item proof passes;
 16. P0/P3/P4 contracts remain unchanged;
-17. no scheduler/ticker/cadence/daemon/API/CLI/migration is introduced.
+17. stop-reason precedence is deterministic: parent cancellation > max-items > cycle wall budget before each new item;
+18. no scheduler/ticker/cadence/daemon/API/CLI/migration is introduced.
 
 ## 18. P5 exit decision
 
