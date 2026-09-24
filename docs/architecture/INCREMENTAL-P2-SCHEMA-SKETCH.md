@@ -63,6 +63,7 @@ are retained (audit) and simply not selected.
 | `claimed_source_set` | Nullable; snapshot of the sources the attempt claimed (Watch attribution uses this). |
 | `claimed_reason_set` | Nullable; snapshot of the claimed reasons. |
 | `claimed_priority` | Nullable; claimed priority. |
+| `claimed_first_seen_at` | Nullable instant; first-seen time snapshotted into the claim (age preservation across failure re-coalesce). |
 | `pending_source_set` | Sources **not yet claimed**. Empty ⇒ no outstanding un-claimed signal. |
 | `pending_reason_set` | Reasons not yet claimed. |
 | `pending_priority` | Nullable; highest un-claimed priority. |
@@ -93,8 +94,8 @@ Rationale: a plain unique key makes the "one active logical item per key" invari
 Issue #69 invariant 4) trivially enforceable in the database, with no partial-index ambiguity.
 
 **Eligible-work selection index (conceptual):** on
-`(work_state, not_before, priority_class, first_seen_at, scope_key)` restricted to the eligible states
-(`PENDING`, `RETRY_WAIT`), enabling deterministic selection order.
+`(work_state, pending_not_before, pending_priority, pending_first_seen_at, scope_key)` restricted to the
+eligible states (`PENDING`, `RETRY_WAIT`), enabling deterministic selection order.
 
 ## 4. Set representation (conceptual)
 

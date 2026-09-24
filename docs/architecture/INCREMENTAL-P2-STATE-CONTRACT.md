@@ -157,6 +157,7 @@ exact scope, through the accepted P0 `scan.Service.ScanScope` path.
 | `claimed_source_set` | set<source>, nullable | Sources of the signals **this attempt actually claimed** (snapshot of `pending_source_set` at claim). Non-null iff `IN_FLIGHT`. **Watch health counters use this** (§6.1). |
 | `claimed_reason_set` | set<reason>, nullable | Reasons of the claimed signals (snapshot at claim). Non-null iff `IN_FLIGHT`. |
 | `claimed_priority` | enum, nullable | Priority of the claimed signals (snapshot at claim). |
+| `claimed_first_seen_at` | instant, nullable | First-seen time snapshotted into the claim; preserves the age of the claimed work across failure re-coalesce (fairness). Non-null iff `IN_FLIGHT`. |
 | `pending_source_set` | set<source> | Sources of signals **not yet claimed by any attempt**. Empty means "no outstanding un-claimed signal". |
 | `pending_reason_set` | set<reason> | Reasons of the un-claimed signals. |
 | `pending_priority` | enum, nullable | Highest priority among the un-claimed signals. |
@@ -220,8 +221,10 @@ must never carry `MUTATION_HINT` provenance, and vice versa.
 
 ### 3.5 Attempt/verification fields
 
-- `last_verified_at` / `last_verified_signal_seq` are written **only** on successful coverage that
-  satisfies the claimed signal (§4).
+- `last_verified_at` / `last_verified_signal_seq` are written on successful coverage that satisfies the
+  claimed signal (§4) — **including a partial success**: if the claimed signal `k` is verified but a
+  newer signal arrived during the attempt, the item returns to `PENDING` **and still records
+  `last_verified_at = now` / `last_verified_signal_seq = k`** (the claimed signal really was verified).
 - `last_attempt_finished_at` is written for both success and failure.
 - Success is defined by **fresh successful scope coverage + successful admission/application**, not
   by `Mutated=true` (§5 of the plan; §5 here).
@@ -248,9 +251,9 @@ must never carry `MUTATION_HINT` provenance, and vice versa.
 ### 3.8 Work invariants
 
 1. At most one active logical item per `(root_id, scope_key)`.
-2. `claimed_signal_seq`, `claimed_source_set`, `claimed_reason_set` and `claimed_priority` are all
-   `NULL` iff `work_state != IN_FLIGHT`; all four are set together at claim and released together on
-   every exit from `IN_FLIGHT`.
+2. `claimed_signal_seq`, `claimed_source_set`, `claimed_reason_set`, `claimed_priority` and
+   `claimed_first_seen_at` are all `NULL` iff `work_state != IN_FLIGHT`; all five are set together at
+   claim and released together on every exit from `IN_FLIGHT`.
 3. `claimed_signal_seq <= signal_seq` always.
 4. `last_verified_signal_seq` is always a previously-claimed `signal_seq` value and is `<= signal_seq`
    at write time. (There is no cross-scheme "signature" quantity to compare against.)
@@ -295,11 +298,14 @@ CAS(version=v -> v+1):
         pending_priority   = max(pending_priority, trigger.priority_class)
         if pending_first_seen_at IS NULL: pending_first_seen_at = now
         # pending_not_before is handled PER STATE (NOT a blanket min()):
+        # PENDING may become eligible sooner (min); every other state may only move LATER (max, never
+        # earlier), so a post-claim signal's own eligibility is preserved and an existing backoff is
+        # never cancelled.
         if work_state == PENDING:     pending_not_before = min(pending_not_before, trigger.not_before)
-        if work_state == IN_FLIGHT:   pending_not_before unchanged   # does NOT touch the current claim
-        if work_state == RETRY_WAIT:  pending_not_before UNCHANGED   # a new signal must NOT cancel backoff
-        if work_state == BLOCKED:     pending_not_before unchanged
-        if work_state == SUSPENDED:   pending_not_before unchanged
+        if work_state == IN_FLIGHT:   pending_not_before = max(pending_not_before, trigger.not_before)  # preserve post-claim eligibility
+        if work_state == RETRY_WAIT:  pending_not_before = max(pending_not_before, trigger.not_before)  # must NOT cancel backoff
+        if work_state == BLOCKED:     pending_not_before = max(pending_not_before, trigger.not_before)
+        if work_state == SUSPENDED:   pending_not_before = max(pending_not_before, trigger.not_before)
 
 # claim (snapshot pending_* -> claimed_*, then CLEAR pending_*):
 CAS(version=v -> v+1):  where work_state = PENDING and (pending_not_before IS NULL or pending_not_before <= now)
@@ -308,6 +314,7 @@ CAS(version=v -> v+1):  where work_state = PENDING and (pending_not_before IS NU
     claimed_source_set      = pending_source_set      # snapshot of what this attempt owns
     claimed_reason_set      = pending_reason_set
     claimed_priority        = pending_priority
+    claimed_first_seen_at   = pending_first_seen_at   # snapshot age for fairness across failure re-coalesce
     pending_source_set      = ∅                        # cleared: nothing un-claimed yet
     pending_reason_set      = ∅
     pending_priority        = NULL
@@ -327,11 +334,17 @@ CAS(version=v -> v+1):  where work_state = IN_FLIGHT and claimed_signal_seq = k
     else:                                 # newer signal(s) arrived -> keep ONLY post-claim pending
         work_state               = PENDING
         # pending_* already holds ONLY the post-claim signals (never inherits claimed_*)
+        # PARTIAL-SUCCESS watermark: the CLAIMED signal k WAS successfully verified, so record it
+        # even though the item re-opens for the newer signal(s).
+        last_verified_at         = now
+        last_verified_signal_seq = k
+        consecutive_failures     = 0
     # release the whole claim in BOTH branches:
-    claimed_signal_seq = NULL
-    claimed_source_set = NULL
-    claimed_reason_set = NULL
-    claimed_priority   = NULL
+    claimed_signal_seq    = NULL
+    claimed_source_set    = NULL
+    claimed_reason_set    = NULL
+    claimed_priority      = NULL
+    claimed_first_seen_at = NULL
 
 # failure / abort (leaving IN_FLIGHT for ANY non-IN_FLIGHT state):
 CAS(version=v -> v+1):  where work_state = IN_FLIGHT and claimed_signal_seq = k
@@ -340,13 +353,14 @@ CAS(version=v -> v+1):  where work_state = IN_FLIGHT and claimed_signal_seq = k
     pending_source_set    = claimed_source_set ∪ pending_source_set
     pending_reason_set    = claimed_reason_set ∪ pending_reason_set
     pending_priority      = max(claimed_priority, pending_priority)
-    pending_first_seen_at = coalesce(pending_first_seen_at, last_attempt_started_at)
+    pending_first_seen_at = min(pending_first_seen_at, claimed_first_seen_at, last_attempt_started_at)  # preserve the OLDEST age (NULLs ignored)
     pending_not_before    = max(pending_not_before, now + backoff(class))   # RETRY_WAIT only; never earlier
     work_state               = <RETRY_WAIT | BLOCKED | SUSPENDED | PENDING>
-    claimed_signal_seq = NULL
-    claimed_source_set = NULL
-    claimed_reason_set = NULL
-    claimed_priority   = NULL
+    claimed_signal_seq    = NULL
+    claimed_source_set    = NULL
+    claimed_reason_set    = NULL
+    claimed_priority      = NULL
+    claimed_first_seen_at = NULL
     last_attempt_finished_at = now
     consecutive_failures     = consecutive_failures + 1   # provider classes only; NEVER budget defer
     last_error_class         = <class>                    # provider classes only
@@ -365,20 +379,28 @@ goes to `pending_*` only — a merge never modifies `claimed_*`.**
 | current `work_state` | merge effect |
 | --- | --- |
 | `PENDING` | `signal_seq++`; `pending_*` union; `pending_not_before = min(...)` (may become eligible sooner). Stays `PENDING`. |
-| `IN_FLIGHT` | `signal_seq++`; `pending_*` union; **`claimed_*` untouched**; `pending_not_before` unchanged. On completion the `signal_seq != claimed` branch returns the item to `PENDING` keeping **only** the post-claim `pending_*`. |
+| `IN_FLIGHT` | `signal_seq++`; `pending_*` union; **`claimed_*` untouched**; **`pending_not_before = max(pending_not_before, trigger.not_before)`** (a post-claim signal's own eligibility is preserved — it never becomes eligible earlier than it asked). On completion the `signal_seq != claimed` branch returns the item to `PENDING` keeping **only** the post-claim `pending_*`, and records the **partial-success watermark**. |
 | `VERIFIED` | **opens a NEW EPOCH**: `signal_seq++`; `pending_*` **rebuilt** from the new trigger (no inheritance); `work_state = PENDING`. |
-| `RETRY_WAIT` | `signal_seq++`; `pending_*` union; **`pending_not_before` UNCHANGED** — a new signal must **not** cancel or shorten the existing bounded backoff. Stays `RETRY_WAIT`. |
-| `BLOCKED` | `signal_seq++`; `pending_*` union; `pending_not_before` unchanged. Stays `BLOCKED` — a new signal does **not** auto-clear a block; only operator/repair (or `INVALID_SCOPE` policy) returns it to `PENDING`. |
-| `SUSPENDED` | `signal_seq++`; `pending_*` union; `pending_not_before` unchanged. Stays `SUSPENDED` — no attempt runs while the root is non-ACTIVE; resumes to `PENDING` when the root becomes ACTIVE. |
+| `RETRY_WAIT` | `signal_seq++`; `pending_*` union; **`pending_not_before = max(pending_not_before, trigger.not_before)`** — a new signal must **not** cancel or shorten the existing bounded backoff. Stays `RETRY_WAIT`. |
+| `BLOCKED` | `signal_seq++`; `pending_*` union; `pending_not_before = max(pending_not_before, trigger.not_before)`. Stays `BLOCKED` — a new signal does **not** auto-clear a block; only operator/repair (or `INVALID_SCOPE` policy) returns it to `PENDING`. |
+| `SUSPENDED` | `signal_seq++`; `pending_*` union; `pending_not_before = max(pending_not_before, trigger.not_before)`. Stays `SUSPENDED` — no attempt runs while the root is non-ACTIVE; resumes to `PENDING` when the root becomes ACTIVE. |
 
 Notes:
 
 - **`pending_priority`** is always the **maximum** of the currently **un-claimed** signals' priority;
   a new epoch sets it to the new trigger's priority.
 - **`pending_first_seen_at`** is the first time of the **current un-claimed set**; a new epoch resets it
-  to `now`.
-- **`claimed_*`** is a frozen snapshot for the attempt: it is **only** set at claim and released on
-  exit from `IN_FLIGHT`. A failure re-coalesces `claimed_* ∪ pending_*` back into `pending_*`.
+  to `now`. On failure re-coalesce it becomes the **oldest** of the post-claim pending and the claimed
+  snapshot, so a long-waiting item is **not** reset to "just arrived" (fairness).
+- **`pending_not_before`** may only move **later** (`max`) in every non-`PENDING` state, and may move
+  earlier only in `PENDING` (`min`). This preserves a post-claim signal's eligibility and never cancels
+  an existing backoff.
+- **`claimed_*`** is a frozen snapshot for the attempt: it is **only** set at claim (including
+  `claimed_first_seen_at`) and released on exit from `IN_FLIGHT`. A failure re-coalesces
+  `claimed_* ∪ pending_*` back into `pending_*`.
+- **Partial success**: if the claimed signal(s) were verified but newer signals are still pending, the
+  item returns to `PENDING` **and** records `last_verified_at = now` /
+  `last_verified_signal_seq = k` (the claimed signal really was verified).
 
 ### 4.3 CAS-conflict completion rule (explicit)
 
