@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -92,11 +93,37 @@ func p6RealExecutor(t *testing.T, st *postgres.Store, now time.Time) incremental
 	return one
 }
 
-// p6NewAListServer serves a coherent single-page AList listing and counts forced
+// p6AListMock is a mutable, coherent single-page AList listing that counts forced
 // refresh requests.
-func p6NewAListServer(t *testing.T) (*httptest.Server, *int32) {
+type p6AListMock struct {
+	mu      sync.Mutex
+	content []map[string]any
+	refresh int32
+}
+
+func (m *p6AListMock) set(content ...map[string]any) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]map[string]any, len(content))
+	copy(out, content)
+	m.content = out
+}
+
+func (m *p6AListMock) refreshCount() int { return int(atomic.LoadInt32(&m.refresh)) }
+
+func p6FileEntry(name string, size int64, sha1 string) map[string]any {
+	return map[string]any{
+		"name": name, "size": size, "is_dir": false,
+		"modified": "2026-01-02T03:04:05Z", "hash_info": map[string]string{"sha1": sha1},
+	}
+}
+
+// p6NewAListServer serves the mock's current content and counts forced refresh
+// requests.
+func p6NewAListServer(t *testing.T) (*httptest.Server, *p6AListMock) {
 	t.Helper()
-	var refresh int32
+	mock := &p6AListMock{}
+	mock.set(p6FileEntry("a.txt", 5, "aaa"))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Path    string `json:"path"`
@@ -104,25 +131,20 @@ func p6NewAListServer(t *testing.T) (*httptest.Server, *int32) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		if req.Refresh {
-			atomic.AddInt32(&refresh, 1)
+			atomic.AddInt32(&mock.refresh, 1)
 		}
-		content := []map[string]any{}
-		total := 0
-		if req.Path == "/" {
-			content = []map[string]any{{
-				"name": "a.txt", "size": 5, "is_dir": false,
-				"modified": "2026-01-02T03:04:05Z", "hash_info": map[string]string{"sha1": "aaa"},
-			}}
-			total = 1
-		}
+		mock.mu.Lock()
+		content := make([]map[string]any, len(mock.content))
+		copy(content, mock.content)
+		mock.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code": 200, "message": "success",
-			"data": map[string]any{"content": content, "total": total},
+			"data": map[string]any{"content": content, "total": len(content)},
 		})
 	}))
 	t.Cleanup(srv.Close)
-	return srv, &refresh
+	return srv, mock
 }
 
 type p6AppliedScanner struct {
@@ -178,7 +200,7 @@ func p6AssertNoRemovalEvidence(t *testing.T, st *postgres.Store, rootID, path st
 // TestP6RealPGWatchToCanonical proves the full accepted path in one manual cycle.
 func TestP6RealPGWatchToCanonical(t *testing.T) {
 	st, ctx := p6NewStore(t)
-	srv, refresh := p6NewAListServer(t)
+	srv, mock := p6NewAListServer(t)
 	now := p6Now
 	rootID := "a6000000-0000-0000-0000-0000000000a1"
 	p6AddRoot(t, st, ctx, rootID, srv.URL)
@@ -209,6 +231,23 @@ func TestP6RealPGWatchToCanonical(t *testing.T) {
 	if w.NextDueAt == nil || !w.NextDueAt.After(now) {
 		t.Fatalf("next_due_at = %v, want after %s", w.NextDueAt, now)
 	}
+	// Watch execution attribution: POLL_SCHEDULE -> ClaimWork -> CompleteSuccess
+	// must have advanced the watch health bookkeeping.
+	if w.LastAttemptStartedAt == nil || !w.LastAttemptStartedAt.UTC().Equal(now) {
+		t.Fatalf("last_attempt_started_at = %v, want %s", w.LastAttemptStartedAt, now)
+	}
+	if w.LastAttemptFinishedAt == nil || w.LastAttemptFinishedAt.Before(now) {
+		t.Fatalf("last_attempt_finished_at = %v, want >= %s", w.LastAttemptFinishedAt, now)
+	}
+	if w.LastSuccessAt == nil || !w.LastSuccessAt.UTC().Equal(now) {
+		t.Fatalf("last_success_at = %v, want %s", w.LastSuccessAt, now)
+	}
+	if w.ConsecutiveFailures != 0 {
+		t.Fatalf("consecutive_failures = %d, want 0", w.ConsecutiveFailures)
+	}
+	if w.LastErrorClass != nil {
+		t.Fatalf("last_error_class = %v, want nil", *w.LastErrorClass)
+	}
 
 	wk, err := st.GetWork(ctx, rootID, "/")
 	if err != nil {
@@ -217,10 +256,13 @@ func TestP6RealPGWatchToCanonical(t *testing.T) {
 	if wk.WorkState != state.WorkVerified {
 		t.Fatalf("work state = %s, want VERIFIED", wk.WorkState)
 	}
+	if wk.LastVerifiedSignalSeq == nil || *wk.LastVerifiedSignalSeq < 1 {
+		t.Fatalf("poll signal must survive into claim-scoped verification, got %v", wk.LastVerifiedSignalSeq)
+	}
 	p6AssertPresent(t, st, rootID, "/a.txt")
 	p6AssertNoRemovalEvidence(t, st, rootID, "/a.txt")
 
-	if got := atomic.LoadInt32(refresh); got != 1 {
+	if got := mock.refreshCount(); got != 1 {
 		t.Fatalf("exactly one refresh=true provider request required, got %d", got)
 	}
 }
@@ -228,7 +270,7 @@ func TestP6RealPGWatchToCanonical(t *testing.T) {
 // TestP6RealPGNoDueWatchDrainsExistingPending proves P5 still runs without new polls.
 func TestP6RealPGNoDueWatchDrainsExistingPending(t *testing.T) {
 	st, ctx := p6NewStore(t)
-	srv, refresh := p6NewAListServer(t)
+	srv, mock := p6NewAListServer(t)
 	now := p6Now
 	rootID := "a6000000-0000-0000-0000-0000000000a2"
 	p6AddRoot(t, st, ctx, rootID, srv.URL)
@@ -254,7 +296,7 @@ func TestP6RealPGNoDueWatchDrainsExistingPending(t *testing.T) {
 		t.Fatalf("preexisting pending work must drain, executor = %+v", res.Executor)
 	}
 	p6AssertPresent(t, st, rootID, "/a.txt")
-	if got := atomic.LoadInt32(refresh); got != 1 {
+	if got := mock.refreshCount(); got != 1 {
 		t.Fatalf("one provider refresh expected, got %d", got)
 	}
 }
@@ -415,4 +457,113 @@ func TestP6RealPGExistingPendingCoalescing(t *testing.T) {
 	if res.Executor.SelectedItems != 1 || res.Executor.Succeeded != 1 {
 		t.Fatalf("exactly one execution must satisfy the coalesced epoch, got %+v", res.Executor)
 	}
+}
+
+// TestP6RealPGDuePollIntoBlockedNotPromoted proves a poll merges into a BLOCKED
+// row without promoting it, while independent PENDING work still executes.
+func TestP6RealPGDuePollIntoBlockedNotPromoted(t *testing.T) {
+	st, ctx := p6NewStore(t)
+	now := p6Now
+	rootID := "a6000000-0000-0000-0000-0000000000a6"
+	p6AddRoot(t, st, ctx, rootID, "http://127.0.0.1:1")
+	p6CreateDueWatch(t, st, ctx, rootID, "/blocked", now.Add(-time.Hour))
+	if _, err := st.MergeSignal(ctx, state.DirtySignal{
+		RootID: rootID, ScopeKey: "/blocked", Source: state.SourceManualOperator, Reason: state.ReasonManualVerify,
+		Priority: state.PriorityNormal, SeenAt: now,
+	}); err != nil {
+		t.Fatalf("seed blocked work: %v", err)
+	}
+	if _, err := st.Pool().Exec(ctx, `
+		UPDATE index_dirty_scope_work SET work_state='BLOCKED'
+		 WHERE root_id=$1::uuid AND scope_key='/blocked'`, rootID); err != nil {
+		t.Fatal(err)
+	}
+	blockedBefore, err := st.GetWork(ctx, rootID, "/blocked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.MergeSignal(ctx, state.DirtySignal{
+		RootID: rootID, ScopeKey: "/pending", Source: state.SourceManualOperator, Reason: state.ReasonManualVerify,
+		Priority: state.PriorityNormal, SeenAt: now.Add(time.Second),
+	}); err != nil {
+		t.Fatalf("seed independent pending: %v", err)
+	}
+
+	one, err := incrementalexec.New(st, &p6AppliedScanner{}, p6ExecConfig(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := p6Runner(t, st, p6CycleRunner(t, one), func() time.Time { return now })
+
+	res, err := runner.RunCycle(ctx, p6ValidConfig())
+	if err != nil {
+		t.Fatalf("run cycle: %v", err)
+	}
+	if res.DueEmitted != 1 {
+		t.Fatalf("poll must be emitted, got %+v", res)
+	}
+	wBlocked, err := st.GetWork(ctx, rootID, "/blocked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wBlocked.WorkState != state.WorkBlocked {
+		t.Fatalf("BLOCKED must not be promoted, got %s", wBlocked.WorkState)
+	}
+	if wBlocked.AttemptCount != blockedBefore.AttemptCount {
+		t.Fatalf("BLOCKED row must not be executed, attempt_count %d -> %d",
+			blockedBefore.AttemptCount, wBlocked.AttemptCount)
+	}
+	wPending, err := st.GetWork(ctx, rootID, "/pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wPending.WorkState != state.WorkVerified {
+		t.Fatalf("independent pending work must execute, got %s", wPending.WorkState)
+	}
+	if res.Executor.SelectedItems != 1 || res.Executor.Succeeded != 1 {
+		t.Fatalf("executor result = %+v", res.Executor)
+	}
+}
+
+// TestP6RealPGScopedAbsenceCreatesNoRemovalEvidence proves a PARTIAL scoped
+// observation that omits a known canonical child does not create removal
+// evidence and does not drop the canonical resource.
+func TestP6RealPGScopedAbsenceCreatesNoRemovalEvidence(t *testing.T) {
+	st, ctx := p6NewStore(t)
+	srv, mock := p6NewAListServer(t)
+	mock.set(p6FileEntry("old.txt", 4, "old"), p6FileEntry("keep.txt", 4, "keep"))
+	now := p6Now
+	rootID := "a6000000-0000-0000-0000-0000000000a7"
+	p6AddRoot(t, st, ctx, rootID, srv.URL)
+
+	runner := p6Runner(t, st, p6CycleRunner(t, p6RealExecutor(t, st, now)), func() time.Time { return now })
+
+	// First observation establishes /old.txt and /keep.txt as canonical truth.
+	if _, err := st.MergeSignal(ctx, state.DirtySignal{
+		RootID: rootID, ScopeKey: "/", Source: state.SourceManualOperator, Reason: state.ReasonManualVerify,
+		Priority: state.PriorityNormal, SeenAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.RunCycle(ctx, p6ValidConfig()); err != nil {
+		t.Fatalf("first cycle: %v", err)
+	}
+	p6AssertPresent(t, st, rootID, "/old.txt")
+	p6AssertPresent(t, st, rootID, "/keep.txt")
+
+	// A later PARTIAL scoped refresh omits /old.txt.
+	mock.set(p6FileEntry("keep.txt", 4, "keep"))
+	if _, err := st.MergeSignal(ctx, state.DirtySignal{
+		RootID: rootID, ScopeKey: "/", Source: state.SourceManualOperator, Reason: state.ReasonManualVerify,
+		Priority: state.PriorityNormal, SeenAt: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.RunCycle(ctx, p6ValidConfig()); err != nil {
+		t.Fatalf("second cycle: %v", err)
+	}
+
+	p6AssertPresent(t, st, rootID, "/old.txt")
+	p6AssertPresent(t, st, rootID, "/keep.txt")
+	p6AssertNoRemovalEvidence(t, st, rootID, "/old.txt")
 }

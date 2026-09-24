@@ -464,3 +464,24 @@ func TestP6SerialOnly(t *testing.T) {
 		t.Fatalf("orchestration must be strictly serial, max concurrent = %d", n)
 	}
 }
+
+// TestP6NilP5ErrorWithParentCancellationIsContextCancelled proves parent
+// cancellation outranks the P6-owned wall deadline when P5 returns nil.
+func TestP6NilP5ErrorWithParentCancellationIsContextCancelled(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	store := &fakeStore{}
+	exec := &fakeExec{fn: func(context.Context, incrementalexec.CycleConfig) (incrementalexec.CycleResult, error) {
+		cancel()
+		return incrementalexec.CycleResult{StopReason: incrementalexec.StopNoEligibleWork}, nil
+	}}
+	res, err := p6Runner(t, store, exec, func() time.Time { return p6Now }).RunCycle(parent, p6ValidConfig())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want parent context.Canceled, got %v", err)
+	}
+	if res.StopReason != incrementalorch.StopContextCancelled {
+		t.Fatalf("stop reason = %s, want CONTEXT_CANCELLED", res.StopReason)
+	}
+	if !res.ExecutorRan {
+		t.Fatal("executor must have run")
+	}
+}

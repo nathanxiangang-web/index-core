@@ -130,7 +130,7 @@ with `CycleConfig{MaxItems: MaxExecuteItems, MaxWallTime: MaxWallTime}`.
 
 | P5 outcome | P6 translation |
 |---|---|
-| nil error | `COMPLETED` (nil error) — unless `orch_ctx` already expired → `MAX_WALL_TIME` |
+| nil error | `COMPLETED` (nil error) — but **parent cancellation is checked first**; an already-expired `orch_ctx` yields `MAX_WALL_TIME` |
 | parent cancellation | `CONTEXT_CANCELLED` + parent context error |
 | P6-owned deadline + context-cause error | `MAX_WALL_TIME` + nil error; nested result retained incl. `InterruptedInFlight` |
 | unrelated systemic error | `EXECUTOR_ERROR` + non-nil error |
@@ -138,6 +138,11 @@ with `CycleConfig{MaxItems: MaxExecuteItems, MaxWallTime: MaxWallTime}`.
 The full nested P5 `CycleResult` is retained. An unrelated P5 error is never
 hidden merely because wall time also expired: only an error carrying the context
 cause is treated as the deadline. P5 is never run a second time.
+
+Parent cancellation is evaluated before the P6-owned deadline on **every**
+translation path — including a nil P5 return — because `orch_ctx` is a child of
+the parent context: without that ordering a caller cancellation racing a nil P5
+return would be misreported as budget exhaustion.
 
 ## 8. Real PostgreSQL evidence
 
@@ -155,8 +160,13 @@ watch due
   -> DueEmitted=1, DueStale=0, StopReason=COMPLETED
 ```
 
-Provider refresh count = 1 for the one-watch path; scoped absence created no
-removal evidence.
+Provider refresh count = 1 for the one-watch path. The test also asserts the full
+watch execution attribution — `last_attempt_started_at == observed_at`,
+`last_attempt_finished_at >= observed_at`, `last_success_at == observed_at`,
+`consecutive_failures == 0`, `last_error_class == nil` — proving
+`POLL_SCHEDULE -> ClaimWork -> CompleteSuccess -> watch health` actually ran, and
+`Work.last_verified_signal_seq >= 1` proving the poll signal survived into
+claim-scoped verification.
 
 Additional real-PG evidence:
 
@@ -168,6 +178,14 @@ Additional real-PG evidence:
   recovers).
 - `TestP6RealPGDuePollIntoRetryWaitNotPromoted` — a poll merges into a RETRY_WAIT
   row without promoting it, while independent PENDING work still executes.
+- `TestP6RealPGDuePollIntoBlockedNotPromoted` — the same for BLOCKED: the poll
+  merges, the row stays BLOCKED with an unchanged attempt count, and an
+  independent PENDING row still executes in the same cycle.
+- `TestP6RealPGScopedAbsenceCreatesNoRemovalEvidence` — a later PARTIAL scoped
+  refresh that omits a known canonical child `/old.txt` leaves `/old.txt`
+  PRESENT with `removal_evidence_state=NONE`, `missing_since=NULL`, and an
+  unchanged complete-missing count (true scoped absence, not a resource that the
+  provider still returns).
 - `TestP6RealPGExistingPendingCoalescing` — an existing PENDING epoch plus a poll
   coalesces to exactly one extra `signal_seq` and is satisfied by exactly one
   execution (no lost wakeup).
@@ -182,7 +200,9 @@ budget with no replacement, fatal materialization preserves committed work and
 skips P5, wall budget before the next operation, wall budget interrupting
 `EmitDuePoll`, parent cancellation during materialization and during execution,
 executor systemic error, nested P5 deadline, nil-P5-error-but-expired-own-deadline,
-bounded nested P5 config, and strict serial execution (max concurrent = 1).
+a nil P5 return with parent cancellation (`CONTEXT_CANCELLED`, not
+`MAX_WALL_TIME`), bounded nested P5 config, and strict serial execution (max
+concurrent = 1).
 
 ## 10. Changed production files
 
@@ -194,8 +214,8 @@ internal/runtime/incrementalorch/orchestrator.go  (new)
 New tests:
 
 ```text
-internal/runtime/incrementalorch/orchestrator_test.go  (17)
-internal/runtime/incrementalorch/integration_test.go   (5)
+internal/runtime/incrementalorch/orchestrator_test.go  (18)
+internal/runtime/incrementalorch/integration_test.go   (7)
 ```
 
 No `internal/store/postgres/**`, no `internal/runtime/incrementalexec/**`, no
@@ -212,7 +232,7 @@ go vet ./...                    clean
 go test -p 1 -count=1 ./...     all packages ok (real PostgreSQL 18)
 ```
 
-P6 tests = **22** (unit 17 + integration 5). Existing P3/P4/P5 tests remain green.
+P6 tests = **25** (unit 18 + integration 7). Existing P3/P4/P5 tests remain green.
 
 ## 12. Boundary statement
 
@@ -230,5 +250,34 @@ scheduler/orchestrator must serialize calls. P6 does not override the P2/P3 merg
 behavior (VERIFIED opens a new PENDING epoch; PENDING coalesces poll provenance;
 IN_FLIGHT takes post-claim pending; RETRY_WAIT/BLOCKED/SUSPENDED merge without
 promotion).
+
+`FROZEN_CONTRACT_CHANGES: NONE`
+## 13. Round 1 rework (Issue #82 review)
+
+One correctness blocker + three evidence blockers + one evidence closeout from
+the P6 Round 1 review were fixed strictly inside
+`internal/runtime/incrementalorch/**`, the P6 tests, and this result document:
+
+1. **Parent-cancellation precedence after a nil P5 return.** The execution phase
+   now checks `ctx.Err()` **before** `orchCtx.Err()` in the nil-error branch, so a
+   caller cancellation racing a nil P5 return is `CONTEXT_CANCELLED` with the
+   parent error instead of `MAX_WALL_TIME`. Proved by
+   `TestP6NilP5ErrorWithParentCancellationIsContextCancelled`.
+2. **Watch success-bookkeeping evidence.** `TestP6RealPGWatchToCanonical` now
+   asserts `last_attempt_started_at`, `last_attempt_finished_at`,
+   `last_success_at`, `consecutive_failures == 0`, `last_error_class == nil`, and
+   `Work.last_verified_signal_seq >= 1`, proving the full
+   `POLL_SCHEDULE -> ClaimWork -> CompleteSuccess` attribution path and that the
+   poll signal survives into claim-scoped verification.
+3. **BLOCKED no-auto-promotion evidence.**
+   `TestP6RealPGDuePollIntoBlockedNotPromoted` proves a poll merges into a BLOCKED
+   row without promoting it or executing it (attempt count unchanged) while
+   independent PENDING work still executes.
+4. **Actual scoped-absence evidence.**
+   `TestP6RealPGScopedAbsenceCreatesNoRemovalEvidence` replaces the
+   present-resource check with a real absence: a later PARTIAL scoped refresh
+   omits a previously canonical `/old.txt`, which stays PRESENT with
+   `removal_evidence_state=NONE`, `missing_since=NULL`, and an unchanged
+   complete-missing count.
 
 `FROZEN_CONTRACT_CHANGES: NONE`

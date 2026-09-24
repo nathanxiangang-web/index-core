@@ -169,6 +169,13 @@ func (r *Runner) RunCycle(ctx context.Context, cfg Config) (Result, error) {
 	res.Executor = cycleRes
 
 	if cerr == nil {
+		// Parent cancellation outranks the P6-owned wall deadline: orchCtx is a
+		// child of the parent context, so without this check a caller
+		// cancellation racing a nil P5 return would be misreported as budget
+		// exhaustion.
+		if perr := ctx.Err(); perr != nil {
+			return r.stop(res, StopContextCancelled), perr
+		}
 		if orchCtx.Err() != nil {
 			return r.stop(res, StopMaxWallTime), nil
 		}
