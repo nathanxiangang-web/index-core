@@ -1,6 +1,6 @@
 # Post-MVP Incremental Ingestion Blueprint
 
-> Status: **D0 DISCOVERY COMPLETE / ARCHITECT DECISION PENDING / IMPLEMENTATION NOT AUTHORIZED**
+> Status: **D0 COMPLETE / P0 PROTOTYPE AUTHORIZED / PRODUCTION IMPLEMENTATION NOT AUTHORIZED**
 >
 > Architecture tracking: #57
 >
@@ -77,7 +77,7 @@ Full-scan only
 Stop / do not implement
 ```
 
-Issue #59 has produced the accepted capability report. The Architect must now choose whether any prototype path should be authorized; no implementation path is selected merely by completing the research.
+Issue #59 produced the accepted capability report. The Architect selected **P0 Targeted Scoped Refresh** as the first bounded prototype. Execution is controlled by Issue #62 and `docs/architecture/INCREMENTAL-P0-SCOPED-REFRESH-PROTOTYPE.md`.
 
 ### Candidate future outcome — only if evidence supports native delta
 
@@ -1065,7 +1065,7 @@ The desired end state is:
 
 ## 32. Current architecture decision
 
-**Current decision: D0 RESEARCH COMPLETE. No implementation direction is approved yet; Architect decision is pending.**
+**Current decision: D0 RESEARCH COMPLETE. P0 Targeted Scoped Refresh prototype is authorized. Production incremental implementation remains unapproved.**
 
 The only design principle accepted before research is:
 
@@ -1098,7 +1098,7 @@ Still not authorized:
 ### Implementation authorization requires
 
 1. Issue #59 research report completed; **DONE**
-2. Architect decision on the discovery strategy; **PENDING**
+2. Architect decision on the discovery strategy; **DONE — P0 Scoped Refresh selected**
 3. explicit prototype/implementation scope;
 4. exact provider/tool selected;
 5. exact safety/fallback contract;

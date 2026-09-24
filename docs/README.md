@@ -17,6 +17,7 @@ This directory contains two kinds of documentation:
 | Integrate a new Web/application | [INTEGRATION.md](INTEGRATION.md) |
 | Operate / deploy / recover | [OPERATIONS.md](OPERATIONS.md) |
 | Review incremental discovery architecture | [architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md](architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md) |
+| Follow authorized P0 scoped-refresh prototype | [architecture/INCREMENTAL-P0-SCOPED-REFRESH-PROTOTYPE.md](architecture/INCREMENTAL-P0-SCOPED-REFRESH-PROTOTYPE.md) |
 | Read accepted incremental capability research | [research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md](research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md) |
 
 A complete consumer example is available in the separate repository:
@@ -36,7 +37,7 @@ Gate 3  Standalone runtime + scale            CLOSED
 Gate 4  Independent consumer validation       CLOSED
 
 Current mode: Stable Alpha Foundation / Maintenance
-IndexCore extension research: D0 Change Discovery COMPLETE / ARCHITECT_ACCEPTED (Issue #59 under #57); Architect decision pending; IMPLEMENTATION NOT AUTHORIZED
+IndexCore extension: D0 COMPLETE; P0 Targeted Scoped Refresh PROTOTYPE AUTHORIZED (Issue #62 under #57); production incremental implementation NOT AUTHORIZED
 Next product blueprint phase: Gate 5 (NOT AUTHORIZED)
 ```
 

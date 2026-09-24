@@ -6,21 +6,22 @@
 
 Architecture / acceptance owner: **ChatGPT Architect**
 
-Execution owner: **none currently**
+Execution owner: **Codex Executor / Worker for Issue #62 only**
 
 Status:
 
-**D0 RESEARCH COMPLETE / ARCHITECT DECISION REQUIRED / NO IMPLEMENTATION AUTHORIZED**
+**P0 TARGETED SCOPED REFRESH PROTOTYPE AUTHORIZED / PRODUCTION IMPLEMENTATION NOT AUTHORIZED**
 
 Current architecture planning:
 
 - Issue #57 — incremental architecture umbrella (OPEN)
 - Issue #59 — Change Discovery capability research (COMPLETE)
+- Issue #62 — P0 Targeted Scoped Refresh Prototype (AUTHORIZED)
 - Blueprint: `docs/architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md`
+- P0 execution plan: `docs/architecture/INCREMENTAL-P0-SCOPED-REFRESH-PROTOTYPE.md`
 - Accepted D0 report: `docs/research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md`
-- Accepted research PR #60 merged at `5b7fc32e75d70b38a3e30ec120b6f7e60f530bdd`
 
-Research is complete. Production implementation remains **NONE** until the Architect explicitly selects and authorizes a prototype strategy.
+Research is complete. A bounded P0 prototype is authorized. Production incremental implementation remains **NOT AUTHORIZED**.
 
 Accepted Gate-4 merge commits:
 
@@ -84,7 +85,7 @@ CloudSite 1.0 remains **Legacy / Frozen Product**.
 
 This is a separate IndexCore infrastructure extension and does **not** consume or authorize Gate 5.
 
-Capability discovery is complete. The current task is **Architect decision**, not implementation.
+Capability discovery is complete. The current task is **P0 prototype execution under Issue #62**.
 
 Compare:
 
@@ -105,7 +106,7 @@ Primary question:
 
 The accepted D0 report establishes the evidence baseline for 115/OpenList/AList/Xiaoya/rclone, request amplification, cache behavior, rate-limit/account risk, large-directory behavior, and remaining live-test UNKNOWNs.
 
-Implementation is **NOT AUTHORIZED**. The Architect must now choose whether to STOP, authorize one bounded prototype path, authorize a hybrid prototype, or keep full-scan-only.
+The Architect selected **PROTOTYPE_SCOPED_REFRESH with Mutation Hint semantics** as the first bounded prototype. Only Issue #62 is authorized. Adaptive polling, scheduler, native delta, persistent dirty scopes, production `sync`, and destructive behavior remain unauthorized.
 
 ## Next product blueprint phase
 
