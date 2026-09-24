@@ -1,6 +1,6 @@
 # Post-MVP Incremental Ingestion Blueprint
 
-> Status: **D0 COMPLETE / P0 PROTOTYPE AUTHORIZED / PRODUCTION IMPLEMENTATION NOT AUTHORIZED**
+> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 DIRTY-SCOPE STATE DESIGN AUTHORIZED / PRODUCTION IMPLEMENTATION NOT AUTHORIZED**
 >
 > Architecture tracking: #57
 >
@@ -319,18 +319,16 @@ FAILED
 
 Provider-neutral normalized observations belonging to a batch.
 
-### DirtyScope
+### Dirty / hot scope operational state
 
-```text
-root_id
-scope_key
-reason
-first_seen_at
-last_seen_at
-verification_state
-```
+The earlier single `DirtyScope` sketch is superseded for P2 by two separate logical models:
 
-These are logical models. Exact SQL schema belongs to the implementation plan.
+- `ScopeWatchState` — recurring watch/cadence/next-due policy;
+- `DirtyScopeWork` — one-shot coalesced verification intent with lost-wakeup-safe `signal_seq`.
+
+See `docs/architecture/INCREMENTAL-P2-DIRTY-SCOPE-STATE-DESIGN.md`.
+
+These remain logical models. SQL migration and persistence implementation are not authorized by P2.
 
 ## 9. The core crash-safety rule
 
@@ -613,7 +611,7 @@ provider emits "folder updated" only
 The runtime should:
 
 1. add/merge dirty scopes;
-2. collapse child scopes under an already-dirty parent where safe;
+2. collapse child scopes only when the verifier coverage contract proves parent coverage subsumes the child; current P0 `ScanScope` is direct-child only, so parent/child scopes do **not** collapse;
 3. verify a bounded subtree/scope;
 4. materialize positive observations through the existing Snapshot path;
 5. only use destructive conclusions if the scope-verification contract explicitly proves completeness.
@@ -1065,17 +1063,17 @@ The desired end state is:
 
 ## 32. Current architecture decision
 
-**Current decision: D0 RESEARCH COMPLETE. P0 Targeted Scoped Refresh is ARCHITECT_ACCEPTED. P1 Adaptive Hot-Scope Polling Feasibility is the next bounded prototype. Production incremental implementation remains unapproved.**
+**Current decision: D0 research, P0 Targeted Scoped Refresh, and P1 Adaptive Hot-Scope Polling Feasibility are ARCHITECT_ACCEPTED. P1 exit decision is AUTHORIZE_DIRTY_SCOPE_STATE_DESIGN. P2 design is authorized; production incremental implementation remains unapproved.**
 
 Accepted P0 evidence proved that, when a changed directory is known, one bounded OpenList `115 Open` `refresh=true` observation can surface a real out-of-band 115 change earlier than stale cache while preserving PARTIAL additive-safe semantics.
 
-The remaining 115-specific discovery gap is that the audited public 115 Open API exposes no native change feed/cursor/webhook. Mutation Hint alone cannot detect arbitrary external writes. Therefore P1 tests whether a **small, bounded hot-scope set** can be polled at approximately 1–2 minute cadence with acceptable provider cost and failure behavior.
+P1 proved that a **small bounded HOT scope set** can discover a real out-of-band 115 write within one configured 120-second-class interval while preserving P0 safety and explicit request/cycle budgets.
 
-P1 is defined in:
+P1 is defined in `docs/architecture/INCREMENTAL-P1-HOT-SCOPE-POLLING-PROTOTYPE.md` and its accepted evidence is in `docs/incremental/P1-HOT-SCOPE-POLLING-RESULT.md`.
 
-`docs/architecture/INCREMENTAL-P1-HOT-SCOPE-POLLING-PROTOTYPE.md`
+The next missing correctness layer is durable operational state before any production scheduler exists. P2 therefore designs separate `ScopeWatchState` and `DirtyScopeWork` models, restart-safe due/work semantics, and lost-wakeup-safe trigger coalescing. P2 is defined in `docs/architecture/INCREMENTAL-P2-DIRTY-SCOPE-STATE-DESIGN.md`.
 
-P1 does **not** authorize a production scheduler, persistent dirty-scope state, native delta, provider cursor, production `sync`, destructive delta, or Gate 5.
+P2 does **not** authorize SQL migration, persistent dirty/watch tables, production scheduler, Mutation Hint API, native delta, provider cursor, production `sync`, destructive delta, or Gate 5.
 
 The governing design principle remains:
 
