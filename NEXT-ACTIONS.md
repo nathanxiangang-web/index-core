@@ -6,22 +6,24 @@
 
 Architecture / acceptance owner: **ChatGPT Architect**
 
-Execution owner: **Codex Executor / Worker for Issue #62 only**
+Execution owner: **Codex Executor / Worker only for the Architect-authorized P1 execution issue**
 
 Status:
 
-**P0 TARGETED SCOPED REFRESH PROTOTYPE AUTHORIZED / PRODUCTION IMPLEMENTATION NOT AUTHORIZED**
+**P0 TARGETED SCOPED REFRESH — ARCHITECT_ACCEPTED / P1 HOT-SCOPE POLLING FEASIBILITY — AUTHORIZED / PRODUCTION IMPLEMENTATION NOT AUTHORIZED**
 
 Current architecture planning:
 
 - Issue #57 — incremental architecture umbrella (OPEN)
 - Issue #59 — Change Discovery capability research (COMPLETE)
-- Issue #62 — P0 Targeted Scoped Refresh Prototype (AUTHORIZED)
+- Issue #62 — P0 Targeted Scoped Refresh Prototype (**COMPLETE / ARCHITECT_ACCEPTED**)
+- PR #64 — P0 implementation + real 115 Open evidence (**MERGED** at `a4b6ec83e637c25f26585f56c3fb906410fa4b9a`)
 - Blueprint: `docs/architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md`
-- P0 execution plan: `docs/architecture/INCREMENTAL-P0-SCOPED-REFRESH-PROTOTYPE.md`
+- P0 plan: `docs/architecture/INCREMENTAL-P0-SCOPED-REFRESH-PROTOTYPE.md`
+- P1 plan: `docs/architecture/INCREMENTAL-P1-HOT-SCOPE-POLLING-PROTOTYPE.md`
 - Accepted D0 report: `docs/research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md`
 
-Research is complete. A bounded P0 prototype is authorized. Production incremental implementation remains **NOT AUTHORIZED**.
+Research and P0 are complete. The next bounded step is P1 Adaptive Hot-Scope Polling **feasibility only**. Production incremental implementation remains **NOT AUTHORIZED**.
 
 Accepted Gate-4 merge commits:
 
@@ -85,7 +87,7 @@ CloudSite 1.0 remains **Legacy / Frozen Product**.
 
 This is a separate IndexCore infrastructure extension and does **not** consume or authorize Gate 5.
 
-Capability discovery is complete. The current task is **P0 prototype execution under Issue #62**.
+Capability discovery and P0 scoped-refresh validation are complete. The current task is **P1 hot-scope polling feasibility**, using the accepted P0 `ScanScope` path as the only refresh actuator.
 
 Compare:
 
@@ -106,7 +108,9 @@ Primary question:
 
 The accepted D0 report establishes the evidence baseline for 115/OpenList/AList/Xiaoya/rclone, request amplification, cache behavior, rate-limit/account risk, large-directory behavior, and remaining live-test UNKNOWNs.
 
-The Architect selected **PROTOTYPE_SCOPED_REFRESH with Mutation Hint semantics** as the first bounded prototype. Only Issue #62 is authorized. Adaptive polling, scheduler, native delta, persistent dirty scopes, production `sync`, and destructive behavior remain unauthorized.
+The Architect selected **PROTOTYPE_SCOPED_REFRESH** as P0 and it is now **ARCHITECT_ACCEPTED**. The next bounded step is **P1 Adaptive Hot-Scope Polling Feasibility** to test detection of external writes when no Mutation Hint exists.
+
+Only the test/probe form described in `docs/architecture/INCREMENTAL-P1-HOT-SCOPE-POLLING-PROTOTYPE.md` is authorized. A production polling scheduler, persistent dirty-scope queue, native delta, provider cursor, production `sync`, and destructive behavior remain unauthorized.
 
 ## Next product blueprint phase
 
@@ -151,7 +155,9 @@ Do not begin:
 - direct browser-to-IndexCore public exposure;
 - changes to frozen Gate 1B/1C semantics;
 - Scanner Resume / multi-daemon HA unless separately planned.
-- native delta implementation until Issue #57 architecture is accepted and a separate execution contract is opened.
+- native delta implementation unless a future provider capability review explicitly authorizes it;
+- production adaptive polling / scheduler beyond the bounded P1 feasibility prototype;
+- persistent dirty-scope state until a later Architect decision.
 
 ## Recovery rule
 
