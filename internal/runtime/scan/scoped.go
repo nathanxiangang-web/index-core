@@ -40,7 +40,13 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 
 	acfg, err := s.store.GetAdapterConfig(ctx, rootID)
 	if err != nil {
-		return Result{}, scopeWrap(ScopeFailureConfigInvalid, fmt.Errorf("load adapter config: %w", err))
+		// A missing adapter binding is a permanent configuration defect; any
+		// other error is a transient storage failure and must not permanently
+		// BLOCK the item.
+		if errors.Is(err, postgres.ErrNotFound) {
+			return Result{}, scopeWrap(ScopeFailureConfigInvalid, fmt.Errorf("load adapter config: %w", err))
+		}
+		return Result{}, scopeWrap(ScopeFailureInternal, fmt.Errorf("load adapter config: %w", err))
 	}
 	var ac adapterConfig
 	if err := json.Unmarshal(acfg.Config, &ac); err != nil {
@@ -57,6 +63,11 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 	if maxEntries < 0 || maxEntries > alist.MaxScopedEntries {
 		return Result{}, scopeErrorf(ScopeFailureConfigInvalid,
 			"scoped refresh max_entries must be within [0, %d], got %d", alist.MaxScopedEntries, maxEntries)
+	}
+	// A bad configured provider root path is adapter configuration, not the
+	// persisted DirtyScopeWork scope: it must not be reported as INVALID_SCOPE.
+	if err := validateRootProviderPath(ac.Path); err != nil {
+		return Result{}, scopeWrap(ScopeFailureConfigInvalid, err)
 	}
 
 	// Normalize the root-relative scope, reject "." / ".." components, and
@@ -78,8 +89,8 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 	// root-relative scope. Using rel here would wrongly fail whenever the
 	// configured root path is not "/".
 	if rel != "" {
-		if err := s.requirePresentDirectory(ctx, rootID, target); err != nil {
-			return Result{}, scopeWrap(ScopeFailureInvalidScope, err)
+		if serr := s.requirePresentDirectory(ctx, rootID, target); serr != nil {
+			return Result{}, serr
 		}
 	}
 
@@ -122,10 +133,18 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 	}
 
 	// Load policy before persisting (G3-R3): a missing policy must fail early,
-	// never strand a SUBMITTED Snapshot.
-	cfg, err := s.store.RootReconcileConfig(ctx, rootID)
+	// never strand a SUBMITTED Snapshot. A missing/invalid persisted policy is a
+	// configuration defect; a storage failure is INTERNAL.
+	policy, err := s.store.GetRootPolicy(ctx, rootID)
 	if err != nil {
-		return Result{}, scopeWrap(ScopeFailureConfigInvalid, fmt.Errorf("load root policy: %w", err))
+		if errors.Is(err, postgres.ErrNotFound) {
+			return Result{}, scopeWrap(ScopeFailureConfigInvalid, fmt.Errorf("load root policy: %w", err))
+		}
+		return Result{}, scopeWrap(ScopeFailureInternal, fmt.Errorf("load root policy: %w", err))
+	}
+	cfg := policy.ReconcileConfig()
+	if err := cfg.Validate(); err != nil {
+		return Result{}, scopeWrap(ScopeFailureConfigInvalid, fmt.Errorf("invalid root reconcile policy: %w", err))
 	}
 	coord := postgres.NewCoordinator(s.store, cfg)
 
@@ -284,18 +303,31 @@ func pathWithin(base, p string) bool {
 }
 
 // requirePresentDirectory fails closed unless rel resolves to exactly one
-// PRESENT canonical directory for the root.
-func (s *Service) requirePresentDirectory(ctx context.Context, rootID, rel string) error {
+// PRESENT canonical directory for the root. A scope-semantics failure is
+// INVALID_SCOPE; a storage/query failure is INTERNAL (never a permanent scope
+// defect).
+func (s *Service) requirePresentDirectory(ctx context.Context, rootID, rel string) *ScopeError {
 	rows, err := s.store.PresentResourcesAtPath(ctx, s.store.Pool(), rootID, rel)
 	if err != nil {
-		return fmt.Errorf("load scoped parent %q: %w", rel, err)
+		return scopeWrap(ScopeFailureInternal, fmt.Errorf("load scoped parent %q: %w", rel, err))
 	}
 	if len(rows) != 1 {
-		return fmt.Errorf(
+		return scopeErrorf(ScopeFailureInvalidScope,
 			"scoped refresh requires exactly one PRESENT canonical directory at %q, found %d", rel, len(rows))
 	}
 	if rows[0].IsDir == nil || !*rows[0].IsDir {
-		return fmt.Errorf("scoped refresh parent %q is not a directory", rel)
+		return scopeErrorf(ScopeFailureInvalidScope, "scoped refresh parent %q is not a directory", rel)
+	}
+	return nil
+}
+
+// validateRootProviderPath rejects an adapter root path that can never be a
+// valid provider path. This is configuration, not the persisted work scope.
+func validateRootProviderPath(rootPath string) error {
+	for _, seg := range strings.Split(strings.TrimSpace(rootPath), "/") {
+		if seg == ".." {
+			return fmt.Errorf("adapter root path %q must not contain %q components", rootPath, "..")
+		}
 	}
 	return nil
 }

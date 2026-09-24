@@ -3,8 +3,8 @@ package alist
 import (
 	"context"
 	"encoding/json"
-
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/nathanxiangang-web/index-core/internal/collector/adapter"
@@ -47,12 +47,18 @@ func (a Adapter) ScanScope(ctx context.Context, scope string, maxEntries int) (a
 		return adapter.RawScan{}, scopedErrorf(ScopedConfigInvalid,
 			"alist scoped list: max_entries must be within [0, %d], got %d", MaxScopedEntries, maxEntries)
 	}
+	// An empty base URL is a permanent adapter configuration defect, never a
+	// retryable provider failure.
+	if strings.TrimSpace(a.BaseURL) == "" {
+		return adapter.RawScan{}, scopedErrorf(ScopedConfigInvalid,
+			"alist scoped refresh requires a non-empty base URL")
+	}
 	// maxEntries <= MaxScopedEntries, so maxEntries+1 cannot overflow.
 	perPage := maxEntries + 1
 
 	token := a.Token
 	if token == "" && a.Username != "" {
-		t, err := a.login(ctx)
+		t, err := a.loginScoped(ctx)
 		if err != nil {
 			return adapter.RawScan{}, err
 		}
@@ -130,9 +136,41 @@ func (a Adapter) listPageRefresh(ctx context.Context, token, dir string, perPage
 		return nil, 0, scopedErrorf(scopedKindFromAPICode(resp.Code),
 			"alist scoped refresh %q failed: code=%d message=%s", dir, resp.Code, resp.Message)
 	}
-	var data listData
+	var data *listData
 	if err := json.Unmarshal(resp.Data, &data); err != nil {
 		return nil, 0, scopedWrap(ScopedTransientProvider, err)
 	}
+	if data == nil {
+		// {"code":200,"data":null} unmarshals successfully into a zero struct.
+		// Accepting it would fabricate a valid empty directory out of a payload
+		// that carries no coverage at all.
+		return nil, 0, scopedErrorf(ScopedTransientProvider,
+			"alist scoped refresh %q returned no data payload", dir)
+	}
 	return data.Content, data.Total, nil
+}
+
+// loginScoped obtains a login token for the scoped-refresh path with the same
+// typed provider classification as the list call. It deliberately does not use
+// the generic Adapter.login, whose errors are untyped.
+func (a Adapter) loginScoped(ctx context.Context) (string, error) {
+	body, _ := json.Marshal(map[string]string{"username": a.Username, "password": a.Password})
+	var resp apiResp
+	if err := a.post(ctx, "/api/auth/login", "", body, &resp); err != nil {
+		return "", scopedWrap(ScopedTransientProvider, err)
+	}
+	if resp.Code != http.StatusOK {
+		return "", scopedErrorf(scopedKindFromAPICode(resp.Code),
+			"alist scoped login failed: code=%d message=%s", resp.Code, resp.Message)
+	}
+	var data struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		return "", scopedWrap(ScopedTransientProvider, err)
+	}
+	if data.Token == "" {
+		return "", scopedErrorf(ScopedTransientProvider, "alist scoped login returned no token")
+	}
+	return data.Token, nil
 }

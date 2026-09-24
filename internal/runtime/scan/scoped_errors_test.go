@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -191,4 +192,87 @@ func TestScanScopeTypedDeletedRootIsRootInactive(t *testing.T) {
 	st, ctx := p4ScanSetup(t, "alist", srv.URL, "/", true, domain.RootDeleted)
 	_, err := p4ScanService(st).ScanScope(ctx, p4ScopeRootID, "/", 100)
 	assertScanScopeKind(t, err, scan.ScopeFailureRootInactive)
+}
+func TestScanScopeTypedRootPathIsConfigInvalid(t *testing.T) {
+	var code atomic.Int32
+	code.Store(200)
+	srv := p4CodeServer(t, &code, "0")
+	// A ".." component in the configured provider root path is adapter
+	// configuration, not the persisted DirtyScopeWork scope.
+	st, ctx := p4ScanSetup(t, "alist", srv.URL, "/../escape", true, domain.RootActive)
+	_, err := p4ScanService(st).ScanScope(ctx, p4ScopeRootID, "/", 100)
+	assertScanScopeKind(t, err, scan.ScopeFailureConfigInvalid)
+}
+
+func TestScanScopeTypedNullPayloadIsTransient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"code":200,"message":"ok","data":null}`)
+	}))
+	defer srv.Close()
+	st, ctx := p4ScanSetup(t, "alist", srv.URL, "/", true, domain.RootActive)
+	_, err := p4ScanService(st).ScanScope(ctx, p4ScopeRootID, "/", 100)
+	assertScanScopeKind(t, err, scan.ScopeFailureTransientProvider)
+}
+
+func TestScanScopeTypedDBFailureIsInternal(t *testing.T) {
+	var code atomic.Int32
+	code.Store(200)
+	srv := p4CodeServer(t, &code, "0")
+	st, ctx := p4ScanSetup(t, "alist", srv.URL, "/", true, domain.RootActive)
+	svc := p4ScanService(st)
+
+	// A storage failure must be INTERNAL, never a permanent CONFIG_INVALID or
+	// INVALID_SCOPE classification.
+	st.Pool().Close()
+	_, err := svc.ScanScope(ctx, p4ScopeRootID, "/", 100)
+	assertScanScopeKind(t, err, scan.ScopeFailureInternal)
+}
+
+func p4ScanSetupWithCreds(t *testing.T, baseURL string) (*postgres.Store, context.Context) {
+	t.Helper()
+	pool := testutil.Pool(t)
+	testutil.ResetSchema(t, pool)
+	ctx := context.Background()
+	if err := postgres.Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	st := postgres.New(pool)
+	if err := st.CreateRoot(ctx, st.Pool(), p4ScopeRootID, []byte(`{}`), domain.RootActive); err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	if err := st.UpsertRootPolicy(ctx, p4ScopeRootID, postgres.RootPolicy{
+		RemovalGracePeriod: time.Hour, MoveRecognitionHorizon: time.Hour,
+		MinConsecutiveCompleteMissing: 1, MinIndependentConfirmations: 1,
+	}); err != nil {
+		t.Fatalf("policy: %v", err)
+	}
+	acfg, _ := json.Marshal(map[string]string{
+		"base_url": baseURL, "path": "/",
+		"username_env": "P4_SCAN_LOGIN_USER", "password_env": "P4_SCAN_LOGIN_PASS",
+	})
+	if err := st.UpsertAdapterConfig(ctx, p4ScopeRootID,
+		postgres.AdapterConfig{CollectorKind: "alist", Config: acfg}); err != nil {
+		t.Fatalf("adapter: %v", err)
+	}
+	return st, ctx
+}
+
+func TestScanScopeTypedLoginPermissionIsAuth(t *testing.T) {
+	t.Setenv("P4_SCAN_LOGIN_USER", "operator")
+	t.Setenv("P4_SCAN_LOGIN_PASS", "secret")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/api/auth/login") {
+			_, _ = io.WriteString(w, `{"code":403,"message":"forbidden","data":null}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"code":200,"message":"ok","data":{"content":[],"total":0}}`)
+	}))
+	defer srv.Close()
+
+	st, ctx := p4ScanSetupWithCreds(t, srv.URL)
+	_, err := p4ScanService(st).ScanScope(ctx, p4ScopeRootID, "/", 100)
+	assertScanScopeKind(t, err, scan.ScopeFailureAuthOrPermission)
 }

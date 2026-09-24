@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -262,7 +263,10 @@ func TestP4ExecuteOneOneShotCardinality(t *testing.T) {
 	p4SeedPending(t, st, ctx, rootID, "/older", now, nil)
 	p4SeedPending(t, st, ctx, rootID, "/newer", now.Add(time.Minute), nil)
 
-	sc := &countingScanner{result: scan.Result{SnapshotID: "snap-x"}}
+	sc := &countingScanner{result: scan.Result{
+		SnapshotID: "snap-x",
+		Outcome:    postgres.ReconcileOutcome{Status: domain.AdmissionApplied},
+	}}
 	ex := p4Executor(t, st, sc, now)
 	res, err := ex.ExecuteOne(ctx)
 	if err != nil {
@@ -597,5 +601,156 @@ func TestP4ExecuteOneCompletionFailure(t *testing.T) {
 	}
 	if w.WorkState != state.WorkInFlight {
 		t.Fatalf("work must remain IN_FLIGHT after a failed completion, got %s", w.WorkState)
+	}
+}
+
+// TestP4ExecuteOneNonVerifyingOutcome proves a nil scanner error that did not
+// apply fresh coverage never verifies dirty work.
+func TestP4ExecuteOneNonVerifyingOutcome(t *testing.T) {
+	st, _, rootID := p4SetupRootPath(t, "/")
+	ctx := context.Background()
+	now := p4Now
+	const scope = "/stale"
+	p4SeedPending(t, st, ctx, rootID, scope, now, nil)
+
+	sc := &countingScanner{result: scan.Result{
+		SnapshotID: "snap-stale",
+		Outcome:    postgres.ReconcileOutcome{Status: domain.AdmissionStaleInput},
+	}}
+	ex := p4Executor(t, st, sc, now)
+	res, err := ex.ExecuteOne(ctx)
+	if !errors.Is(err, incrementalexec.ErrScannerFailed) {
+		t.Fatalf("want ErrScannerFailed, got %v", err)
+	}
+	if n := atomic.LoadInt32(&sc.calls); n != 1 {
+		t.Fatalf("exactly one scan required, got %d", n)
+	}
+	if res.FailureClass == nil || *res.FailureClass != state.ErrorInternal {
+		t.Fatalf("failure class = %v, want INTERNAL", res.FailureClass)
+	}
+	w, gerr := st.GetWork(ctx, rootID, scope)
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if w.WorkState != state.WorkRetryWait {
+		t.Fatalf("work must stay unsatisfied/retryable, got %s", w.WorkState)
+	}
+	if w.PendingNotBefore == nil {
+		t.Fatal("RETRY_WAIT must carry a future retry eligibility")
+	}
+}
+
+// TestP4ExecuteOnePostScanCancellation proves cancellation after a successful
+// ScanScope but before completion leaves recoverable IN_FLIGHT work.
+func TestP4ExecuteOnePostScanCancellation(t *testing.T) {
+	st, _, rootID := p4SetupRootPath(t, "/")
+	now := p4Now
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p4SeedPending(t, st, context.Background(), rootID, "/", now, nil)
+
+	// The scanner returns a successful, applying result; cancellation becomes
+	// observable before the executor reaches completion.
+	sc := &countingScanner{fn: func(context.Context, string, string, int) (scan.Result, error) {
+		cancel()
+		return scan.Result{
+			SnapshotID: "snap-ok",
+			Outcome:    postgres.ReconcileOutcome{Status: domain.AdmissionApplied},
+		}, nil
+	}}
+	ex := p4Executor(t, st, sc, now)
+	if _, err := ex.ExecuteOne(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context.Canceled, got %v", err)
+	}
+	w, err := st.GetWork(context.Background(), rootID, "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.WorkState != state.WorkInFlight {
+		t.Fatalf("post-scan cancellation must leave IN_FLIGHT, got %s", w.WorkState)
+	}
+	if w.LastErrorClass != nil {
+		t.Fatalf("no failure class may be written, got %v", *w.LastErrorClass)
+	}
+	recovered, err := st.RecoverStaleInflight(context.Background(), rootID, now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered != 1 {
+		t.Fatalf("explicit recovery must requeue 1 item, got %d", recovered)
+	}
+}
+
+const p4LoginRoot = "a2000000-0000-0000-0000-0000000000a2"
+
+func p4SetupRootWithLogin(t *testing.T, baseURL string) (*postgres.Store, string) {
+	t.Helper()
+	pool := testutil.Pool(t)
+	testutil.ResetSchema(t, pool)
+	ctx := context.Background()
+	if err := postgres.Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	st := postgres.New(pool)
+	if err := st.CreateRoot(ctx, st.Pool(), p4LoginRoot, []byte(`{}`), domain.RootActive); err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	if err := st.UpsertRootPolicy(ctx, p4LoginRoot, postgres.RootPolicy{
+		RemovalGracePeriod: time.Hour, MoveRecognitionHorizon: time.Hour,
+		MinConsecutiveCompleteMissing: 1, MinIndependentConfirmations: 1,
+	}); err != nil {
+		t.Fatalf("policy: %v", err)
+	}
+	acfg, _ := json.Marshal(map[string]string{
+		"base_url": baseURL, "path": "/",
+		"username_env": "P4_TEST_LOGIN_USER", "password_env": "P4_TEST_LOGIN_PASS",
+	})
+	if err := st.UpsertAdapterConfig(ctx, p4LoginRoot,
+		postgres.AdapterConfig{CollectorKind: "alist", Config: acfg}); err != nil {
+		t.Fatalf("adapter: %v", err)
+	}
+	return st, p4LoginRoot
+}
+
+// TestP4ExecuteOneLoginPermissionIsAuth proves a scoped username/password login
+// rejection is classified AUTH_OR_PERMISSION -> BLOCKED through the executor.
+func TestP4ExecuteOneLoginPermissionIsAuth(t *testing.T) {
+	t.Setenv("P4_TEST_LOGIN_USER", "operator")
+	t.Setenv("P4_TEST_LOGIN_PASS", "secret")
+
+	var listCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/api/auth/login") {
+			_, _ = io.WriteString(w, `{"code":403,"message":"forbidden","data":null}`)
+			return
+		}
+		atomic.AddInt32(&listCalls, 1)
+		_, _ = io.WriteString(w, `{"code":200,"message":"ok","data":{"content":[],"total":0}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	st, rootID := p4SetupRootWithLogin(t, srv.URL)
+	ctx := context.Background()
+	now := p4Now
+	p4SeedPending(t, st, ctx, rootID, "/", now, nil)
+
+	ex := p4Executor(t, st, p4RealScanner(st), now)
+	res, err := ex.ExecuteOne(ctx)
+	if !errors.Is(err, incrementalexec.ErrScannerFailed) {
+		t.Fatalf("want ErrScannerFailed, got %v", err)
+	}
+	if res.FailureClass == nil || *res.FailureClass != state.ErrorAuthOrPermission {
+		t.Fatalf("failure class = %v, want AUTH_OR_PERMISSION", res.FailureClass)
+	}
+	if n := atomic.LoadInt32(&listCalls); n != 0 {
+		t.Fatalf("a failed login must not list, got %d list calls", n)
+	}
+	w, gerr := st.GetWork(ctx, rootID, "/")
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if w.WorkState != state.WorkBlocked {
+		t.Fatalf("AUTH_OR_PERMISSION must BLOCK, got %s", w.WorkState)
 	}
 }

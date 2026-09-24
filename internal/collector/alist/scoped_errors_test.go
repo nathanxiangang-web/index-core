@@ -89,3 +89,47 @@ func TestScopedErrorInvalidMaxEntriesIsConfigInvalid(t *testing.T) {
 		assertScopedKind(t, err, alist.ScopedConfigInvalid)
 	}
 }
+func TestScopedErrorEmptyBaseURLIsConfigInvalid(t *testing.T) {
+	_, err := (alist.Adapter{}).ScanScope(context.Background(), "/x", 10)
+	assertScopedKind(t, err, alist.ScopedConfigInvalid)
+}
+
+func TestScopedErrorNullListPayloadIsTransient(t *testing.T) {
+	// {"code":200,"data":null} must never be accepted as an empty directory.
+	srv := scopedCodeServer(t, 200)
+	_, err := (alist.Adapter{BaseURL: srv.URL}).ScanScope(context.Background(), "/x", 10)
+	assertScopedKind(t, err, alist.ScopedTransientProvider)
+}
+
+func TestScopedErrorLoginClassification(t *testing.T) {
+	for _, tc := range []struct {
+		code int
+		want alist.ScopedErrorKind
+	}{
+		{401, alist.ScopedAuthOrPermission},
+		{403, alist.ScopedAuthOrPermission},
+		{429, alist.ScopedThrottled},
+		{500, alist.ScopedTransientProvider},
+		{503, alist.ScopedTransientProvider},
+	} {
+		srv := scopedCodeServer(t, tc.code)
+		_, err := (alist.Adapter{BaseURL: srv.URL, Username: "u", Password: "p"}).
+			ScanScope(context.Background(), "/x", 10)
+		assertScopedKind(t, err, tc.want)
+	}
+}
+
+func TestScopedErrorLoginTransportIsTransient(t *testing.T) {
+	_, err := (alist.Adapter{BaseURL: "http://127.0.0.1:1", Username: "u", Password: "p"}).
+		ScanScope(context.Background(), "/x", 10)
+	assertScopedKind(t, err, alist.ScopedTransientProvider)
+}
+
+func TestScopedErrorLoginNoTokenIsTransient(t *testing.T) {
+	// code=200 with data:null yields no token; that is a provider failure, not an
+	// untyped INTERNAL leak.
+	srv := scopedCodeServer(t, 200)
+	_, err := (alist.Adapter{BaseURL: srv.URL, Username: "u", Password: "p"}).
+		ScanScope(context.Background(), "/x", 10)
+	assertScopedKind(t, err, alist.ScopedTransientProvider)
+}

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nathanxiangang-web/index-core/internal/domain"
 	"github.com/nathanxiangang-web/index-core/internal/incremental/state"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/incrementalexec"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/scan"
@@ -28,9 +29,6 @@ type fakeStore struct {
 
 	failureResult state.DirtyScopeWork
 	failureErr    error
-
-	readResult state.DirtyScopeWork
-	readErr    error
 
 	claimVersion int64
 	successCalls int32
@@ -60,8 +58,11 @@ func (f *fakeStore) CompleteFailure(_ context.Context, _, _ string, _ int64, cla
 	return f.failureResult, f.failureErr
 }
 
-func (f *fakeStore) GetWork(context.Context, string, string) (state.DirtyScopeWork, error) {
-	return f.readResult, f.readErr
+func p4AppliedResult() scan.Result {
+	return scan.Result{
+		SnapshotID: "snap-1",
+		Outcome:    postgres.ReconcileOutcome{Status: domain.AdmissionApplied},
+	}
 }
 
 type countingScanner struct {
@@ -203,7 +204,7 @@ func TestP4OneShotSuccessViaFakeStore(t *testing.T) {
 		claimed:       p4ClaimedWork(),
 		successResult: state.DirtyScopeWork{WorkState: state.WorkVerified, Version: 5},
 	}
-	sc := &countingScanner{result: scan.Result{SnapshotID: "snap-1"}}
+	sc := &countingScanner{result: p4AppliedResult()}
 	ex, err := incrementalexec.New(st, sc, p4Config(), func() time.Time { return p4Now })
 	if err != nil {
 		t.Fatal(err)
@@ -260,7 +261,7 @@ func TestP4CompletionFailureReturnsPersistenceError(t *testing.T) {
 		successErr:    errors.New("injected completion failure"),
 		successResult: state.DirtyScopeWork{},
 	}
-	sc := &countingScanner{result: scan.Result{SnapshotID: "snap-1"}}
+	sc := &countingScanner{result: p4AppliedResult()}
 	ex, err := incrementalexec.New(st, sc, p4Config(), func() time.Time { return p4Now })
 	if err != nil {
 		t.Fatal(err)
@@ -320,7 +321,6 @@ func TestP4RetryEligibilityOnlyForRetryableClasses(t *testing.T) {
 			found:         true,
 			claimed:       p4ClaimedWork(),
 			failureResult: state.DirtyScopeWork{WorkState: tc.wantState},
-			readResult:    state.DirtyScopeWork{WorkState: tc.wantState},
 		}
 		sc := &countingScanner{err: scan.NewScopeError(tc.kind, errors.New("boom"))}
 		ex, err := incrementalexec.New(st, sc, p4Config(), func() time.Time { return p4Now })
@@ -346,5 +346,119 @@ func TestP4RetryEligibilityOnlyForRetryableClasses(t *testing.T) {
 		if n := atomic.LoadInt32(&sc.calls); n != 1 {
 			t.Fatalf("%s: exactly one scan allowed, got %d", tc.kind, n)
 		}
+	}
+}
+func TestP4NonVerifyingOutcomeDoesNotSucceed(t *testing.T) {
+	for _, status := range []domain.AdmissionStatus{
+		domain.AdmissionStaleInput, domain.AdmissionRejected, "",
+	} {
+		st := &fakeStore{
+			next:          state.DirtyScopeWork{RootID: p4RootID, ScopeKey: "/a", WorkState: state.WorkPending, Version: 3},
+			found:         true,
+			claimed:       p4ClaimedWork(),
+			failureResult: state.DirtyScopeWork{WorkState: state.WorkRetryWait},
+		}
+		sc := &countingScanner{result: scan.Result{
+			SnapshotID: "snap-x",
+			Outcome:    postgres.ReconcileOutcome{Status: status},
+		}}
+		ex, err := incrementalexec.New(st, sc, p4Config(), func() time.Time { return p4Now })
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := ex.ExecuteOne(context.Background())
+		if !errors.Is(err, incrementalexec.ErrScannerFailed) {
+			t.Fatalf("status %q: want ErrScannerFailed, got %v", status, err)
+		}
+		if n := atomic.LoadInt32(&st.successCalls); n != 0 {
+			t.Fatalf("status %q: must not CompleteSuccess", status)
+		}
+		if n := atomic.LoadInt32(&st.failureCalls); n != 1 {
+			t.Fatalf("status %q: must CompleteFailure exactly once, got %d", status, n)
+		}
+		if st.failClass != state.ErrorInternal {
+			t.Fatalf("status %q: class = %s, want INTERNAL", status, st.failClass)
+		}
+		if res.FinalWorkState != state.WorkRetryWait {
+			t.Fatalf("status %q: final state = %s", status, res.FinalWorkState)
+		}
+	}
+}
+
+func TestP4AppliedAndNoopAreAccepted(t *testing.T) {
+	for _, status := range []domain.AdmissionStatus{domain.AdmissionApplied, domain.AdmissionNoop} {
+		st := &fakeStore{
+			next:          state.DirtyScopeWork{RootID: p4RootID, ScopeKey: "/a", WorkState: state.WorkPending, Version: 3},
+			found:         true,
+			claimed:       p4ClaimedWork(),
+			successResult: state.DirtyScopeWork{WorkState: state.WorkVerified},
+		}
+		sc := &countingScanner{result: scan.Result{
+			SnapshotID: "snap-1",
+			Outcome:    postgres.ReconcileOutcome{Status: status},
+		}}
+		ex, err := incrementalexec.New(st, sc, p4Config(), func() time.Time { return p4Now })
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := ex.ExecuteOne(context.Background())
+		if err != nil {
+			t.Fatalf("status %q: %v", status, err)
+		}
+		if n := atomic.LoadInt32(&st.successCalls); n != 1 {
+			t.Fatalf("status %q: CompleteSuccess calls = %d", status, n)
+		}
+		if res.FinalWorkState != state.WorkVerified {
+			t.Fatalf("status %q: final state = %s", status, res.FinalWorkState)
+		}
+	}
+}
+
+func TestP4PostScanCancellationLeavesInflight(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	st := &fakeStore{
+		next:    state.DirtyScopeWork{RootID: p4RootID, ScopeKey: "/a", WorkState: state.WorkPending, Version: 3},
+		found:   true,
+		claimed: p4ClaimedWork(),
+	}
+	// The scanner itself succeeds, but cancellation becomes observable before
+	// the executor reaches completion.
+	sc := &countingScanner{fn: func(context.Context, string, string, int) (scan.Result, error) {
+		cancel()
+		return p4AppliedResult(), nil
+	}}
+	ex, err := incrementalexec.New(st, sc, p4Config(), func() time.Time { return p4Now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ex.ExecuteOne(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context.Canceled, got %v", err)
+	}
+	if n := atomic.LoadInt32(&st.successCalls); n != 0 {
+		t.Fatalf("must not CompleteSuccess after cancellation, got %d", n)
+	}
+	if n := atomic.LoadInt32(&st.failureCalls); n != 0 {
+		t.Fatalf("must not CompleteFailure after cancellation, got %d", n)
+	}
+}
+
+func TestP4FailureFinalStateFromCompletionRow(t *testing.T) {
+	st := &fakeStore{
+		next:          state.DirtyScopeWork{RootID: p4RootID, ScopeKey: "/a", WorkState: state.WorkPending, Version: 3},
+		found:         true,
+		claimed:       p4ClaimedWork(),
+		failureResult: state.DirtyScopeWork{WorkState: state.WorkBlocked},
+	}
+	sc := &countingScanner{err: scan.NewScopeError(scan.ScopeFailureAuthOrPermission, errors.New("denied"))}
+	ex, err := incrementalexec.New(st, sc, p4Config(), func() time.Time { return p4Now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := ex.ExecuteOne(context.Background())
+	if !errors.Is(err, incrementalexec.ErrScannerFailed) {
+		t.Fatalf("want ErrScannerFailed, got %v", err)
+	}
+	if res.FinalWorkState != state.WorkBlocked {
+		t.Fatalf("FinalWorkState must come from the committed completion row, got %s", res.FinalWorkState)
 	}
 }

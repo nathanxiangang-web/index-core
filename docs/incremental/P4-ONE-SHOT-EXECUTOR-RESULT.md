@@ -20,7 +20,7 @@ type WorkStore interface {
     ClaimWork(ctx, rootID, scopeKey string, expectedWorkVersion int64, now) (state.DirtyScopeWork, error)
     CompleteSuccess(ctx, rootID, scopeKey string, claimedSignalSeq int64, now) (state.DirtyScopeWork, error)
     CompleteFailure(ctx, rootID, scopeKey string, claimedSignalSeq int64, class state.ErrorClass, retryNotBefore *time.Time, now) (state.DirtyScopeWork, error)
-    GetWork(ctx, rootID, scopeKey string) (state.DirtyScopeWork, error)
+
 }
 
 type ScopedScanner interface {
@@ -47,7 +47,10 @@ func (e *Executor) ExecuteOne(ctx context.Context) (Result, error)
 
 `New` fails closed when the store/scanner is missing or the config is invalid;
 `ExecuteOne` re-validates before selection. `*postgres.Store` satisfies
-`WorkStore` and `*scan.Service` satisfies `ScopedScanner`.
+`WorkStore` and `*scan.Service` satisfies `ScopedScanner`. The row committed by
+`CompleteFailure` is used directly for `FinalWorkState`; the executor never
+re-reads mutable Work, so a concurrent later transition cannot rewrite this
+invocation's result.
 
 Stable executor errors: `ErrNoEligibleWork`, `ErrStaleSelection`,
 `ErrScannerFailed`, `ErrCompletionFailed`; caller cancellation returns
@@ -93,9 +96,22 @@ NextEligiblePendingWork(now)
   -> ClaimWork(selected.version, now)
        -> ErrStateCASConflict -> ErrStaleSelection (no scan, no reselect)
   -> ScanScope(root, persisted scope_key, maxEntries)   EXACTLY ONCE
-  -> success -> CompleteSuccess(claimed_signal_seq)
-  -> failure -> typed class -> CompleteFailure(claimed_signal_seq, retry?)
+  -> ctx.Err() != nil     -> return ctx error (NO completion; Work stays IN_FLIGHT)
+  -> scan error           -> typed class -> CompleteFailure(claimed_signal_seq, retry?)
+  -> APPLIED / NOOP       -> CompleteSuccess(claimed_signal_seq)
+  -> other/zero outcome   -> INTERNAL -> CompleteFailure(claimed_signal_seq, retry)
 ```
+
+The outer context is checked immediately after the single `ScanScope` call,
+**before either success or failure completion**: a cancellation that becomes
+visible after the provider/Kernel work succeeded still leaves the Work
+`IN_FLIGHT` for explicit P3 recovery instead of committing a result.
+
+A nil `ScanScope` error is not by itself proof of verification: the executor
+accepts only the applying terminal outcomes `APPLIED` / `NOOP`. `STALE_INPUT`,
+`REJECTED`, the zero value and any unknown outcome fail closed and are completed
+through the P3 failure path as `INTERNAL`, so an unapplied/stale observation can
+never clear the claimed dirty work.
 
 The persisted normalized `scope_key` is passed unchanged; scope is never widened
 or collapsed. There is no loop, sleep, second selection, or provider retry.
@@ -136,13 +152,21 @@ fail closed as INTERNAL):
 | CONFIG_INVALID | CONFIG_INVALID | BLOCKED |
 | INTERNAL | INTERNAL | RETRY_WAIT |
 
-Provider classification (AList scoped refresh): 401/403 →
-AUTH_OR_PERMISSION; 429 → THROTTLED; 5xx / transport / timeout /
-malformed / total-count mismatch → TRANSIENT_PROVIDER; `total > max_entries` →
-SCOPE_TOO_LARGE. Scan-layer classification: invalid/non-directory/ambiguous
-scope → INVALID_SCOPE; missing adapter / unsupported collector kind / invalid
-`max_entries` / missing reconcile policy → CONFIG_INVALID; DELETED root →
-ROOT_INACTIVE; persistence/admission/reconcile → INTERNAL.
+Provider classification covers **both** the scoped list call and the
+username/password login call (the scoped path uses a typed `loginScoped`, never
+the untyped generic `Adapter.login`): 401/403 → AUTH_OR_PERMISSION; 429 →
+THROTTLED; 5xx / transport / timeout / malformed body / total-count mismatch /
+`code=200,data=null` / successful login with no token → TRANSIENT_PROVIDER;
+`total > max_entries` → SCOPE_TOO_LARGE; empty base URL → CONFIG_INVALID.
+
+Scan-layer classification: invalid/non-directory/ambiguous canonical parent →
+INVALID_SCOPE; missing adapter binding, unsupported collector kind, invalid
+`max_entries`, invalid configured provider root path (`..` component), or
+missing/invalid reconcile policy → CONFIG_INVALID; DELETED root → ROOT_INACTIVE;
+PostgreSQL/query/storage failures and persistence/admission/reconcile failures →
+INTERNAL. `GetAdapterConfig` / `GetRootPolicy` distinguish `ErrNotFound`
+(permanent config defect) from any other error (transient storage failure), so a
+transient DB failure can never permanently BLOCK an item.
 
 **Zero string matching / HTTP-code extraction from messages** in production code
 and tests.
@@ -221,6 +245,17 @@ claim commits -> caller context cancels -> ExecuteOne returns context.Canceled
 -> explicit Store.RecoverStaleInflight requeues exactly 1 item to PENDING
 ```
 
+`TestP4ExecuteOnePostScanCancellation` proves the exact post-scan window: the
+scanner returns a successful, applying result, cancellation becomes observable
+before completion, `ExecuteOne` returns `context.Canceled`, neither
+`CompleteSuccess` nor `CompleteFailure` is written, the Work stays `IN_FLIGHT`,
+and explicit `RecoverStaleInflight` requeues it.
+
+`TestP4ExecuteOneNonVerifyingOutcome` proves a nil scanner error with a
+`STALE_INPUT` outcome never succeeds: it is completed as `INTERNAL` →
+`RETRY_WAIT` with a future eligibility, and the claimed dirty epoch is not
+cleared as verified.
+
 `TestP4ExecuteOneCompletionFailure` injects a test-only completion failure after
 a successful real scoped refresh: the provider refresh count stays 1, there is
 no hidden retry, `ExecuteOne` returns `ErrCompletionFailed`, and the Work remains
@@ -250,10 +285,10 @@ New tests:
 
 ```text
 internal/store/postgres/incremental_selector_test.go   (8)
-internal/runtime/incrementalexec/executor_test.go      (9)
-internal/runtime/incrementalexec/integration_test.go   (8)
-internal/runtime/scan/scoped_errors_test.go            (5)
-internal/collector/alist/scoped_errors_test.go         (5)
+internal/runtime/incrementalexec/executor_test.go      (13)
+internal/runtime/incrementalexec/integration_test.go   (11)
+internal/runtime/scan/scoped_errors_test.go            (9)
+internal/collector/alist/scoped_errors_test.go         (10)
 ```
 
 No migration, no `cmd/**`, no `internal/runtime/app/**`, no
@@ -271,8 +306,9 @@ go vet ./...                    clean
 go test -p 1 -count=1 ./...     all packages ok (real PostgreSQL 18)
 ```
 
-`internal/runtime/incrementalexec` = 17 tests; `internal/store/postgres`
-selector = 8; typed classification = 10. Existing P3 tests remain green.
+`internal/runtime/incrementalexec` = 24 tests (unit 13 + integration 11);
+`internal/store/postgres` selector = 8; typed classification = 19 (scan 9 +
+alist 10). Total new P4 tests = **51**. Existing P3 tests remain green.
 
 ## 12. Boundary statement
 
@@ -286,5 +322,49 @@ direct 115 integration, destructive removal, or new migration. The executor
 package is not wired into `worker`, `app`, any command, or any HTTP handler.
 P4 is intentionally at-least-once: the claim commits before provider I/O and
 durable P3 recovery owns crash repair.
+
+`FROZEN_CONTRACT_CHANGES: NONE`
+## 13. Round 1 rework (Issue #75 review)
+
+Four correctness blockers + one closeout from the P4 Round 1 review were fixed,
+strictly inside the already authorized executor / scoped-error / tests /
+result-doc surface:
+
+1. **Typed classification completeness.**
+   - the scoped username/password login uses a typed `loginScoped` instead of the
+     untyped generic `Adapter.login`: login 401/403 → AUTH_OR_PERMISSION, 429 →
+     THROTTLED, transport / 5xx / malformed / no token → TRANSIENT_PROVIDER.
+     Proved end-to-end through `scan.Service` and the executor: login 403 →
+     `AUTH_OR_PERMISSION` → `BLOCKED` with zero list calls.
+   - an empty configured `base_url` → CONFIG_INVALID (validated before provider
+     I/O), never TRANSIENT_PROVIDER.
+   - a bad configured provider root path (e.g. a `..` component) → CONFIG_INVALID,
+     not INVALID_SCOPE.
+   - `GetAdapterConfig` / `GetRootPolicy` now distinguish `ErrNotFound`
+     (CONFIG_INVALID) from any other error (INTERNAL), and
+     `requirePresentDirectory` returns INTERNAL for storage failures and
+     INVALID_SCOPE only for scope semantics.
+2. **Malformed provider payload.** `code=200,data=null` unmarshals into a nil
+   `*listData` and is rejected as TRANSIENT_PROVIDER instead of being accepted as
+   a successful empty directory.
+3. **Outcome verification.** `ExecuteOne` accepts only the applying outcomes
+   `APPLIED` / `NOOP`. `STALE_INPUT`, `REJECTED`, the zero value and unknown
+   outcomes are completed as `INTERNAL` → `RETRY_WAIT` through P3, so a
+   nil-error non-success can never clear the claimed dirty work as verified.
+4. **Post-scan cancellation window.** the outer context is checked immediately
+   after the single `ScanScope` call, before either completion; cancellation
+   leaves recoverable `IN_FLIGHT` even when the scan itself succeeded.
+5. **Deterministic failure result.** `FinalWorkState` is taken from the row
+   committed by `CompleteFailure`; `GetWork` was removed from the executor's
+   `WorkStore` interface.
+
+New tests added in this rework: `TestP4ExecuteOneNonVerifyingOutcome`,
+`TestP4ExecuteOnePostScanCancellation`, `TestP4ExecuteOneLoginPermissionIsAuth`,
+`TestP4NonVerifyingOutcomeDoesNotSucceed`, `TestP4AppliedAndNoopAreAccepted`,
+`TestP4PostScanCancellationLeavesInflight`,
+`TestP4FailureFinalStateFromCompletionRow`,
+`TestScopedError{EmptyBaseURLIsConfigInvalid,NullListPayloadIsTransient,LoginClassification,LoginTransportIsTransient,LoginNoTokenIsTransient}`,
+and
+`TestScanScopeTyped{RootPathIsConfigInvalid,NullPayloadIsTransient,DBFailureIsInternal,LoginPermissionIsAuth}`.
 
 `FROZEN_CONTRACT_CHANGES: NONE`
