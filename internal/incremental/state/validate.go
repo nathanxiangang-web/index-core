@@ -89,6 +89,9 @@ func ValidateErrorClass(e ErrorClass) error {
 // NormalizeWatchSources validates, de-duplicates and deterministically sorts a
 // watch-policy source set.
 func NormalizeWatchSources(in []WatchSource) ([]WatchSource, error) {
+	if in == nil {
+		return nil, nil
+	}
 	seen := map[WatchSource]bool{}
 	out := make([]WatchSource, 0, len(in))
 	for _, s := range in {
@@ -106,6 +109,9 @@ func NormalizeWatchSources(in []WatchSource) ([]WatchSource, error) {
 
 // NormalizeTriggerSources validates, de-duplicates and sorts a dirty source set.
 func NormalizeTriggerSources(in []TriggerSource) ([]TriggerSource, error) {
+	if in == nil {
+		return nil, nil
+	}
 	seen := map[TriggerSource]bool{}
 	out := make([]TriggerSource, 0, len(in))
 	for _, s := range in {
@@ -123,6 +129,9 @@ func NormalizeTriggerSources(in []TriggerSource) ([]TriggerSource, error) {
 
 // NormalizeTriggerReasons validates, de-duplicates and sorts a reason set.
 func NormalizeTriggerReasons(in []TriggerReason) ([]TriggerReason, error) {
+	if in == nil {
+		return nil, nil
+	}
 	seen := map[TriggerReason]bool{}
 	out := make([]TriggerReason, 0, len(in))
 	for _, r := range in {

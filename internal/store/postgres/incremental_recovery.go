@@ -45,10 +45,11 @@ func (s *Store) RecoverStaleInflight(ctx context.Context, rootID string, now tim
 		return 0, nil
 	}
 
-	active, err := rootIsActive(ctx, tx, rootID)
+	lifecycle, err := lockRootForUpdate(ctx, tx, rootID)
 	if err != nil {
 		return 0, err
 	}
+	active := activeFromLifecycle(lifecycle)
 
 	recovered := 0
 	for _, key := range keys {
@@ -71,12 +72,14 @@ func (s *Store) RecoverStaleInflight(ctx context.Context, rootID string, now tim
 		wk.PendingReasonSet = reasons
 		wk.PendingPriority = mergedPriority(wk.PendingPriority, derefPriority(wk.ClaimedPriority))
 		wk.PendingFirstSeenAt = state.MinTimePtr(wk.PendingFirstSeenAt, wk.ClaimedFirstSeenAt, wk.LastAttemptStartedAt)
+		// Preserve the earliest eligibility so a post-claim future not_before does
+		// not delay an already-due claimed signal.
+		wk.PendingNotBefore = state.MinTimePtr(wk.ClaimedNotBefore, wk.PendingNotBefore)
 		releaseClaim(&wk)
 		if active {
 			wk.WorkState = state.WorkPending
 		} else {
 			wk.WorkState = state.WorkSuspended
-			wk.PendingNotBefore = nil
 		}
 		if _, err := writeWork(ctx, tx, wk); err != nil {
 			return recovered, err

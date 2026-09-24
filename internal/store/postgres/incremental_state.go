@@ -23,7 +23,7 @@ const watchColumns = `root_id, scope_key, watch_state, cadence_class,
 	created_at, updated_at, version`
 
 const workColumns = `root_id, scope_key, work_state, signal_seq,
-	claimed_signal_seq, claimed_source_set, claimed_reason_set, claimed_priority, claimed_first_seen_at,
+	claimed_signal_seq, claimed_source_set, claimed_reason_set, claimed_priority, claimed_first_seen_at, claimed_not_before,
 	pending_source_set, pending_reason_set, pending_priority, pending_first_seen_at, pending_not_before,
 	last_seen_at, attempt_count, consecutive_failures,
 	last_attempt_started_at, last_attempt_finished_at, last_error_class,
@@ -49,10 +49,15 @@ func scanWatch(scan func(dest ...any) error) (state.ScopeWatchState, error) {
 		ec := state.ErrorClass(*lastErr)
 		w.LastErrorClass = &ec
 	}
-	w.SourceSet = make([]state.WatchSource, 0, len(srcSet))
+	raw := make([]state.WatchSource, 0, len(srcSet))
 	for _, s := range srcSet {
-		w.SourceSet = append(w.SourceSet, state.WatchSource(s))
+		raw = append(raw, state.WatchSource(s))
 	}
+	normalized, err := state.NormalizeWatchSources(raw)
+	if err != nil {
+		return state.ScopeWatchState{}, err
+	}
+	w.SourceSet = normalized
 	return w, nil
 }
 
@@ -69,7 +74,7 @@ func scanWork(scan func(dest ...any) error) (state.DirtyScopeWork, error) {
 		lastErr  *string
 	)
 	if err := scan(&wk.RootID, &wk.ScopeKey, &wk.WorkState, &wk.SignalSeq,
-		&wk.ClaimedSignalSeq, &claimedS, &claimedR, &claimedP, &wk.ClaimedFirstSeenAt,
+		&wk.ClaimedSignalSeq, &claimedS, &claimedR, &claimedP, &wk.ClaimedFirstSeenAt, &wk.ClaimedNotBefore,
 		&pendingS, &pendingR, &pendingP, &wk.PendingFirstSeenAt, &wk.PendingNotBefore,
 		&wk.LastSeenAt, &wk.AttemptCount, &wk.ConsecutiveFailures,
 		&wk.LastAttemptStartedAt, &wk.LastAttemptFinishedAt, &lastErr,
@@ -77,14 +82,30 @@ func scanWork(scan func(dest ...any) error) (state.DirtyScopeWork, error) {
 		&wk.CreatedAt, &wk.UpdatedAt, &wk.Version); err != nil {
 		return state.DirtyScopeWork{}, err
 	}
-	wk.ClaimedSourceSet = toTriggerSources(claimedS)
-	wk.ClaimedReasonSet = toTriggerReasons(claimedR)
+	cleanedClaimedS, err := state.NormalizeTriggerSources(toTriggerSources(claimedS))
+	if err != nil {
+		return state.DirtyScopeWork{}, err
+	}
+	cleanedClaimedR, err := state.NormalizeTriggerReasons(toTriggerReasons(claimedR))
+	if err != nil {
+		return state.DirtyScopeWork{}, err
+	}
+	cleanedPendingS, err := state.NormalizeTriggerSources(toTriggerSources(pendingS))
+	if err != nil {
+		return state.DirtyScopeWork{}, err
+	}
+	cleanedPendingR, err := state.NormalizeTriggerReasons(toTriggerReasons(pendingR))
+	if err != nil {
+		return state.DirtyScopeWork{}, err
+	}
+	wk.ClaimedSourceSet = cleanedClaimedS
+	wk.ClaimedReasonSet = cleanedClaimedR
+	wk.PendingSourceSet = cleanedPendingS
+	wk.PendingReasonSet = cleanedPendingR
 	if claimedP != nil {
 		p := state.Priority(*claimedP)
 		wk.ClaimedPriority = &p
 	}
-	wk.PendingSourceSet = toTriggerSources(pendingS)
-	wk.PendingReasonSet = toTriggerReasons(pendingR)
 	if pendingP != nil {
 		p := state.Priority(*pendingP)
 		wk.PendingPriority = &p

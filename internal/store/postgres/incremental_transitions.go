@@ -59,14 +59,19 @@ func (s *Store) RetryReady(ctx context.Context, rootID, scopeKey string, expecte
 // ResumeSuspended transitions a SUSPENDED item back to PENDING, only when the
 // root is ACTIVE.
 func (s *Store) ResumeSuspended(ctx context.Context, rootID, scopeKey string, expectedVersion int64, now time.Time) (state.DirtyScopeWork, error) {
-	active, err := rootIsActive(ctx, s.pool, rootID)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return state.DirtyScopeWork{}, err
 	}
-	if !active {
+	defer tx.Rollback(ctx)
+	lifecycle, err := lockRootForUpdate(ctx, tx, rootID)
+	if err != nil {
+		return state.DirtyScopeWork{}, err
+	}
+	if !activeFromLifecycle(lifecycle) {
 		return state.DirtyScopeWork{}, ErrStateCASConflict
 	}
-	row := s.pool.QueryRow(ctx, `
+	row := tx.QueryRow(ctx, `
 		UPDATE index_dirty_scope_work
 		SET work_state='PENDING', updated_at=$3, version=version+1
 		WHERE root_id=$1 AND scope_key=$2 AND version=$4 AND work_state='SUSPENDED'
@@ -76,7 +81,10 @@ func (s *Store) ResumeSuspended(ctx context.Context, rootID, scopeKey string, ex
 	if errors.Is(err, pgx.ErrNoRows) {
 		return state.DirtyScopeWork{}, ErrStateCASConflict
 	}
-	return out, err
+	if err := tx.Commit(ctx); err != nil {
+		return state.DirtyScopeWork{}, err
+	}
+	return out, nil
 }
 
 // RepairBlocked transitions a BLOCKED item back to PENDING via the explicit

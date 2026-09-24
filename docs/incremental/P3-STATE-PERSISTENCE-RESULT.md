@@ -157,3 +157,34 @@ AUTHORIZE_MUTATION_HINT_PROTOTYPE
 AUTHORIZE_HYBRID_SCHEDULER_PROTOTYPE
 RESEARCH_FURTHER
 ```
+## 9. Round 1 Architect review rework (2026-09-24)
+
+PR #73 Round 1 = CHANGES REQUIRED. All 8 points addressed, still P3-scope only (no
+scheduler / executor / API / CLI / `ScanScope` / provider):
+
+1. **Frozen lock order Root → Watch → Work.** Every multi-row operational transaction acquires
+   locks in that order: `MergeSignal`, `EmitDuePoll`, `ClaimWork`, `CompleteSuccess`,
+   `CompleteFailure` lock the root row, then the watch row (if any), then the work row. This
+   removes the `EmitDuePoll` (Watch→Work) vs `Claim`/`Complete` (Work→Watch) deadlock.
+2. **No root-lifecycle TOCTOU.** Root lifecycle is read under the root `FOR UPDATE` lock in every
+   state-changing transaction; `ResumeSuspended` is transactional too.
+3. **Inactive-root claim preserves eligibility.** `ClaimWork` on a non-ACTIVE root moves the item
+   to `SUSPENDED` **without clearing `pending_not_before`**.
+4. **Recovery preserves the earliest eligibility.** New `claimed_not_before` snapshot (migration
+   0005); recovery/failure re-coalesce uses
+   `pending_not_before = min(claimed_not_before, pending_not_before)`, so a post-claim future
+   `not_before` cannot delay an already-due claimed signal.
+5. **DB fail-closed completeness.** `last_error_class` now has a closed-enum CHECK on both tables;
+   `c_dsw_claim_group` requires a non-empty claimed reason set; new `c_dsw_pending_complete`
+   rejects a source-only pending bucket (reason + priority required).
+6. **Normalized Store reads.** Every read runs through `state.Normalize*` (validate + dedupe +
+   deterministic sort), so reads return normalized sets, not raw DB array order.
+7. **No tight retry.** `CompleteFailure` rejects `retryNotBefore <= now`.
+8. **Atomic due-poll rollback proof.** A test-only seam (`emitDuePollAfterMergeHook`) injects a
+   failure after the work merge; the internal test `TestP3EmitDuePollRollsBackBothHalves` proves
+   neither the work merge nor the watch advance is visible.
+
+New tests: `incremental_round1_test.go` (DB fail-closed, normalized reads, immediate-retry
+rejection, recovery eligibility preservation, inactive-claim eligibility) and
+`incremental_rollback_internal_test.go` (due-poll rollback). Full `go test -p 1 ./...` green,
+`go vet` / `gofmt` clean, real PostgreSQL 18. `FROZEN_CONTRACT_CHANGES: NONE`.

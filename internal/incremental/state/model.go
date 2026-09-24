@@ -190,6 +190,7 @@ type DirtyScopeWork struct {
 	ClaimedReasonSet   []TriggerReason
 	ClaimedPriority    *Priority
 	ClaimedFirstSeenAt *time.Time
+	ClaimedNotBefore   *time.Time
 
 	PendingSourceSet   []TriggerSource
 	PendingReasonSet   []TriggerReason

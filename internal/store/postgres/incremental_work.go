@@ -15,11 +15,22 @@ import (
 // errRetryMerge is internal signal for a bounded merge retry after an insert race.
 var errRetryMerge = errors.New("retry dirty signal merge")
 
-func rootLifecycle(ctx context.Context, q interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-}, rootID string) (string, error) {
+// emitDuePollAfterMergeHook is a test-only seam. When non-nil it runs after the
+// work-merge half of EmitDuePoll has executed and before the watch advance, so a
+// test can prove that an injected failure rolls BOTH halves back. It is nil in
+// production.
+var emitDuePollAfterMergeHook func() error
+
+// P3 lock order is frozen as: Root -> Watch -> Work. Every operational-state
+// transaction that touches more than one of these must acquire them in that
+// order to avoid deadlock.
+
+// lockRootForUpdate locks the root row for the transaction, serializing
+// operational writes against root lifecycle changes (no TOCTOU).
+func lockRootForUpdate(ctx context.Context, tx pgx.Tx, rootID string) (string, error) {
 	var lifecycle string
-	if err := q.QueryRow(ctx, `SELECT lifecycle_state FROM index_root WHERE root_id=$1`, rootID).Scan(&lifecycle); err != nil {
+	if err := tx.QueryRow(ctx,
+		`SELECT lifecycle_state FROM index_root WHERE root_id=$1 FOR UPDATE`, rootID).Scan(&lifecycle); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrNotFound
 		}
@@ -28,11 +39,33 @@ func rootLifecycle(ctx context.Context, q interface {
 	return lifecycle, nil
 }
 
+func activeFromLifecycle(lifecycle string) bool { return lifecycle == "ACTIVE" }
+
+// lockWatchForUpdate locks the watch row (if present) in Root -> Watch -> Work
+// order. A missing watch is not an error here.
+func lockWatchForUpdate(ctx context.Context, tx pgx.Tx, rootID, scopeKey string) (state.ScopeWatchState, bool, error) {
+	row := tx.QueryRow(ctx,
+		`SELECT `+watchColumns+` FROM index_scope_watch_state
+		 WHERE root_id=$1 AND scope_key=$2 FOR UPDATE`, rootID, scopeKey)
+	w, err := scanWatch(row.Scan)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return state.ScopeWatchState{}, false, nil
+	}
+	if err != nil {
+		return state.ScopeWatchState{}, false, err
+	}
+	return w, true, nil
+}
+
+// rootIsActive is a plain (unlocked) read used by read-only paths.
 func rootIsActive(ctx context.Context, q interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, rootID string) (bool, error) {
-	lifecycle, err := rootLifecycle(ctx, q, rootID)
-	if err != nil {
+	var lifecycle string
+	if err := q.QueryRow(ctx, `SELECT lifecycle_state FROM index_root WHERE root_id=$1`, rootID).Scan(&lifecycle); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrNotFound
+		}
 		return false, err
 	}
 	return lifecycle == "ACTIVE", nil
@@ -56,18 +89,18 @@ func insertWork(ctx context.Context, tx pgx.Tx, wk state.DirtyScopeWork) (state.
 	row := tx.QueryRow(ctx, `
 		INSERT INTO index_dirty_scope_work (
 			root_id, scope_key, work_state, signal_seq,
-			claimed_signal_seq, claimed_source_set, claimed_reason_set, claimed_priority, claimed_first_seen_at,
+			claimed_signal_seq, claimed_source_set, claimed_reason_set, claimed_priority, claimed_first_seen_at, claimed_not_before,
 			pending_source_set, pending_reason_set, pending_priority, pending_first_seen_at, pending_not_before,
 			last_seen_at, attempt_count, consecutive_failures,
 			last_attempt_started_at, last_attempt_finished_at, last_error_class,
 			last_verified_at, last_verified_signal_seq,
 			created_at, updated_at, version)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$23,1)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$24,1)
 		ON CONFLICT (root_id, scope_key) DO NOTHING
 		RETURNING `+workColumns,
 		wk.RootID, wk.ScopeKey, string(wk.WorkState), wk.SignalSeq,
 		wk.ClaimedSignalSeq, sourceStringsNullable(wk.ClaimedSourceSet), reasonStringsNullable(wk.ClaimedReasonSet),
-		priorityPtrString(wk.ClaimedPriority), wk.ClaimedFirstSeenAt,
+		priorityPtrString(wk.ClaimedPriority), wk.ClaimedFirstSeenAt, wk.ClaimedNotBefore,
 		sourceStrings(wk.PendingSourceSet), reasonStrings(wk.PendingReasonSet),
 		priorityPtrString(wk.PendingPriority), wk.PendingFirstSeenAt, wk.PendingNotBefore,
 		wk.LastSeenAt, wk.AttemptCount, wk.ConsecutiveFailures,
@@ -85,17 +118,17 @@ func writeWork(ctx context.Context, tx pgx.Tx, wk state.DirtyScopeWork) (state.D
 	row := tx.QueryRow(ctx, `
 		UPDATE index_dirty_scope_work SET
 			work_state=$3, signal_seq=$4,
-			claimed_signal_seq=$5, claimed_source_set=$6, claimed_reason_set=$7, claimed_priority=$8, claimed_first_seen_at=$9,
-			pending_source_set=$10, pending_reason_set=$11, pending_priority=$12, pending_first_seen_at=$13, pending_not_before=$14,
-			last_seen_at=$15, attempt_count=$16, consecutive_failures=$17,
-			last_attempt_started_at=$18, last_attempt_finished_at=$19, last_error_class=$20,
-			last_verified_at=$21, last_verified_signal_seq=$22,
-			updated_at=$23, version=version+1
+			claimed_signal_seq=$5, claimed_source_set=$6, claimed_reason_set=$7, claimed_priority=$8, claimed_first_seen_at=$9, claimed_not_before=$10,
+			pending_source_set=$11, pending_reason_set=$12, pending_priority=$13, pending_first_seen_at=$14, pending_not_before=$15,
+			last_seen_at=$16, attempt_count=$17, consecutive_failures=$18,
+			last_attempt_started_at=$19, last_attempt_finished_at=$20, last_error_class=$21,
+			last_verified_at=$22, last_verified_signal_seq=$23,
+			updated_at=$24, version=version+1
 		WHERE root_id=$1 AND scope_key=$2
 		RETURNING `+workColumns,
 		wk.RootID, wk.ScopeKey, string(wk.WorkState), wk.SignalSeq,
 		wk.ClaimedSignalSeq, sourceStringsNullable(wk.ClaimedSourceSet), reasonStringsNullable(wk.ClaimedReasonSet),
-		priorityPtrString(wk.ClaimedPriority), wk.ClaimedFirstSeenAt,
+		priorityPtrString(wk.ClaimedPriority), wk.ClaimedFirstSeenAt, wk.ClaimedNotBefore,
 		sourceStrings(wk.PendingSourceSet), reasonStrings(wk.PendingReasonSet),
 		priorityPtrString(wk.PendingPriority), wk.PendingFirstSeenAt, wk.PendingNotBefore,
 		wk.LastSeenAt, wk.AttemptCount, wk.ConsecutiveFailures,
@@ -130,7 +163,6 @@ func newWorkFromSignal(sig state.DirtySignal, active bool) state.DirtyScopeWork 
 func applyMerge(wk state.DirtyScopeWork, sig state.DirtySignal, active bool) (state.DirtyScopeWork, error) {
 	switch wk.WorkState {
 	case state.WorkVerified:
-		// New epoch: rebuild the pending bucket (no inheritance).
 		p := sig.Priority
 		seen := sig.SeenAt
 		wk.PendingSourceSet = []state.TriggerSource{sig.Source}
@@ -157,16 +189,11 @@ func applyMerge(wk state.DirtyScopeWork, sig state.DirtySignal, active bool) (st
 		wk.PendingReasonSet = reasons
 		wk.PendingPriority = mergedPriority(wk.PendingPriority, sig.Priority)
 		wk.PendingFirstSeenAt = state.MinTimePtr(wk.PendingFirstSeenAt, &sig.SeenAt)
-		if wk.WorkState == state.WorkPending {
-			// PENDING may become eligible sooner (min_nonnull).
-			wk.PendingNotBefore = state.MinTimePtr(wk.PendingNotBefore, sig.NotBefore)
-		} else {
-			// IN_FLIGHT: first post-claim signal initializes; later ones min-merge.
-			wk.PendingNotBefore = state.MinTimePtr(wk.PendingNotBefore, sig.NotBefore)
-		}
+		// PENDING and IN_FLIGHT: min_nonnull (IN_FLIGHT's first post-claim signal
+		// initializes it; later ones may become eligible sooner).
+		wk.PendingNotBefore = state.MinTimePtr(wk.PendingNotBefore, sig.NotBefore)
 
 	case state.WorkRetryWait, state.WorkBlocked, state.WorkSuspended:
-		// Merge provenance; eligibility and state unchanged.
 		srcs, err := state.UnionTriggerSources(wk.PendingSourceSet, []state.TriggerSource{sig.Source})
 		if err != nil {
 			return wk, err
@@ -179,7 +206,7 @@ func applyMerge(wk state.DirtyScopeWork, sig state.DirtySignal, active bool) (st
 		wk.PendingReasonSet = reasons
 		wk.PendingPriority = mergedPriority(wk.PendingPriority, sig.Priority)
 		wk.PendingFirstSeenAt = state.MinTimePtr(wk.PendingFirstSeenAt, &sig.SeenAt)
-		// pending_not_before deliberately unchanged.
+		// pending_not_before deliberately unchanged (never cancel/extend backoff).
 
 	default:
 		return wk, fmt.Errorf("merge: unsupported work state %q", wk.WorkState)
@@ -213,8 +240,9 @@ func mergeSignalTx(ctx context.Context, tx pgx.Tx, sig state.DirtySignal, active
 	return writeWork(ctx, tx, merged)
 }
 
-// MergeSignal merges exactly one trigger into the DirtyScopeWork row, applying
-// the frozen P2 rules. Concurrent merges are serialized by the row lock.
+// MergeSignal merges exactly one trigger into the DirtyScopeWork row. The
+// transaction locks Root -> Watch -> Work so it cannot deadlock against claim /
+// completion, and root lifecycle is read under the root lock (no TOCTOU).
 func (s *Store) MergeSignal(ctx context.Context, sig state.DirtySignal) (state.DirtyScopeWork, error) {
 	if err := state.ValidateScopeKey(sig.ScopeKey); err != nil {
 		return state.DirtyScopeWork{}, err
@@ -228,10 +256,6 @@ func (s *Store) MergeSignal(ctx context.Context, sig state.DirtySignal) (state.D
 	if err := state.ValidatePriority(sig.Priority); err != nil {
 		return state.DirtyScopeWork{}, err
 	}
-	active, err := rootIsActive(ctx, s.pool, sig.RootID)
-	if err != nil {
-		return state.DirtyScopeWork{}, err
-	}
 
 	const maxAttempts = 5
 	var lastErr error
@@ -240,7 +264,16 @@ func (s *Store) MergeSignal(ctx context.Context, sig state.DirtySignal) (state.D
 		if err != nil {
 			return state.DirtyScopeWork{}, err
 		}
-		out, err := mergeSignalTx(ctx, tx, sig, active)
+		lifecycle, err := lockRootForUpdate(ctx, tx, sig.RootID)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return state.DirtyScopeWork{}, err
+		}
+		if _, _, err := lockWatchForUpdate(ctx, tx, sig.RootID, sig.ScopeKey); err != nil {
+			_ = tx.Rollback(ctx)
+			return state.DirtyScopeWork{}, err
+		}
+		out, err := mergeSignalTx(ctx, tx, sig, activeFromLifecycle(lifecycle))
 		if err != nil {
 			_ = tx.Rollback(ctx)
 			if errors.Is(err, errRetryMerge) {
@@ -259,6 +292,7 @@ func (s *Store) MergeSignal(ctx context.Context, sig state.DirtySignal) (state.D
 
 // EmitDuePoll atomically re-checks a due watch, merges exactly one
 // POLL_SCHEDULE/POSSIBLE_CHANGE signal, and advances the watch schedule.
+// Lock order: Root -> Watch -> Work.
 func (s *Store) EmitDuePoll(ctx context.Context, rootID, scopeKey string, expectedWatchVersion int64, now time.Time) (state.DirtyScopeWork, error) {
 	if err := state.ValidateScopeKey(scopeKey); err != nil {
 		return state.DirtyScopeWork{}, err
@@ -269,16 +303,17 @@ func (s *Store) EmitDuePoll(ctx context.Context, rootID, scopeKey string, expect
 	}
 	defer tx.Rollback(ctx)
 
+	lifecycle, err := lockRootForUpdate(ctx, tx, rootID)
+	if err != nil {
+		return state.DirtyScopeWork{}, err
+	}
+	if !activeFromLifecycle(lifecycle) {
+		return state.DirtyScopeWork{}, fmt.Errorf("emit due poll: root %s is not ACTIVE", rootID)
+	}
+
 	w, err := getWatchForUpdate(ctx, tx, rootID, scopeKey, expectedWatchVersion)
 	if err != nil {
 		return state.DirtyScopeWork{}, err
-	}
-	active, err := rootIsActive(ctx, tx, rootID)
-	if err != nil {
-		return state.DirtyScopeWork{}, err
-	}
-	if !active {
-		return state.DirtyScopeWork{}, fmt.Errorf("emit due poll: root %s is not ACTIVE", rootID)
 	}
 	if !w.WatchState.Scheduled() {
 		return state.DirtyScopeWork{}, fmt.Errorf("emit due poll: watch %s/%s is %s (not scheduled)", rootID, scopeKey, w.WatchState)
@@ -295,9 +330,16 @@ func (s *Store) EmitDuePoll(ctx context.Context, rootID, scopeKey string, expect
 		Source: state.SourcePollSchedule, Reason: state.ReasonPossibleChange,
 		Priority: w.Priority, SeenAt: now,
 	}
-	wk, err := mergeSignalTx(ctx, tx, sig, active)
+	wk, err := mergeSignalTx(ctx, tx, sig, true)
 	if err != nil {
 		return state.DirtyScopeWork{}, err
+	}
+
+	// Test seam: prove that a failure here rolls the work merge back too.
+	if emitDuePollAfterMergeHook != nil {
+		if err := emitDuePollAfterMergeHook(); err != nil {
+			return state.DirtyScopeWork{}, err
+		}
 	}
 
 	interval := time.Duration(*w.EffectiveIntervalSeconds) * time.Second
@@ -380,6 +422,7 @@ func watchRecordFailure(ctx context.Context, tx pgx.Tx, rootID, scopeKey string,
 }
 
 // ClaimWork snapshots the pending bucket into claimed_* atomically.
+// Lock order: Root -> Watch -> Work.
 func (s *Store) ClaimWork(ctx context.Context, rootID, scopeKey string, now time.Time) (state.DirtyScopeWork, error) {
 	if err := state.ValidateScopeKey(scopeKey); err != nil {
 		return state.DirtyScopeWork{}, err
@@ -390,6 +433,14 @@ func (s *Store) ClaimWork(ctx context.Context, rootID, scopeKey string, now time
 	}
 	defer tx.Rollback(ctx)
 
+	lifecycle, err := lockRootForUpdate(ctx, tx, rootID)
+	if err != nil {
+		return state.DirtyScopeWork{}, err
+	}
+	if _, _, err := lockWatchForUpdate(ctx, tx, rootID, scopeKey); err != nil {
+		return state.DirtyScopeWork{}, err
+	}
+
 	wk, found, err := loadWorkForUpdate(ctx, tx, rootID, scopeKey)
 	if err != nil {
 		return state.DirtyScopeWork{}, err
@@ -397,16 +448,12 @@ func (s *Store) ClaimWork(ctx context.Context, rootID, scopeKey string, now time
 	if !found {
 		return state.DirtyScopeWork{}, ErrNotFound
 	}
-	active, err := rootIsActive(ctx, tx, rootID)
-	if err != nil {
-		return state.DirtyScopeWork{}, err
-	}
 
-	if !active {
+	if !activeFromLifecycle(lifecycle) {
 		if wk.WorkState == state.WorkPending {
-			// Preserve the work by suspending it; fail closed.
+			// Preserve the work by suspending it, keeping pending_not_before so a
+			// later resume does not run a not-yet-eligible item early.
 			wk.WorkState = state.WorkSuspended
-			wk.PendingNotBefore = nil
 			out, werr := writeWork(ctx, tx, wk)
 			if werr != nil {
 				return state.DirtyScopeWork{}, werr
@@ -428,14 +475,13 @@ func (s *Store) ClaimWork(ctx context.Context, rootID, scopeKey string, now time
 		return state.DirtyScopeWork{}, fmt.Errorf("claim: work %s/%s has an empty pending bucket", rootID, scopeKey)
 	}
 
-	// Snapshot pending -> claimed.
 	seq := wk.SignalSeq
 	wk.ClaimedSignalSeq = &seq
 	wk.ClaimedSourceSet = wk.PendingSourceSet
 	wk.ClaimedReasonSet = wk.PendingReasonSet
 	wk.ClaimedPriority = wk.PendingPriority
 	wk.ClaimedFirstSeenAt = wk.PendingFirstSeenAt
-	// Clear pending.
+	wk.ClaimedNotBefore = wk.PendingNotBefore
 	wk.PendingSourceSet = nil
 	wk.PendingReasonSet = nil
 	wk.PendingPriority = nil
@@ -461,13 +507,20 @@ func (s *Store) ClaimWork(ctx context.Context, rootID, scopeKey string, now time
 	return out, nil
 }
 
-// CompleteSuccess records a successful claimed prefix. A stale claim writes nothing.
+// CompleteSuccess records a successful claimed prefix. Lock order: Root -> Watch -> Work.
 func (s *Store) CompleteSuccess(ctx context.Context, rootID, scopeKey string, claimedSignalSeq int64, now time.Time) (state.DirtyScopeWork, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return state.DirtyScopeWork{}, err
 	}
 	defer tx.Rollback(ctx)
+
+	if _, err := lockRootForUpdate(ctx, tx, rootID); err != nil {
+		return state.DirtyScopeWork{}, err
+	}
+	if _, _, err := lockWatchForUpdate(ctx, tx, rootID, scopeKey); err != nil {
+		return state.DirtyScopeWork{}, err
+	}
 
 	wk, found, err := loadWorkForUpdate(ctx, tx, rootID, scopeKey)
 	if err != nil {
@@ -481,7 +534,6 @@ func (s *Store) CompleteSuccess(ctx context.Context, rootID, scopeKey string, cl
 	}
 	claimedSources := wk.ClaimedSourceSet
 
-	// Success bookkeeping (identical in both branches).
 	wk.LastAttemptFinishedAt = &now
 	wk.LastVerifiedAt = &now
 	v := claimedSignalSeq
@@ -490,7 +542,7 @@ func (s *Store) CompleteSuccess(ctx context.Context, rootID, scopeKey string, cl
 	wk.LastErrorClass = nil
 
 	if len(wk.PendingSourceSet) > 0 {
-		wk.WorkState = state.WorkPending // keep only post-claim pending
+		wk.WorkState = state.WorkPending
 	} else {
 		wk.WorkState = state.WorkVerified
 	}
@@ -512,14 +564,20 @@ func (s *Store) CompleteSuccess(ctx context.Context, rootID, scopeKey string, cl
 	return out, nil
 }
 
-// CompleteFailure applies the frozen failure mapping, re-coalescing provenance.
+// CompleteFailure applies the frozen failure mapping. Lock order: Root -> Watch -> Work.
 func (s *Store) CompleteFailure(ctx context.Context, rootID, scopeKey string, claimedSignalSeq int64, class state.ErrorClass, retryNotBefore *time.Time, now time.Time) (state.DirtyScopeWork, error) {
 	if err := state.ValidateErrorClass(class); err != nil {
 		return state.DirtyScopeWork{}, err
 	}
 	target := class.TargetWorkState()
-	if target == state.WorkRetryWait && retryNotBefore == nil {
-		return state.DirtyScopeWork{}, fmt.Errorf("complete failure: RETRY_WAIT requires a retry eligibility")
+	if target == state.WorkRetryWait {
+		if retryNotBefore == nil {
+			return state.DirtyScopeWork{}, fmt.Errorf("complete failure: RETRY_WAIT requires a retry eligibility")
+		}
+		// No tight retry: an immediate (or past) eligibility is rejected.
+		if !retryNotBefore.After(now) {
+			return state.DirtyScopeWork{}, fmt.Errorf("complete failure: retry eligibility %s must be after now %s", retryNotBefore, now)
+		}
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -527,6 +585,13 @@ func (s *Store) CompleteFailure(ctx context.Context, rootID, scopeKey string, cl
 		return state.DirtyScopeWork{}, err
 	}
 	defer tx.Rollback(ctx)
+
+	if _, err := lockRootForUpdate(ctx, tx, rootID); err != nil {
+		return state.DirtyScopeWork{}, err
+	}
+	if _, _, err := lockWatchForUpdate(ctx, tx, rootID, scopeKey); err != nil {
+		return state.DirtyScopeWork{}, err
+	}
 
 	wk, found, err := loadWorkForUpdate(ctx, tx, rootID, scopeKey)
 	if err != nil {
@@ -540,7 +605,6 @@ func (s *Store) CompleteFailure(ctx context.Context, rootID, scopeKey string, cl
 	}
 	claimedSources := wk.ClaimedSourceSet
 
-	// Re-coalesce claimed_* + post-claim pending_*, preserving the oldest age.
 	srcs, err := state.UnionTriggerSources(wk.ClaimedSourceSet, wk.PendingSourceSet)
 	if err != nil {
 		return state.DirtyScopeWork{}, err
@@ -599,4 +663,5 @@ func releaseClaim(wk *state.DirtyScopeWork) {
 	wk.ClaimedReasonSet = nil
 	wk.ClaimedPriority = nil
 	wk.ClaimedFirstSeenAt = nil
+	wk.ClaimedNotBefore = nil
 }

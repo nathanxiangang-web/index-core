@@ -26,7 +26,9 @@ CREATE TABLE index_scope_watch_state (
     next_due_at                timestamptz NULL,
 
     consecutive_failures       bigint NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
-    last_error_class           text NULL,
+    last_error_class           text NULL CHECK (last_error_class IS NULL OR last_error_class IN
+        ('TRANSIENT_PROVIDER','THROTTLED','AUTH_OR_PERMISSION','SCOPE_TOO_LARGE',
+         'INVALID_SCOPE','ROOT_INACTIVE','CONFIG_INVALID','INTERNAL')),
     deferred_until             timestamptz NULL,
 
     created_at                 timestamptz NOT NULL DEFAULT now(),
@@ -86,6 +88,7 @@ CREATE TABLE index_dirty_scope_work (
     claimed_reason_set         text[] NULL,
     claimed_priority           text NULL CHECK (claimed_priority IS NULL OR claimed_priority IN ('URGENT','HIGH','NORMAL','LOW')),
     claimed_first_seen_at      timestamptz NULL,
+    claimed_not_before         timestamptz NULL,
 
     pending_source_set         text[] NOT NULL DEFAULT '{}'::text[],
     pending_reason_set         text[] NOT NULL DEFAULT '{}'::text[],
@@ -98,7 +101,9 @@ CREATE TABLE index_dirty_scope_work (
     consecutive_failures       bigint NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
     last_attempt_started_at    timestamptz NULL,
     last_attempt_finished_at   timestamptz NULL,
-    last_error_class           text NULL,
+    last_error_class           text NULL CHECK (last_error_class IS NULL OR last_error_class IN
+        ('TRANSIENT_PROVIDER','THROTTLED','AUTH_OR_PERMISSION','SCOPE_TOO_LARGE',
+         'INVALID_SCOPE','ROOT_INACTIVE','CONFIG_INVALID','INTERNAL')),
     last_verified_at           timestamptz NULL,
     last_verified_signal_seq   bigint NULL,
 
@@ -134,7 +139,7 @@ CREATE TABLE index_dirty_scope_work (
         (work_state = 'IN_FLIGHT'
             AND claimed_signal_seq IS NOT NULL
             AND claimed_source_set IS NOT NULL AND cardinality(claimed_source_set) > 0
-            AND claimed_reason_set IS NOT NULL
+            AND claimed_reason_set IS NOT NULL AND cardinality(claimed_reason_set) > 0
             AND claimed_priority IS NOT NULL
             AND claimed_first_seen_at IS NOT NULL)
         OR
@@ -142,6 +147,7 @@ CREATE TABLE index_dirty_scope_work (
             AND claimed_signal_seq IS NULL
             AND claimed_source_set IS NULL
             AND claimed_reason_set IS NULL
+            AND claimed_not_before IS NULL
             AND claimed_priority IS NULL
             AND claimed_first_seen_at IS NULL)
     ),
@@ -157,6 +163,11 @@ CREATE TABLE index_dirty_scope_work (
     -- P2 bucket invariant: non-empty pending bucket => timestamped.
     CONSTRAINT c_dsw_pending_timestamped CHECK (
         cardinality(pending_source_set) = 0 OR pending_first_seen_at IS NOT NULL
+    ),
+    -- A non-empty pending bucket must be complete (no source-only half state).
+    CONSTRAINT c_dsw_pending_complete CHECK (
+        cardinality(pending_source_set) = 0
+        OR (cardinality(pending_reason_set) > 0 AND pending_priority IS NOT NULL)
     ),
     -- P2 bucket invariant: state-specific pending shape.
     CONSTRAINT c_dsw_state_shape CHECK (
