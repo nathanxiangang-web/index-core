@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,17 +21,13 @@ import (
 	"github.com/nathanxiangang-web/index-core/testutil"
 )
 
-// Gated live P0 probes (Issue #62 + Architect live-evidence rework).
+// Gated live P0 probes (Issue #62 + Architect live-evidence rework, Round 5).
 //
-// Two phases over the SAME root / SAME database (Phase B must NOT ResetSchema),
-// so that scoped refresh is proven to be an INCREMENT on an already-populated
-// Canonical Inventory, not a first-time load.
-//
-// Phase A (baseline):  ResetSchema -> full Service.Scan() -> record resource_ids.
-//   [operator, out-of-band via the 115 official channel] uploads a NEW file
-//   T0 refresh=false = old set; T2 refresh=false = still old set (stale gate)
-// Phase B (increment): no reset -> ScanScope("/") -> Q3/Q4/Q6 -> old resource_ids
-//   unchanged, no removal evidence, T3->T5 and T3->T6, /api/fs/list latency+bytes.
+// Phase B routes IndexCore through a TEST-ONLY transparent proxy in front of the
+// real OpenList, so the metrics captured are for the ONE canonical
+// `POST /api/fs/list refresh=true` observation that ScanScope actually issues —
+// not for an extra probe request. The proxy also proves that exactly one
+// canonical refresh=true call happens per scope attempt.
 //
 // Opt-in:
 //
@@ -71,7 +69,7 @@ func liveStore(t *testing.T, reset bool) *postgres.Store {
 	return postgres.New(pool)
 }
 
-func liveConfigureRoot(t *testing.T, st *postgres.Store, base string, create bool) {
+func liveConfigureRoot(t *testing.T, st *postgres.Store, baseURL string, create bool) {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := st.GetRoot(ctx, st.Pool(), liveRootID); err != nil {
@@ -89,7 +87,7 @@ func liveConfigureRoot(t *testing.T, st *postgres.Store, base string, create boo
 		t.Fatalf("policy: %v", err)
 	}
 	acfg, _ := json.Marshal(map[string]string{
-		"base_url": base, "path": "/",
+		"base_url": baseURL, "path": "/",
 		"username_env": "P0_LIVE_USER", "password_env": "P0_LIVE_PASS",
 	})
 	if err := st.UpsertAdapterConfig(ctx, liveRootID, postgres.AdapterConfig{CollectorKind: "openlist", Config: acfg}); err != nil {
@@ -99,8 +97,7 @@ func liveConfigureRoot(t *testing.T, st *postgres.Store, base string, create boo
 
 func livePresent(t *testing.T, qr query.Reader) map[string]string {
 	t.Helper()
-	ctx := context.Background()
-	page, err := qr.ListActivePage(ctx, liveRootID, nil, 1000)
+	page, err := qr.ListActivePage(context.Background(), liveRootID, nil, 1000)
 	if err != nil {
 		t.Fatalf("Q6 list active: %v", err)
 	}
@@ -113,55 +110,92 @@ func livePresent(t *testing.T, qr query.Reader) map[string]string {
 	return out
 }
 
-// liveListProbe logs in and issues one /api/fs/list observation, returning the
-// HTTP latency and exact response body size (Round-2 evidence requirement).
-func liveListProbe(t *testing.T, base, user, pass, path string, refresh bool) (time.Duration, int, int) {
+// listProxy is a test-only transparent reverse proxy that records the /api/fs/list
+// observations passing through it (status, latency, response bytes, total, refresh).
+type listProxy struct {
+	target *url.URL
+	mu     sync.Mutex
+	calls  []proxyCall
+}
+
+type proxyCall struct {
+	refresh bool
+	status  int
+	latency time.Duration
+	bytes   int
+	total   int
+}
+
+func newListProxy(t *testing.T, target string) (*listProxy, *httptest.Server) {
 	t.Helper()
-	loginBody, _ := json.Marshal(map[string]string{"username": user, "password": pass})
-	loginResp, err := http.Post(base+"/api/auth/login", "application/json", bytes.NewReader(loginBody))
+	u, err := url.Parse(target)
 	if err != nil {
-		t.Fatalf("login: %v", err)
+		t.Fatalf("parse target: %v", err)
 	}
-	lb, _ := io.ReadAll(loginResp.Body)
-	loginResp.Body.Close()
-	var login struct {
-		Code int `json:"code"`
-		Data struct {
-			Token string `json:"token"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(lb, &login); err != nil || login.Data.Token == "" {
-		t.Fatalf("login failed: %s", string(lb))
-	}
+	p := &listProxy{target: u}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		req, err := http.NewRequestWithContext(r.Context(), r.Method, p.target.String()+r.URL.Path, bytes.NewReader(body))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		req.Header = r.Header.Clone()
+		start := time.Now()
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		rb, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		latency := time.Since(start)
 
-	body, _ := json.Marshal(map[string]any{
-		"path": path, "password": "", "page": 1, "per_page": 100, "refresh": refresh,
-	})
-	req, _ := http.NewRequest(http.MethodPost, base+"/api/fs/list", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", login.Data.Token)
-	start := time.Now()
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("fs/list: %v", err)
-	}
-	rb, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	latency := time.Since(start)
+		if r.URL.Path == "/api/fs/list" {
+			var q struct {
+				Refresh bool `json:"refresh"`
+			}
+			_ = json.Unmarshal(body, &q)
+			var rr struct {
+				Data struct {
+					Total int `json:"total"`
+				} `json:"data"`
+			}
+			_ = json.Unmarshal(rb, &rr)
+			p.mu.Lock()
+			p.calls = append(p.calls, proxyCall{
+				refresh: q.Refresh, status: resp.StatusCode, latency: latency,
+				bytes: len(rb), total: rr.Data.Total,
+			})
+			p.mu.Unlock()
+		}
 
-	var parsed struct {
-		Code int `json:"code"`
-		Data struct {
-			Total int `json:"total"`
-		} `json:"data"`
+		for k, vs := range resp.Header {
+			for _, v := range vs {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(rb)
+	}))
+	return p, srv
+}
+
+func (p *listProxy) refreshCalls() []proxyCall {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []proxyCall
+	for _, c := range p.calls {
+		if c.refresh {
+			out = append(out, c)
+		}
 	}
-	_ = json.Unmarshal(rb, &parsed)
-	return latency, len(rb), parsed.Data.Total
+	return out
 }
 
 // TestLiveP0PhaseABaseline establishes the Canonical Inventory baseline via a
-// full Service.Scan() (NOT scoped), recording each resource_id. Run this BEFORE
-// the out-of-band upload.
+// full Service.Scan() (NOT scoped), recording each resource_id. Run BEFORE the
+// out-of-band upload.
 func TestLiveP0PhaseABaseline(t *testing.T) {
 	base, _, _, _, _ := liveEnv(t)
 	ctx := context.Background()
@@ -180,18 +214,20 @@ func TestLiveP0PhaseABaseline(t *testing.T) {
 	for path, id := range livePresent(t, qr) {
 		t.Logf("BASELINE RESOURCE %s -> %s", path, id)
 	}
-	t.Logf("PHASE A done: Canonical Inventory baseline established (run out-of-band upload, then TestLiveP0PhaseB)")
+	t.Logf("PHASE A done: baseline established (run out-of-band upload, then TestLiveP0PhaseB)")
 }
 
-// TestLiveP0PhaseBScopedIncrement proves the scoped refresh is an increment:
-// it must NOT ResetSchema, must see the baseline resource_ids unchanged, must
-// add exactly the out-of-band file, must produce no removal evidence, and must
-// report T3->T5, T3->T6 and the /api/fs/list latency/bytes.
+// TestLiveP0PhaseBScopedIncrement proves the scoped refresh is an increment, via
+// a transparent proxy that captures the single canonical refresh=true observation.
 func TestLiveP0PhaseBScopedIncrement(t *testing.T) {
-	base, user, pass, scope, expect := liveEnv(t)
+	base, _, _, scope, expect := liveEnv(t)
 	ctx := context.Background()
 	st := liveStore(t, false)
-	liveConfigureRoot(t, st, base, false)
+
+	// Route IndexCore through the recording proxy (test-only instrumentation).
+	proxy, srv := newListProxy(t, base)
+	defer srv.Close()
+	liveConfigureRoot(t, st, srv.URL, false)
 
 	qr := postgres.NewQueryReader(st.Pool())
 	before := livePresent(t, qr)
@@ -202,7 +238,7 @@ func TestLiveP0PhaseBScopedIncrement(t *testing.T) {
 
 	svc := scan.New(st, "", "", 30*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	// T3 -> T5: one canonical scoped refresh observation.
+	// T3 -> T5: one canonical scoped refresh observation (through the proxy).
 	t3 := time.Now()
 	res, err := svc.ScanScope(ctx, liveRootID, scope, 100)
 	t5 := time.Now()
@@ -211,7 +247,6 @@ func TestLiveP0PhaseBScopedIncrement(t *testing.T) {
 	}
 
 	// T6: Q3 (get by id) + real Q4 (list children) + Q6 (active page) + Q7 (removed).
-	t6a := time.Now()
 	children, err := qr.ListResources(ctx, liveRootID, nil, query.ReadOptions{}, nil, 1000)
 	if err != nil {
 		t.Fatalf("Q4 list resources: %v", err)
@@ -229,15 +264,15 @@ func TestLiveP0PhaseBScopedIncrement(t *testing.T) {
 	}
 	t6 := time.Now()
 
-	// Report observed sets + metrics FIRST, so diagnostics print even if an
-	// invariant below fails.
 	var added []string
 	for path := range after {
 		if _, ok := before[path]; !ok {
 			added = append(added, path)
 		}
 	}
-	latency, bytesN, total := liveListProbe(t, base, user, pass, scope, true)
+
+	// Metrics + observed sets first.
+	canonical := proxy.refreshCalls()
 	t.Logf("PHASE B: outcome=%+v", res.Outcome)
 	t.Logf("PHASE B: before=%d after=%d, Q4 children=%d, Q3 resolved=%d/%d",
 		len(before), len(after), len(children.Items), q3ok, len(after))
@@ -245,12 +280,22 @@ func TestLiveP0PhaseBScopedIncrement(t *testing.T) {
 		t.Logf("PHASE B after resource %s -> %s", p, id)
 	}
 	t.Logf("PHASE B: added=%v", added)
+	t.Logf("METRIC canonical refresh=true count = %d", len(canonical))
+	if len(canonical) == 1 {
+		c := canonical[0]
+		t.Logf("METRIC canonical /api/fs/list refresh=true: status=%d latency=%d ms response_bytes=%d total=%d",
+			c.status, c.latency.Milliseconds(), c.bytes, c.total)
+	}
 	t.Logf("METRIC T3->T5 = %d ms", t5.Sub(t3).Milliseconds())
-	t.Logf("METRIC T3->T6 = %d ms (includes Q3/Q4/Q6/Q7)", t6.Sub(t6a).Milliseconds()+t5.Sub(t3).Milliseconds())
-	t.Logf("METRIC /api/fs/list refresh=true: HTTP latency=%d ms, response_bytes=%d, total=%d",
-		latency.Milliseconds(), bytesN, total)
+	t.Logf("METRIC T3->T6 = %d ms (exact window, includes Q3/Q4/Q6/Q7)", t6.Sub(t3).Milliseconds())
 
 	// Invariants.
+	if len(canonical) != 1 {
+		t.Fatalf("exactly one canonical refresh=true observation required, got %d", len(canonical))
+	}
+	if canonical[0].status != http.StatusOK {
+		t.Fatalf("canonical refresh status = %d, want 200", canonical[0].status)
+	}
 	for path, id := range before {
 		got, ok := after[path]
 		if !ok {
@@ -266,6 +311,23 @@ func TestLiveP0PhaseBScopedIncrement(t *testing.T) {
 	if expect != "" && added[0] != expect {
 		t.Fatalf("expected newly added %q, got %q", expect, added[0])
 	}
+	// Q4 must expose the new resource, with the SAME id as Q3 and Q6.
+	var q4ID string
+	for _, it := range children.Items {
+		if it.CanonicalPath != nil && *it.CanonicalPath == added[0] {
+			q4ID = it.ResourceID
+		}
+	}
+	q6ID := after[added[0]]
+	if q4ID == "" {
+		t.Fatalf("Q4 must expose the newly added resource %q", added[0])
+	}
+	if q4ID != q6ID {
+		t.Fatalf("Q4/Q6 disagree on %q id: %s vs %s", added[0], q4ID, q6ID)
+	}
+	if q3, _ := qr.GetResource(ctx, q4ID, query.ReadOptions{}); q3 == nil || q3.ResourceID != q4ID {
+		t.Fatalf("Q3 must resolve the same resource id %s", q4ID)
+	}
 	if len(removed.Items) != 0 {
 		t.Fatalf("scoped refresh must produce no removal, got %d", len(removed.Items))
 	}
@@ -280,4 +342,5 @@ func TestLiveP0PhaseBScopedIncrement(t *testing.T) {
 	if badEvidence != 0 {
 		t.Fatalf("scoped refresh must not create removal evidence, %d PRESENT rows carry it", badEvidence)
 	}
+	t.Logf("PHASE B PASS: Q3/Q4/Q6 agree on %q id=%s; canonical refresh count=1", added[0], q4ID)
 }

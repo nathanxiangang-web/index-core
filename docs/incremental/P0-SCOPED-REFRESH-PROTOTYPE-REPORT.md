@@ -114,13 +114,14 @@ Environment: Go 1.27.1, real PostgreSQL 18 (`indexcore-pg`, port 55432).
 No rclone/AList live dependency was added to the new tests — the AList mock is a
 deterministic in-process HTTP server.
 
-## 4. Not done (blocks P0 acceptance)
+## 4. Live 115 Open validation
 
-- **Live 115/OpenList validation is NOT executed.** The Worker has no disposable /
-  non-production 115 account with the official `115 Open` driver. See
-  `docs/incremental/P0-SCOPED-REFRESH-LIVE-TEST-RUNBOOK.md`.
-- Until that run proves earlier visibility than the stale cache, **P0 is NOT PASS**
-  and production incremental implementation remains unauthorized.
+- **EXECUTED** on a self-hosted, non-production OpenList whose storage uses the community
+  **`115 Open`** driver (official 115 Open API). Results:
+  `docs/incremental/P0-SCOPED-REFRESH-LIVE-RESULT.md` (T0–T6; decisive stale-cache gate passed;
+  increment 7→8; canonical `refresh=true` count = 1 captured via a test-only transparent proxy).
+- Final P0 acceptance and any merge remain **reserved for the Architect**; production incremental
+  implementation is **not authorized**.
 
 ## 5. Frozen-contract statement
 

@@ -83,38 +83,21 @@ Do not, during this live test:
 - expose the service credential to a browser or public API;
 - treat the private `115 Cloud` driver as acceptance evidence.
 
-## 6. Current Worker status
-
-The Worker environment has a real AList/OpenList container but **no disposable 115
-account / no non-production 115 Open driver configuration**. Therefore:
+## 6. Execution status
 
 - deterministic Collector tests: **DONE**;
 - real-PostgreSQL reconcile-safety tests: **DONE**;
 - full regression: **DONE**;
-- **live 115/OpenList validation: NOT EXECUTED → P0 NOT PASS.**
+- **live 115/OpenList validation: EXECUTED** — see
+  `docs/incremental/P0-SCOPED-REFRESH-LIVE-RESULT.md` (T0–T6 observed; decisive stale-cache
+  gate passed; exactly one canonical `refresh=true` observation per scope attempt).
+## 7. Historical environment probe — 2026-09-24 (superseded)
 
-P0 acceptance remains gated on this runbook being executed and the evidence
-recorded above.
-## 7. Environment probe — 2026-09-24 (Worker)
+An earlier candidate endpoint (`https://pan.netioi.com`) reported
+**`provider: "115 Cloud"`** — the legacy/private driver — and was therefore **rejected** as an
+acceptance environment (Architect ruling: only the official `115 Open` driver counts). It was
+**not** used as acceptance evidence.
 
-The Architect supplied a candidate OpenList endpoint for live validation. The
-Worker performed a **read-only** probe (login + `fs/list` only — no mutation):
-
-- endpoint `https://pan.netioi.com` is an AList/OpenList instance;
-- login succeeded with a **restricted, non-admin** service identity;
-- the identity's visible root is `/` (base path restricted to the 115 mount);
-- the root listing reports **`provider: "115 Cloud"`** — i.e. the legacy/private
-  driver, **not** the official `115 Open` driver;
-- root directory has 5 direct children; this identity has `write=true`.
-
-**Result: this endpoint does NOT satisfy the P0 acceptance precondition.**
-Issue #62 and section 2 above require the **official `115 Open` driver**; using
-the legacy/private `115 Cloud` driver as the acceptance path is explicitly
-forbidden.
-
-Therefore live validation is **still NOT EXECUTED**, and **P0 remains NOT PASS**.
-A live environment whose OpenList storage uses the community `115 Open` driver
-(official 115 Open API) is required.
-
-The probe performed no create / modify / delete; it only logged in and listed a
-directory.
+The live validation was subsequently executed on a self-hosted non-production OpenList whose
+storage uses the community **`115 Open`** driver; see
+`docs/incremental/P0-SCOPED-REFRESH-LIVE-RESULT.md`.
