@@ -65,6 +65,13 @@ func fileEntry(name string, size int64, sha1 string) map[string]any {
 	}
 }
 
+func dirEntry(name string) map[string]any {
+	return map[string]any{
+		"name": name, "size": 0, "is_dir": true,
+		"modified": "2026-01-02T03:04:05Z",
+	}
+}
+
 func activePaths(t *testing.T, qr query.Reader, rootID string) map[string]bool {
 	t.Helper()
 	page, err := qr.ListActivePage(context.Background(), rootID, nil, 1000)
@@ -109,17 +116,83 @@ func setupScopedRoot(t *testing.T) (*postgres.Store, *alistScopeMock, string) {
 	return st, mock, rootID
 }
 
+// assertRemovalEvidenceClean asserts a PRESENT path carries no removal evidence:
+// state NONE, no missing_since, zero consecutive-missing counter.
+func assertRemovalEvidenceClean(t *testing.T, st *postgres.Store, rootID, path string) {
+	t.Helper()
+	var state string
+	var missingSince *time.Time
+	var consec int
+	if err := st.Pool().QueryRow(context.Background(),
+		`SELECT removal_evidence_state, missing_since, consecutive_complete_missing
+		   FROM index_canonical_resource
+		  WHERE root_id=$1::uuid AND canonical_path=$2 AND resource_presence='PRESENT'`,
+		rootID, path).Scan(&state, &missingSince, &consec); err != nil {
+		t.Fatalf("load removal evidence for %q: %v", path, err)
+	}
+	if state != "NONE" || missingSince != nil || consec != 0 {
+		t.Fatalf("path %q must have no removal evidence, got state=%s missing_since=%v consec=%d",
+			path, state, missingSince, consec)
+	}
+}
+
+func assertSnapshotScopedSemantics(t *testing.T, st *postgres.Store, snapID string) {
+	t.Helper()
+	var traversal, completeness, freshness, assurance string
+	var skipped []byte
+	var knownEmpty bool
+	if err := st.Pool().QueryRow(context.Background(),
+		`SELECT traversal_status, completeness_flag, freshness_evidence,
+		        collector_completeness_assurance, skipped_scopes, skipped_scopes_known_empty
+		   FROM index_snapshot WHERE snapshot_id=$1::uuid`, snapID).
+		Scan(&traversal, &completeness, &freshness, &assurance, &skipped, &knownEmpty); err != nil {
+		t.Fatalf("load snapshot %s: %v", snapID, err)
+	}
+	if traversal != "PARTIAL" || completeness != "PARTIAL" {
+		t.Fatalf("scoped snapshot must be PARTIAL/PARTIAL, got %s/%s", traversal, completeness)
+	}
+	if freshness != "FRESH_REFRESHED" {
+		t.Fatalf("scoped snapshot must be FRESH_REFRESHED, got %s", freshness)
+	}
+	if assurance != "WEAK_FAILURE_VISIBILITY" {
+		t.Fatalf("scoped snapshot must be WEAK_FAILURE_VISIBILITY, got %s", assurance)
+	}
+	if skipped != nil || knownEmpty {
+		t.Fatalf("scoped snapshot skip evidence must stay UNKNOWN, got %v/%v", skipped, knownEmpty)
+	}
+}
+
+func admissionSeqs(t *testing.T, st *postgres.Store, rootID string) []int64 {
+	t.Helper()
+	rows, err := st.Pool().Query(context.Background(),
+		`SELECT admission_seq FROM index_admission WHERE root_id=$1::uuid ORDER BY admission_seq`, rootID)
+	if err != nil {
+		t.Fatalf("load admissions: %v", err)
+	}
+	defer rows.Close()
+	var seqs []int64
+	for rows.Next() {
+		var s int64
+		if err := rows.Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		seqs = append(seqs, s)
+	}
+	return seqs
+}
+
 // TestScanScopeReconcileIsAdditiveSafe proves the P0 Kernel/reconcile contract on
-// real PostgreSQL: scoped observations add/update, never remove, and never touch
-// unrelated resources.
+// real PostgreSQL: scoped observations add/update, never remove, produce no
+// removal evidence, keep real parent links, and preserve same-root FIFO.
 func TestScanScopeReconcileIsAdditiveSafe(t *testing.T) {
 	st, mock, rootID := setupScopedRoot(t)
 	ctx := context.Background()
 	svc := scan.New(st, "", "", 10*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	qr := postgres.NewQueryReader(st.Pool())
 
-	// 1) baseline: only a.txt is observed and added.
-	mock.set("/", fileEntry("a.txt", 5, "aaa"))
+	// 1) baseline: a.txt + sub/ + b.txt. sub/ must become a canonical directory
+	//    (a non-root scope requires one).
+	mock.set("/", fileEntry("a.txt", 5, "aaa"), dirEntry("sub"), fileEntry("b.txt", 6, "bbb"))
 	res1, err := svc.ScanScope(ctx, rootID, "/", 100)
 	if err != nil {
 		t.Fatalf("baseline scoped scan: %v", err)
@@ -127,64 +200,95 @@ func TestScanScopeReconcileIsAdditiveSafe(t *testing.T) {
 	if res1.Outcome.Status != domain.AdmissionApplied {
 		t.Fatalf("baseline scoped observation must APPLY, got %+v", res1.Outcome)
 	}
-	if got := activePaths(t, qr, rootID); !got["/a.txt"] || len(got) != 1 {
-		t.Fatalf("expected exactly /a.txt canonical, got %v", got)
+	assertSnapshotScopedSemantics(t, st, res1.SnapshotID)
+	got := activePaths(t, qr, rootID)
+	if !got["/a.txt"] || !got["/b.txt"] || !got["/sub"] || len(got) != 3 {
+		t.Fatalf("expected /a.txt,/b.txt,/sub canonical, got %v", got)
+	}
+	subRows, err := st.PresentResourcesAtPath(ctx, st.Pool(), rootID, "/sub")
+	if err != nil || len(subRows) != 1 || subRows[0].IsDir == nil || !*subRows[0].IsDir {
+		t.Fatalf("sub must be a unique PRESENT canonical directory, got %+v (%v)", subRows, err)
 	}
 
-	// 2) a new direct child is added; unrelated a.txt is untouched.
-	mock.set("/", fileEntry("a.txt", 5, "aaa"), fileEntry("b.txt", 6, "bbb"))
+	// 2) legitimate identity continuity: same path + same hash, size changes ->
+	//    metadata update (not a new resource).
+	mock.set("/", fileEntry("a.txt", 9, "aaa"), dirEntry("sub"), fileEntry("b.txt", 6, "bbb"))
 	res2, err := svc.ScanScope(ctx, rootID, "/", 100)
 	if err != nil {
-		t.Fatalf("add scoped scan: %v", err)
+		t.Fatalf("metadata update scoped scan: %v", err)
 	}
-	if res2.Outcome.Status != domain.AdmissionApplied {
-		t.Fatalf("adding b.txt must APPLY, got %+v", res2.Outcome)
+	if res2.Outcome.Status != domain.AdmissionApplied || !res2.Outcome.Mutated {
+		t.Fatalf("size change must APPLY and mutate, got %+v", res2.Outcome)
 	}
-	if res2.Outcome.AppliedGeneration <= res1.Outcome.AppliedGeneration {
-		t.Fatalf("same-root generation must advance (FIFO), got %d then %d",
-			res1.Outcome.AppliedGeneration, res2.Outcome.AppliedGeneration)
+	var size int64
+	if err := st.Pool().QueryRow(ctx,
+		`SELECT size FROM index_canonical_resource
+		  WHERE root_id=$1::uuid AND canonical_path='/a.txt' AND resource_presence='PRESENT'`, rootID).Scan(&size); err != nil {
+		t.Fatal(err)
 	}
-	if got := activePaths(t, qr, rootID); !got["/a.txt"] || !got["/b.txt"] {
-		t.Fatalf("a.txt and b.txt must both be canonical, got %v", got)
+	if size != 9 {
+		t.Fatalf("a.txt metadata update must persist size=9, got %d", size)
+	}
+	if n := len(activePaths(t, qr, rootID)); n != 3 {
+		t.Fatalf("update must not create new resources, got %d PRESENT", n)
+	}
+	assertRemovalEvidenceClean(t, st, rootID, "/a.txt")
+
+	// Same-root FIFO: admission_seq strictly increasing 1,2,... — a larger
+	// generation alone would not prove FIFO.
+	if seqs := admissionSeqs(t, st, rootID); len(seqs) != 2 || seqs[0] != 1 || seqs[1] != 2 {
+		t.Fatalf("same-root FIFO admission_seq must be [1 2], got %v", seqs)
 	}
 
-	// Q3 (get resource by id) and Q4 (list children) see the new resource.
-	rootPage, err := qr.ListResources(ctx, rootID, nil, query.ReadOptions{}, nil, 100)
+	// 3) non-root scope /sub: its direct child is added with a real parent link.
+	mock.set("/sub", fileEntry("c.txt", 7, "ccc"))
+	res3, err := svc.ScanScope(ctx, rootID, "/sub", 100)
 	if err != nil {
-		t.Fatalf("Q4 list resources: %v", err)
+		t.Fatalf("sub-scope scoped scan: %v", err)
 	}
-	var bID string
-	for _, it := range rootPage.Items {
-		if it.CanonicalPath != nil && *it.CanonicalPath == "/b.txt" {
-			bID = it.ResourceID
-		}
+	if res3.Outcome.Status != domain.AdmissionApplied {
+		t.Fatalf("adding /sub/c.txt must APPLY, got %+v", res3.Outcome)
 	}
-	if bID == "" {
-		t.Fatalf("Q4 must expose /b.txt, got %+v", rootPage.Items)
+	if got := activePaths(t, qr, rootID); !got["/a.txt"] || !got["/b.txt"] || !got["/sub"] || !got["/sub/c.txt"] {
+		t.Fatalf("scoped refresh must add only its own child, got %v", got)
 	}
-	if res, _ := qr.GetResource(ctx, bID, query.ReadOptions{}); res == nil {
-		t.Fatal("Q3 must expose the new resource")
+	var parentID *string
+	if err := st.Pool().QueryRow(ctx,
+		`SELECT parent_resource_id::text FROM index_canonical_resource
+		  WHERE root_id=$1::uuid AND canonical_path='/sub/c.txt' AND resource_presence='PRESENT'`, rootID).Scan(&parentID); err != nil {
+		t.Fatal(err)
+	}
+	if parentID == nil || *parentID != subRows[0].ResourceID {
+		t.Fatalf("/sub/c.txt must have /sub as parent, got %v want %s", parentID, subRows[0].ResourceID)
+	}
+	if seqs := admissionSeqs(t, st, rootID); len(seqs) != 3 || seqs[2] != 3 {
+		t.Fatalf("same-root FIFO must continue 1,2,3, got %v", seqs)
 	}
 
-	// 3) an empty scoped observation must NOT remove anything.
-	mock.set("/")
-	res3, err := svc.ScanScope(ctx, rootID, "/", 100)
+	// 4) empty scoped observation removes nothing and produces no evidence.
+	mock.set("/sub")
+	res4, err := svc.ScanScope(ctx, rootID, "/sub", 100)
 	if err != nil {
 		t.Fatalf("empty scoped scan: %v", err)
 	}
-	if got := activePaths(t, qr, rootID); !got["/a.txt"] || !got["/b.txt"] {
-		t.Fatalf("empty scoped observation must remove nothing, got %v (outcome=%+v)", got, res3.Outcome)
+	if got := activePaths(t, qr, rootID); !got["/sub/c.txt"] {
+		t.Fatalf("empty scoped observation must remove nothing, got %v (%+v)", got, res4.Outcome)
 	}
+	assertRemovalEvidenceClean(t, st, rootID, "/sub/c.txt")
 
-	// 4) a previously known file missing from the response must NOT be removed.
-	mock.set("/", fileEntry("a.txt", 5, "aaa")) // b.txt absent
-	res4, err := svc.ScanScope(ctx, rootID, "/", 100)
+	// 5) a previously known file missing from the response must not be removed and
+	//    must not accrue any removal evidence.
+	mock.set("/sub") // c.txt absent this round
+	res5, err := svc.ScanScope(ctx, rootID, "/sub", 100)
 	if err != nil {
 		t.Fatalf("missing-file scoped scan: %v", err)
 	}
-	if got := activePaths(t, qr, rootID); !got["/a.txt"] || !got["/b.txt"] {
-		t.Fatalf("PARTIAL absence must not describe removal, got %v (outcome=%+v)", got, res4.Outcome)
+	if got := activePaths(t, qr, rootID); !got["/sub/c.txt"] {
+		t.Fatalf("PARTIAL absence must not describe removal, got %v (%+v)", got, res5.Outcome)
 	}
+	assertRemovalEvidenceClean(t, st, rootID, "/sub/c.txt")
+	assertRemovalEvidenceClean(t, st, rootID, "/a.txt")
+
 	removed, err := qr.ListRemovedPage(ctx, rootID, nil, 100)
 	if err != nil {
 		t.Fatalf("Q7 removed page: %v", err)
@@ -192,20 +296,34 @@ func TestScanScopeReconcileIsAdditiveSafe(t *testing.T) {
 	if len(removed.Items) != 0 {
 		t.Fatalf("PARTIAL scoped refresh must produce no removal evidence, got %d", len(removed.Items))
 	}
+}
 
-	// 5) an unrelated direct child in a separate scope does not disturb root-level
-	// resources, and is itself added as an independent positive observation.
-	mock.set("/sub", fileEntry("c.txt", 7, "ccc"))
-	res5, err := svc.ScanScope(ctx, rootID, "/sub", 100)
-	if err != nil {
-		t.Fatalf("sub-scope scoped scan: %v", err)
+// TestScanScopeFailsClosedOnBadScope proves scope containment (no "." / "..")
+// and the orphan guard (a non-root scope must be a PRESENT canonical directory).
+func TestScanScopeFailsClosedOnBadScope(t *testing.T) {
+	st, mock, rootID := setupScopedRoot(t)
+	ctx := context.Background()
+	svc := scan.New(st, "", "", 5*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	mock.set("/", fileEntry("a.txt", 5, "aaa"))
+	if _, err := svc.ScanScope(ctx, rootID, "/", 100); err != nil {
+		t.Fatalf("baseline: %v", err)
 	}
-	if res5.Outcome.Status != domain.AdmissionApplied {
-		t.Fatalf("adding sub/c.txt must APPLY, got %+v", res5.Outcome)
+
+	for _, scope := range []string{"../etc", "/a/../../etc", "..", "/sub/.."} {
+		if _, err := svc.ScanScope(ctx, rootID, scope, 100); err == nil {
+			t.Fatalf("traversal scope %q must fail closed", scope)
+		}
 	}
-	got := activePaths(t, qr, rootID)
-	if !got["/a.txt"] || !got["/b.txt"] || !got["/sub/c.txt"] {
-		t.Fatalf("scoped refresh must add only its own child and leave others intact, got %v", got)
+	// A non-root scope whose parent is not a PRESENT canonical directory must
+	// fail closed rather than create orphan resources.
+	mock.set("/ghost", fileEntry("x", 1, "x"))
+	if _, err := svc.ScanScope(ctx, rootID, "/ghost", 100); err == nil {
+		t.Fatal("scoped refresh of a non-existent canonical directory must fail closed")
+	}
+	// max_entries above the P0 hard cap fails closed.
+	if _, err := svc.ScanScope(ctx, rootID, "/", 1<<30); err == nil {
+		t.Fatal("max_entries above the P0 hard cap must fail closed")
 	}
 }
 

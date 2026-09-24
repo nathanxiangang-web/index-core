@@ -1,6 +1,6 @@
 # P0 Targeted Scoped Refresh — Prototype Delivery Report
 
-> Status: **PROTOTYPE DELIVERED — DETERMINISTIC + POSTGRESQL VERIFIED — LIVE VALIDATION PENDING**
+> Status: **PROTOTYPE DELIVERED (Round 2 corrections applied) — DETERMINISTIC + POSTGRESQL VERIFIED — LIVE VALIDATION PENDING**
 >
 > **P0 NOT PASS** (live 115/OpenList validation not yet executed)
 >
@@ -22,6 +22,7 @@ Prototype-only additions; **no existing file was modified**:
 | `internal/runtime/scan/scoped.go` | `Service.ScanScope(ctx, rootID, scope, maxEntries)` — PARTIAL Snapshot through the existing draft → admission → Kernel coordinator → reconcile path. |
 | `internal/collector/alist/scoped_test.go` | Collector-level deterministic tests. |
 | `internal/runtime/scan/scoped_test.go` | Real-PostgreSQL reconcile-safety tests. |
+| `internal/runtime/scan/scoped_path_internal_test.go` | Scope containment (`scope` cannot escape the root). |
 
 The generic `adapter.Collector` interface, `Adapter.Scan()`, `Service.Scan()`,
 the Kernel, the Query Contract, the HTTP API, the CLI, and all migrations are
@@ -57,6 +58,22 @@ SkippedScopes                  = UNKNOWN (nil, never confirmed-empty)
 Scope semantics: only direct children are observed; subdirectories are never
 traversed. `scope` is resolved relative to the root's configured adapter path.
 
+Additional P0 rules (Round 2):
+
+- a scope MUST NOT contain `.` / `..` components, and the resolved provider path
+  is guaranteed to stay inside the root (no root escape);
+- a **non-root** scope MUST already resolve to exactly one `PRESENT` canonical
+  directory, otherwise the run fails closed — a scoped observation must never
+  create orphan resources whose parent is absent from the Canonical Inventory;
+- `max_entries` is clamped by a P0 hard cap (`alist.MaxScopedEntries = 10000`); a
+  caller can never widen a scoped observation, and `maxEntries+1` cannot overflow.
+
+> **Important (Round 1 review): `max_entries` bounds only what IndexCore accepts
+> and writes — it does NOT bound the real provider cost.** OpenList loads the
+> entire provider directory with `fs.List` *before* applying HTTP pagination, so a
+> 30k direct-child directory still triggers the full provider read even when
+> IndexCore fails closed on overflow.
+
 ## 3. Verification performed
 
 | Area | Evidence | Result |
@@ -69,6 +86,12 @@ traversed. `scope` is resolved relative to the root's configured adapter path.
 | Provider list error surfaces | `TestScanScopeProviderErrorSurfaces` | PASS |
 | Empty directory = legal PARTIAL zero-entry | `TestScanScopeEmptyIsLegalPartial` | PASS |
 | Real PostgreSQL: new file adds, no removal on empty/missing, unrelated untouched, same-root generation advances, Q3/Q4/Q6/Q7 consistent | `TestScanScopeReconcileIsAdditiveSafe` | PASS |
+| Scope containment (`..` rejected; no root escape) | `TestCanonicalScopePathRejectsTraversal`, `TestScopeAPIPathContainment` | PASS |
+| Non-root scope requires exactly one PRESENT canonical directory | `TestScanScopeFailsClosedOnBadScope` | PASS |
+| P0 hard cap rejects over-sized / overflow `max_entries` (no request made) | `TestScanScopeRejectsOverHardCap` | PASS |
+| Removal evidence stays NONE / `missing_since` NULL / counter 0; persisted Snapshot is PARTIAL/PARTIAL + FRESH_REFRESHED + WEAK | `assertRemovalEvidenceClean` / `assertSnapshotScopedSemantics` | PASS |
+| Legitimate metadata update (same path + hash, size change) | `TestScanScopeReconcileIsAdditiveSafe` | PASS |
+| Same-root FIFO (`admission_seq` strictly 1,2,3…) | `admissionSeqs` | PASS |
 | Non-AList collector + DELETED root fail closed | `TestScanScopeFailsClosedForUnsupportedAndDeletedRoot` | PASS |
 | Full regression `go test -p 1 ./...` | whole repo | PASS |
 | `go vet ./...`, `gofmt` | whole repo | clean |

@@ -53,7 +53,31 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 		return Result{}, fmt.Errorf(
 			"scoped refresh is not supported for collector kind %q (P0: alist/openlist only)", acfg.CollectorKind)
 	}
-	target := scopedAPIPath(ac.Path, scope)
+	// P0 hard cap: the caller must never be able to widen a scoped observation.
+	if maxEntries < 0 || maxEntries > alist.MaxScopedEntries {
+		return Result{}, fmt.Errorf(
+			"scoped refresh max_entries must be within [0, %d], got %d", alist.MaxScopedEntries, maxEntries)
+	}
+
+	// Normalize the root-relative scope, reject "." / ".." components, and
+	// guarantee the resolved provider path stays inside the root.
+	rel, err := canonicalScopePath(scope)
+	if err != nil {
+		return Result{}, err
+	}
+	target, err := scopeAPIPath(ac.Path, rel)
+	if err != nil {
+		return Result{}, err
+	}
+	// A non-root scope MUST already be an unambiguous PRESENT canonical
+	// directory; otherwise a scoped observation would produce orphan resources
+	// whose parent does not exist in the Canonical Inventory.
+	if rel != "" {
+		if err := s.requirePresentDirectory(ctx, rootID, rel); err != nil {
+			return Result{}, err
+		}
+	}
+
 	col := alist.Adapter{
 		BaseURL:  ac.BaseURL,
 		Token:    os.Getenv(ac.TokenEnv),
@@ -153,24 +177,84 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 	return Result{SnapshotID: snapID, Outcome: out}, nil
 }
 
-// scopedAPIPath resolves a root-relative scope into an AList directory path.
-//
-//	rootPath="/loc", scope="sub"   -> "/loc/sub"
-//	rootPath="/loc", scope="/sub"  -> "/loc/sub"
-//	rootPath="/",    scope="down"  -> "/down"
-//	rootPath="/loc", scope=""      -> "/loc"
-func scopedAPIPath(rootPath, scope string) string {
-	base := strings.TrimRight(strings.TrimSpace(rootPath), "/")
-	rel := strings.Trim(strings.TrimSpace(scope), "/")
-	switch {
-	case rel == "":
-		if base == "" {
-			return "/"
-		}
-		return base
-	case base == "":
-		return "/" + rel
-	default:
-		return base + "/" + rel
+// canonicalScopePath normalizes a root-relative scope and rejects "." / ".."
+// (and empty) path components so a scope can never escape the root. It returns
+// "" for the root itself.
+func canonicalScopePath(scope string) (string, error) {
+	trimmed := strings.Trim(strings.TrimSpace(scope), "/")
+	if trimmed == "" {
+		return "", nil
 	}
+	for _, seg := range strings.Split(trimmed, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return "", fmt.Errorf(
+				"scoped path %q must not contain empty, %q or %q components", scope, ".", "..")
+		}
+	}
+	return "/" + trimmed, nil
+}
+
+// scopeAPIPath maps a normalized root-relative scope onto the root's provider
+// path and guarantees containment: the result is the root path itself or a
+// descendant of it.
+func scopeAPIPath(rootPath, rel string) (string, error) {
+	rawBase := strings.TrimSpace(rootPath)
+	for _, seg := range strings.Split(rawBase, "/") {
+		if seg == ".." {
+			return "", fmt.Errorf("root path %q must not contain %q components", rootPath, "..")
+		}
+	}
+	for _, seg := range strings.Split(strings.Trim(rel, "/"), "/") {
+		if seg == ".." {
+			return "", fmt.Errorf("scoped path %q must not contain %q components", rel, "..")
+		}
+	}
+	base := normalizeAPIPath(rawBase)
+	joined := normalizeAPIPath(base + rel)
+	if !pathWithin(base, joined) {
+		return "", fmt.Errorf("scoped path %q escapes root path %q", rel, base)
+	}
+	return joined, nil
+}
+
+// normalizeAPIPath collapses duplicate separators and drops "." segments; it
+// never resolves ".." (callers reject that first).
+func normalizeAPIPath(p string) string {
+	segs := strings.Split(strings.TrimSpace(p), "/")
+	out := make([]string, 0, len(segs))
+	for _, s := range segs {
+		if s == "" || s == "." {
+			continue
+		}
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		return "/"
+	}
+	return "/" + strings.Join(out, "/")
+}
+
+// pathWithin reports whether p is base itself or a descendant of base.
+func pathWithin(base, p string) bool {
+	if base == "/" {
+		return strings.HasPrefix(p, "/")
+	}
+	return p == base || strings.HasPrefix(p, base+"/")
+}
+
+// requirePresentDirectory fails closed unless rel resolves to exactly one
+// PRESENT canonical directory for the root.
+func (s *Service) requirePresentDirectory(ctx context.Context, rootID, rel string) error {
+	rows, err := s.store.PresentResourcesAtPath(ctx, s.store.Pool(), rootID, rel)
+	if err != nil {
+		return fmt.Errorf("load scoped parent %q: %w", rel, err)
+	}
+	if len(rows) != 1 {
+		return fmt.Errorf(
+			"scoped refresh requires exactly one PRESENT canonical directory at %q, found %d", rel, len(rows))
+	}
+	if rows[0].IsDir == nil || !*rows[0].IsDir {
+		return fmt.Errorf("scoped refresh parent %q is not a directory", rel)
+	}
+	return nil
 }

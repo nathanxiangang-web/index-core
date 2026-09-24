@@ -65,7 +65,10 @@ Record up front:
 - any 401 / 403 / 429 / throttle / provider error, and whether visibility required
   retries;
 - OpenList version / commit;
-- end-to-end trigger-to-visibility time.
+- end-to-end trigger-to-visibility time;
+- the chosen `max_entries` (note: it bounds only what IndexCore accepts and writes —
+  **not** the real provider read cost, because OpenList loads the whole directory
+  with `fs.List` before applying HTTP pagination).
 
 ## 5. Explicit non-goals
 

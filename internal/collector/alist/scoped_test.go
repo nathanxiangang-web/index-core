@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -153,5 +154,27 @@ func TestScanScopeProviderErrorSurfaces(t *testing.T) {
 
 	if _, err := (alist.Adapter{BaseURL: srv.URL}).ScanScope(context.Background(), "/x", 10); err == nil {
 		t.Fatal("provider list error must surface as an error")
+	}
+}
+
+// TestScanScopeRejectsOverHardCap proves the P0 hard cap: a caller can never
+// widen a scoped observation, and an overflow-sized bound (math.MaxInt) is
+// rejected instead of becoming a giant per_page.
+func TestScanScopeRejectsOverHardCap(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		io.WriteString(w, `{"code":200,"message":"success","data":{"content":[],"total":0}}`)
+	}))
+	defer srv.Close()
+
+	a := alist.Adapter{BaseURL: srv.URL}
+	for _, n := range []int{-1, alist.MaxScopedEntries + 1, math.MaxInt} {
+		if _, err := a.ScanScope(context.Background(), "/x", n); err == nil {
+			t.Fatalf("max_entries=%d must be rejected by the P0 hard cap", n)
+		}
+	}
+	if n := atomic.LoadInt32(&calls); n != 0 {
+		t.Fatalf("rejected max_entries must not reach the provider, got %d requests", n)
 	}
 }

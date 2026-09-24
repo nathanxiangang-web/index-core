@@ -11,6 +11,12 @@ import (
 	"github.com/nathanxiangang-web/index-core/internal/domain"
 )
 
+// MaxScopedEntries is the P0 hard cap on a single scoped observation. Callers
+// must never be able to widen it: the adapter fails closed above this bound so a
+// runaway per_page (e.g. integer overflow from maxEntries+1) can never reach the
+// provider.
+const MaxScopedEntries = 10000
+
 // ScanScope is the P0 Targeted Scoped Refresh observation (Issue #62).
 //
 // It observes ONLY the direct children of scope using EXACTLY ONE forced
@@ -37,9 +43,12 @@ func (a Adapter) ScanScope(ctx context.Context, scope string, maxEntries int) (a
 		ctx, cancel = context.WithTimeout(ctx, a.Timeout)
 		defer cancel()
 	}
-	if maxEntries < 0 {
-		return adapter.RawScan{}, fmt.Errorf("alist scoped list: max_entries must be >= 0, got %d", maxEntries)
+	if maxEntries < 0 || maxEntries > MaxScopedEntries {
+		return adapter.RawScan{}, fmt.Errorf(
+			"alist scoped list: max_entries must be within [0, %d], got %d", MaxScopedEntries, maxEntries)
 	}
+	// maxEntries <= MaxScopedEntries, so maxEntries+1 cannot overflow.
+	perPage := maxEntries + 1
 
 	token := a.Token
 	if token == "" && a.Username != "" {
@@ -56,7 +65,7 @@ func (a Adapter) ScanScope(ctx context.Context, scope string, maxEntries int) (a
 	// (total > maxEntries) without ever requesting a second page, and guarantees
 	// that a non-overflowing response contains the whole directory in one
 	// coherent generation.
-	items, total, err := a.listPageRefresh(ctx, token, dir, maxEntries+1)
+	items, total, err := a.listPageRefresh(ctx, token, dir, perPage)
 	if err != nil {
 		return adapter.RawScan{}, err
 	}
