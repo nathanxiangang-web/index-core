@@ -498,3 +498,116 @@ func TestP7IncrementalNoDueDrainsPending(t *testing.T) {
 		t.Fatalf("work state = %s, want VERIFIED", wk.WorkState)
 	}
 }
+
+type p7FailingWriter struct{ err error }
+
+func (w p7FailingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestP7IncrementalRejectsPositionalArgs(t *testing.T) {
+	base := config.Defaults()
+	base.DatabaseURL = "postgres://127.0.0.1:1/never" // unreachable: proves no DB work
+	calls := p7StubCycle(t, func(context.Context, *postgres.Store, config.Config, *slog.Logger, incrementalexec.Config, incrementalorch.Config) (incrementalorch.Result, error) {
+		t.Error("orchestration must not run for positional args")
+		return incrementalorch.Result{}, nil
+	})
+	for _, args := range [][]string{{"typo"}, {"typo", "extra"}} {
+		err := RunIncremental(context.Background(), base, p7Logger(), args)
+		if err == nil {
+			t.Fatalf("%v must be rejected", args)
+		}
+		if !strings.Contains(err.Error(), "positional") {
+			t.Fatalf("%v: unexpected error %v", args, err)
+		}
+		if strings.Contains(err.Error(), "open database") || strings.Contains(err.Error(), "ping database") {
+			t.Fatalf("%v must fail before DB work: %v", args, err)
+		}
+	}
+	if *calls != 0 {
+		t.Fatalf("positional args must make zero orchestration calls, got %d", *calls)
+	}
+}
+
+// TestP7IncrementalPositionalStopsFlagParsingFailClosed covers the dangerous
+// case where a positional token would stop flag parsing and leave an invalid
+// budget unparsed, letting the command run with defaults.
+func TestP7IncrementalPositionalStopsFlagParsingFailClosed(t *testing.T) {
+	base := config.Defaults()
+	base.DatabaseURL = "postgres://127.0.0.1:1/never"
+	calls := p7StubCycle(t, func(context.Context, *postgres.Store, config.Config, *slog.Logger, incrementalexec.Config, incrementalorch.Config) (incrementalorch.Result, error) {
+		t.Error("orchestration must not run when a positional arg stops parsing")
+		return incrementalorch.Result{}, nil
+	})
+	err := RunIncremental(context.Background(), base, p7Logger(), []string{"typo", "--max-wall-time", "0s"})
+	if err == nil {
+		t.Fatal("positional arg followed by an invalid flag must fail closed")
+	}
+	if !strings.Contains(err.Error(), "positional") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(err.Error(), "open database") || strings.Contains(err.Error(), "ping database") {
+		t.Fatalf("must fail before DB work: %v", err)
+	}
+	if *calls != 0 {
+		t.Fatalf("must make zero orchestration calls, got %d", *calls)
+	}
+}
+
+func TestP7IncrementalValidFlagsOnlyUnchanged(t *testing.T) {
+	p7PrepareSchema(t)
+	p7CaptureStdout(t)
+	calls := p7StubCycle(t, func(context.Context, *postgres.Store, config.Config, *slog.Logger, incrementalexec.Config, incrementalorch.Config) (incrementalorch.Result, error) {
+		return incrementalorch.Result{StopReason: incrementalorch.StopCompleted}, nil
+	})
+	if err := RunIncremental(context.Background(), p7BaseConfig(), p7Logger(),
+		[]string{"--max-wall-time", "30s", "--max-execute-items", "3"}); err != nil {
+		t.Fatalf("flags-only invocation must still work: %v", err)
+	}
+	if *calls != 1 {
+		t.Fatalf("exactly one orchestration call, got %d", *calls)
+	}
+}
+
+func TestP7IncrementalStdoutWriteFailureReturnsError(t *testing.T) {
+	p7PrepareSchema(t)
+	prev := incrementalStdout
+	incrementalStdout = p7FailingWriter{err: errors.New("stdout broken pipe")}
+	t.Cleanup(func() { incrementalStdout = prev })
+
+	p7StubCycle(t, func(context.Context, *postgres.Store, config.Config, *slog.Logger, incrementalexec.Config, incrementalorch.Config) (incrementalorch.Result, error) {
+		return incrementalorch.Result{StopReason: incrementalorch.StopCompleted}, nil
+	})
+	if err := RunIncremental(context.Background(), p7BaseConfig(), p7Logger(), nil); err == nil {
+		t.Fatal("a stdout write failure after a successful P6 must not exit 0")
+	}
+}
+
+func TestP7IncrementalStdoutWriteFailurePreservesCycleError(t *testing.T) {
+	p7PrepareSchema(t)
+	prev := incrementalStdout
+	incrementalStdout = p7FailingWriter{err: errors.New("stdout broken pipe")}
+	t.Cleanup(func() { incrementalStdout = prev })
+
+	sentinel := errors.New("cycle runtime failure")
+	p7StubCycle(t, func(context.Context, *postgres.Store, config.Config, *slog.Logger, incrementalexec.Config, incrementalorch.Config) (incrementalorch.Result, error) {
+		return incrementalorch.Result{}, sentinel
+	})
+	err := RunIncremental(context.Background(), p7BaseConfig(), p7Logger(), nil)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("the P6 runtime error must be preserved, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "write incremental result") {
+		t.Fatalf("the output failure must be preserved too, got %v", err)
+	}
+}
+
+func TestP7IncrementalMarshalErrorIsReturned(t *testing.T) {
+	prev := incrementalStdout
+	var buf bytes.Buffer
+	incrementalStdout = &buf
+	t.Cleanup(func() { incrementalStdout = prev })
+
+	// A channel cannot be marshaled; the serialization error must be reported.
+	if err := writeIncrementalJSON(make(chan int)); err == nil {
+		t.Fatal("a serialization failure must be returned, not discarded")
+	}
+}

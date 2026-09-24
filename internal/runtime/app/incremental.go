@@ -51,6 +51,13 @@ func RunIncremental(ctx context.Context, base config.Config, logger *slog.Logger
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// flag.FlagSet stops parsing at the first positional token, so a stray
+	// positional argument could leave later flags (e.g. an invalid budget)
+	// unparsed and let the command run with defaults. Fail closed before any
+	// database, writer-lock, or provider work.
+	if fs.NArg() != 0 {
+		return fmt.Errorf("incremental run: unexpected positional arguments %v (this command accepts flags only)", fs.Args())
+	}
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
@@ -115,10 +122,11 @@ func RunIncremental(ctx context.Context, base config.Config, logger *slog.Logger
 	res, cycleErr := runIncrementalCycle(ctx, st, cfg, logger, p4cfg, p6cfg)
 
 	// Exactly one structured JSON object is emitted after P6 ran, even when P6
-	// also returned a runtime error (partial/durable evidence is preserved and
-	// the non-nil error still drives the non-zero exit).
-	writeIncrementalJSON(newIncrementalRunDTO(res))
-	return cycleErr
+	// also returned a runtime error. JSON delivery is part of command success: a
+	// serialization or stdout failure is returned as an error (exit 1), and when
+	// P6 also failed both errors are preserved in the returned chain.
+	writeErr := writeIncrementalJSON(newIncrementalRunDTO(res))
+	return errors.Join(cycleErr, writeErr)
 }
 
 // runIncrementalCycle composes the accepted Scan -> P4 -> P5 -> P6 chain and
@@ -145,9 +153,18 @@ var runIncrementalCycle = func(ctx context.Context, st *postgres.Store, cfg conf
 // incrementalStdout is a test seam; production writes one JSON line to stdout.
 var incrementalStdout io.Writer = os.Stdout
 
-func writeIncrementalJSON(v any) {
-	b, _ := json.Marshal(v)
-	fmt.Fprintln(incrementalStdout, string(b))
+// writeIncrementalJSON renders one JSON line to stdout and reports both
+// serialization and write failures: delivering the operator JSON is part of
+// command success, so a stdout/broken-pipe failure must not exit 0.
+func writeIncrementalJSON(v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("encode incremental result: %w", err)
+	}
+	if _, err := fmt.Fprintln(incrementalStdout, string(b)); err != nil {
+		return fmt.Errorf("write incremental result: %w", err)
+	}
+	return nil
 }
 
 // incrementalRunDTO is the stable, snake_case operator contract for one manual

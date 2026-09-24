@@ -182,6 +182,10 @@ One-shot/manual only. `indexcore incremental` without a subcommand, and any
 unknown or reserved subcommand (`watch`, `daemon`, ...), fail. There is no
 `watch`, `daemon`, `recover`, or `hint` behavior and no second binary.
 
+`incremental run` accepts flags only: any positional argument fails closed before
+database/writer/provider work, so a stray token cannot stop flag parsing and let
+an invalid budget slip through to run with defaults.
+
 The command reuses the accepted Scan -> P4 -> P5 -> P6 chain and calls the P6
 orchestration **exactly once**. It requires the same PostgreSQL single-writer
 advisory lock as `serve`, so an active `indexcore serve` writer on the same
@@ -225,10 +229,15 @@ After the single P6 cycle it writes exactly one snake_case JSON object to stdout
 Logs and errors go to stderr. The JSON never contains the database DSN, provider
 credentials, adapter config, or secret environment values.
 
+Delivering this JSON is part of command success: a serialization or stdout write
+failure is a command error (exit 1), and if P6 also failed both errors are
+preserved in the returned error chain.
+
 Exit codes reuse the existing process contract: `0` when the command returns nil
 (including a normal bounded P6 `MAX_WALL_TIME`), `1` on any error (parent
 cancellation, materialization/executor error, writer-lock conflict, invalid
-config/schema). No new exit-code classes are introduced.
+config/schema, unexpected positional argument, or stdout delivery failure). No
+new exit-code classes are introduced.
 
 No automatic recovery/repair/retry promotion, scheduler, ticker, background or
 daemon mode is involved.

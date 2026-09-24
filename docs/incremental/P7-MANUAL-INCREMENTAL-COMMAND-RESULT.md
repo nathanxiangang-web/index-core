@@ -129,6 +129,11 @@ stdout (RFC3339Nano timestamps):
 database DSN, provider username/password/token, adapter config, or secret
 environment values. Logs and errors stay on stderr.
 
+Delivering this JSON is part of command success: a serialization or stdout write
+failure (e.g. closed stdout / broken pipe) is reported as a non-nil command error
+and therefore exits non-zero. A successful cycle that cannot deliver its operator
+JSON is not reported as success.
+
 ## 7. Result + error ordering
 
 If P6 ran and returns a populated `Result` plus a non-nil error, the command:
@@ -136,6 +141,10 @@ If P6 ran and returns a populated `Result` plus a non-nil error, the command:
 1. writes the structured JSON result to stdout;
 2. returns the original/wrapped error;
 3. `main` prints it to stderr and exits non-zero.
+
+If JSON delivery also fails, both the P6 operational error and the output error
+are preserved in the returned error chain (`errors.Join`), so neither masks the
+other.
 
 Preflight failures before P6 (invalid flags/config, DB open/ping failure,
 incompatible schema, writer-lock held, construction failure) return only an error
@@ -152,7 +161,8 @@ non-nil app error -> exit 1
 
 Therefore: `COMPLETED` → 0; normal bounded P6 `MAX_WALL_TIME` → 0 (P6 returns nil
 error); parent cancellation → 1; `MATERIALIZATION_ERROR` → 1; `EXECUTOR_ERROR` →
-1; writer-lock conflict → 1; invalid config/schema → 1.
+1; writer-lock conflict → 1; invalid config/schema → 1; unexpected positional
+argument → 1; stdout JSON delivery failure → 1.
 
 ## 9. Real PostgreSQL evidence
 
@@ -210,7 +220,15 @@ calls, and that the command proceeds once the lock is released.
 - `TestP7IncrementalNormalTimeoutIsZeroExit` (MAX_WALL_TIME result, nil error,
   `interrupted_in_flight` exposed);
 - `TestP7IncrementalErrorMapping` (parent cancellation / materialization /
-  executor errors all surface non-nil).
+  executor errors all surface non-nil);
+- `TestP7IncrementalRejectsPositionalArgs` /
+  `TestP7IncrementalPositionalStopsFlagParsingFailClosed` (positional args fail
+  closed before DB/P6 work, including the token-then-invalid-flag case);
+- `TestP7IncrementalValidFlagsOnlyUnchanged` (flags-only invocation still works);
+- `TestP7IncrementalStdoutWriteFailureReturnsError` /
+  `TestP7IncrementalStdoutWriteFailurePreservesCycleError` /
+  `TestP7IncrementalMarshalErrorIsReturned` (JSON delivery failure is non-nil and
+  both the P6 error and the output error survive in the chain).
 
 Test seams (app layer only): `runIncrementalCycle` (P6 construction/invocation)
 and `incrementalStdout` (JSON writer). Production uses the real chain and
@@ -222,7 +240,7 @@ and `incrementalStdout` (JSON writer). Production uses the real chain and
 cmd/indexcore/main.go                                (incremental dispatch + usage)
 internal/runtime/app/incremental.go                  (new: command implementation)
 cmd/indexcore/main_test.go                           (new: 3 tests)
-internal/runtime/app/incremental_test.go             (new: 11 tests)
+internal/runtime/app/incremental_test.go             (new: 17 tests)
 docs/CLI.md                                          (incremental section)
 README.md                                            (manual cycle usage)
 docs/incremental/P7-MANUAL-INCREMENTAL-COMMAND-RESULT.md (new)
@@ -242,7 +260,7 @@ go vet ./...                    clean
 go test -p 1 -count=1 ./...     all packages ok (real PostgreSQL 18)
 ```
 
-P7 tests = **14** (cmd 3 + app 11). Existing P3/P4/P5/P6 tests remain green.
+P7 tests = **20** (cmd 3 + app 17). Existing P3/P4/P5/P6 tests remain green.
 
 ## 14. Boundary statement
 
@@ -255,5 +273,31 @@ removal, migration, public HTTP write surface, or Gate 5. It does not call
 `EmitDuePoll`, `MergeSignal`, or any recovery primitive directly — it only calls
 P6 once. A parent cancellation may leave a claimed Work `IN_FLIGHT`; P7 performs
 no "cleanup" that would change the accepted durable state machine.
+
+`FROZEN_CONTRACT_CHANGES: NONE`
+## 15. Round 1 rework (Issue #85 review)
+
+Two CLI fail-closed blockers + one closeout from the P7 Round 1 review were fixed
+strictly inside `cmd/indexcore/**`, `internal/runtime/app/**`, the P7 tests, and
+the P7 docs:
+
+1. **JSON/stdout delivery is part of command success.** `writeIncrementalJSON` now
+   returns an error for both serialization failure and stdout write failure, and
+   `RunIncremental` returns `errors.Join(cycleErr, writeErr)`: an undeliverable
+   operator JSON is never reported as exit 0, and when P6 also failed both the
+   operational error and the output error are preserved. No new numeric exit-code
+   class is introduced (`nil -> 0`, `non-nil -> 1`).
+2. **Unexpected positional arguments fail closed.** Immediately after
+   `fs.Parse(args)`, a non-empty `fs.Args()` returns an error before any database,
+   writer-lock, or provider work. This also closes the case where a positional
+   token stops flag parsing and leaves an invalid budget unparsed, letting the
+   command run with defaults.
+
+New tests: `TestP7IncrementalRejectsPositionalArgs`,
+`TestP7IncrementalPositionalStopsFlagParsingFailClosed`,
+`TestP7IncrementalValidFlagsOnlyUnchanged`,
+`TestP7IncrementalStdoutWriteFailureReturnsError`,
+`TestP7IncrementalStdoutWriteFailurePreservesCycleError`,
+`TestP7IncrementalMarshalErrorIsReturned`. P7 tests = 20 (cmd 3 + app 17).
 
 `FROZEN_CONTRACT_CHANGES: NONE`
