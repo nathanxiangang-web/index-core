@@ -86,6 +86,16 @@ func (r pollCycleResult) polledPaths() []string {
 	return out
 }
 
+// mutatedByPath reports, per polled scope, whether the observation canonically
+// mutated state (used for P1 change attribution).
+func (r pollCycleResult) mutatedByPath() map[string]bool {
+	out := map[string]bool{}
+	for _, res := range r.results {
+		out[res.path] = res.mutated
+	}
+	return out
+}
+
 // pollHarness is the in-memory prototype poller.
 type pollHarness struct {
 	limits pollLimits
@@ -101,14 +111,24 @@ func newPollHarness(limits pollLimits, now func() time.Time, pollFn func(context
 	return &pollHarness{limits: limits, now: now, pollFn: pollFn}
 }
 
-// addScope registers a hot scope, honoring maxHotScopes. It returns false when the
-// hot set is already full.
+// addScope registers a scope. maxHotScopes caps only the HOT set: WARM/COLD
+// scopes do not consume HOT budget, so a future HOT->WARM demotion frees it.
 func (h *pollHarness) addScope(path string, c pollCadence) bool {
-	if len(h.scopes) >= h.limits.maxHotScopes {
+	if c == cadenceHot && h.hotCount() >= h.limits.maxHotScopes {
 		return false
 	}
 	h.scopes = append(h.scopes, &hotScope{path: path, cadence: c})
 	return true
+}
+
+func (h *pollHarness) hotCount() int {
+	n := 0
+	for _, s := range h.scopes {
+		if s.cadence == cadenceHot {
+			n++
+		}
+	}
+	return n
 }
 
 // dueScopes returns HOT scopes whose minimum interval has elapsed. Parent/child

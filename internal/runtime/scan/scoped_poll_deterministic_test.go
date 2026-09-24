@@ -140,3 +140,23 @@ func TestPollHarnessPollsOnlyHotScopes(t *testing.T) {
 		t.Fatalf("only HOT scopes are polled by P1, got %v", got)
 	}
 }
+
+// TestPollHarnessMaxHotScopesCountsOnlyHot proves maxHotScopes caps the HOT set
+// only: WARM/COLD scopes never consume HOT budget.
+func TestPollHarnessMaxHotScopesCountsOnlyHot(t *testing.T) {
+	lim := defaultPollLimits()
+	lim.maxHotScopes = 2
+	h := newPollHarness(lim, nil, noopPoll)
+	if !h.addScope("/warm1", cadenceWarm) || !h.addScope("/cold1", cadenceCold) {
+		t.Fatal("non-HOT scopes must always be accepted")
+	}
+	if !h.addScope("/hot1", cadenceHot) || !h.addScope("/hot2", cadenceHot) {
+		t.Fatal("two HOT scopes must be accepted")
+	}
+	if h.addScope("/hot3", cadenceHot) {
+		t.Fatal("third HOT scope must be rejected by max_hot_scopes")
+	}
+	if h.hotCount() != 2 || len(h.scopes) != 4 {
+		t.Fatalf("hot cap must count only HOT scopes, got hot=%d total=%d", h.hotCount(), len(h.scopes))
+	}
+}

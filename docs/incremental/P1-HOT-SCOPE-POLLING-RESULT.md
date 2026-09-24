@@ -45,9 +45,31 @@ Prototype defaults (Issue #66 §6): `max_hot_scopes=5`, `max_scopes_per_cycle=5`
 | wall-time budget stops further work + recorded | `TestPollHarnessStopsOnWallTimeBudget` | PASS |
 | a failing scope is not retried in a loop | `TestPollHarnessErrorScopeDoesNotLoopUnbounded` | PASS |
 | parent/child scopes not collapsed | `TestPollHarnessDoesNotCollapseParentChild` | PASS |
-| `max_hot_scopes` enforced | `TestPollHarnessHonorsMaxHotScopes` | PASS |
+| `max_hot_scopes` caps only the HOT set (WARM/COLD do not consume it) | `TestPollHarnessHonorsMaxHotScopes`, `TestPollHarnessMaxHotScopesCountsOnlyHot` | PASS |
 | only HOT (not WARM/COLD) polled | `TestPollHarnessPollsOnlyHotScopes` | PASS |
+| 403 refresh-permission fails closed (once, no retry, no mutation) | `TestPollHarnessActuatorFailureFailsClosed/403` | PASS |
+| provider/list error fails closed (once, no retry, no mutation) | `TestPollHarnessActuatorFailureFailsClosed/provider_error` | PASS |
+| over `max_entries` fails closed through the harness (no mutation) | `TestPollHarnessOverMaxEntriesFailsClosed` | PASS |
 | 2-cycle reconcile safety on real PostgreSQL | `TestPollHarnessReconcileSafety` | PASS |
+
+### Round 1 Architect-review rework (2026-09-24, test-only)
+
+PR #67 Architect Round 1 = PRE-LIVE CHANGES REQUIRED. All 7 BLOCKERs + the `maxHotScopes`
+semantic fix are addressed **without any production change**:
+
+- **`maxHotScopes`** now caps only the HOT set (`addScope` + `hotCount`);
+- **failure paths** added through the actual P0 `ScanScope` actuator — 403 refresh-permission,
+  provider/list error, and over-`max_entries` — each asserted to surface once (no tight retry) and
+  to leave Canonical state unmutated (deterministic harness + real PostgreSQL);
+- **live probe reworked** (still gated; not yet run) to satisfy BLOCKERs 1-6: a read-only
+  `refresh=false` stale-cache gate before the cycle; seeding `lastPolled` from the previous poll and
+  requiring the interval to have elapsed (next-due poll, not time-zero); `INDEXCORE_P1_LIVE_EXPECT_SCOPE`
+  change attribution (`Mutated=true` for the changed scope, `false` for the rest); real nested Q4 for
+  the expected parent with Q3/Q4/Q6 same-id; baseline `path -> resource_id` preservation + no-removal
+  audit; per-scope canonical `refresh=true` count == 1 / status 200; `T6-T1 <= HOT interval`; and the
+  actual `page_size` supplied via env (no hard-coded 200).
+
+Live 115 validation remains **NOT AUTHORIZED** until the Architect reviews this rework.
 
 ## 4. Reconcile safety evidence (real PostgreSQL)
 
@@ -105,18 +127,23 @@ visibility latency, retries.
 Reproduce:
 
 ```bash
+# Phase A (baseline, 3-5 HOT scopes) — prints PHASE_A_POLL_TS=...
 INDEXCORE_P1_LIVE_BASE_URL=http://127.0.0.1:5244 \
 INDEXCORE_P1_LIVE_USER=... INDEXCORE_P1_LIVE_PASS=... \
-INDEXCORE_P1_LIVE_SCOPES="/,/hotA,/hotB" \
-INDEXCORE_P1_LIVE_EXPECT_PATH=/hotA/new.txt \
+INDEXCORE_P1_LIVE_SCOPES="/,/hotA,/hotB,/hotC" \
 INDEXCORE_TEST_DATABASE_URL=postgres://... \
   go test ./internal/runtime/scan -run TestLiveP1HotScopesPhaseABaseline -v -count=1
-# [operator: out-of-band upload]
-#   refresh=false must still not expose the new file (T2 stale gate)
+
+# [operator: out-of-band upload of /hotA/new.txt; note T1 time]
+#   Phase B requires: PREV_POLL_TS (Phase A), T1_TS (upload), PAGE_SIZE (actual storage setting),
+#   HOT_INTERVAL (seconds, default 120). Phase B first performs a read-only refresh=false stale gate.
 INDEXCORE_P1_LIVE_BASE_URL=http://127.0.0.1:5244 \
 INDEXCORE_P1_LIVE_USER=... INDEXCORE_P1_LIVE_PASS=... \
-INDEXCORE_P1_LIVE_SCOPES="/,/hotA,/hotB" \
-INDEXCORE_P1_LIVE_EXPECT_PATH=/hotA/new.txt \
+INDEXCORE_P1_LIVE_SCOPES="/,/hotA,/hotB,/hotC" \
+INDEXCORE_P1_LIVE_EXPECT_SCOPE=/hotA INDEXCORE_P1_LIVE_EXPECT_PATH=/hotA/new.txt \
+INDEXCORE_P1_LIVE_PAGE_SIZE=200 \
+INDEXCORE_P1_LIVE_PREV_POLL_TS=<RFC3339> INDEXCORE_P1_LIVE_T1_TS=<RFC3339> \
+INDEXCORE_P1_LIVE_HOT_INTERVAL=120 \
 INDEXCORE_TEST_DATABASE_URL=postgres://... \
   go test ./internal/runtime/scan -run TestLiveP1HotScopesPhaseBCycle -v -count=1
 ```
