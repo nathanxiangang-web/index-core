@@ -1,6 +1,6 @@
 # Post-MVP Incremental Ingestion Blueprint
 
-> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 DIRTY-SCOPE STATE DESIGN AUTHORIZED / PRODUCTION IMPLEMENTATION NOT AUTHORIZED**
+> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 ACCEPTED / P3 STATE PERSISTENCE PROTOTYPE AUTHORIZED / PRODUCTION SCHEDULER NOT AUTHORIZED**
 >
 > Architecture tracking: #57
 >
@@ -159,6 +159,29 @@ state cannot safely be inferred from the raw change event alone.
 
 A state indicating provider-cursor continuity can no longer be trusted and the root must re-establish
 a baseline through the full-scan path.
+
+## 4.1 Accepted P2 operational-state contract and P3 realization
+
+P2 is ARCHITECT_ACCEPTED. The accepted operational model separates:
+
+```text
+ScopeWatchState
+    recurring watch policy / cadence / due state
+
+DirtyScopeWork
+    claimed_* = signals owned by the current attempt
+    pending_* = unclaimed/post-claim signals
+```
+
+P2 also freezes exact direct-child scope coverage, durable monotonic `signal_seq`, claim-scoped provenance, state-specific backoff semantics, atomic due-watch signal emission, and restart recovery.
+
+P2 exit decision: **AUTHORIZE_STATE_PERSISTENCE_PROTOTYPE**.
+
+P3 is defined by:
+
+`docs/architecture/INCREMENTAL-P3-STATE-PERSISTENCE-PROTOTYPE.md`
+
+P3 may add an additive operational migration and PostgreSQL Store state primitives/tests. It does **not** authorize a scheduler, executor, public trigger API, provider cursor, destructive delta, or Gate 5.
 
 ## 5. Capability model — research hypothesis, not accepted contract
 
