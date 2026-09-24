@@ -60,11 +60,15 @@ are retained (audit) and simply not selected.
 | `work_state` | `PENDING`/`IN_FLIGHT`/`VERIFIED`/`RETRY_WAIT`/`BLOCKED`/`SUSPENDED`. |
 | `signal_seq` | Monotonic durable counter. |
 | `claimed_signal_seq` | Nullable; set only while `IN_FLIGHT`. |
-| `reason_set` | Set of reasons (§4). |
-| `source_set` | Set of sources (§4). |
-| `priority_class` | Ordering hint. |
-| `first_seen_at` / `last_seen_at` | Instants. |
-| `not_before` | Nullable instant (eligibility). |
+| `claimed_source_set` | Nullable; snapshot of the sources the attempt claimed (Watch attribution uses this). |
+| `claimed_reason_set` | Nullable; snapshot of the claimed reasons. |
+| `claimed_priority` | Nullable; claimed priority. |
+| `pending_source_set` | Sources **not yet claimed**. Empty ⇒ no outstanding un-claimed signal. |
+| `pending_reason_set` | Reasons not yet claimed. |
+| `pending_priority` | Nullable; highest un-claimed priority. |
+| `pending_first_seen_at` | Nullable instant; first un-claimed signal. |
+| `pending_not_before` | Nullable instant; eligibility of the un-claimed signals. |
+| `last_seen_at` | Instant (bookkeeping). |
 | `attempt_count` | Int (diagnostic). |
 | `consecutive_failures` | Int. |
 | `last_attempt_started_at` / `last_attempt_finished_at` | Nullable instants. |
@@ -94,7 +98,7 @@ Issue #69 invariant 4) trivially enforceable in the database, with no partial-in
 
 ## 4. Set representation (conceptual)
 
-`reason_set` and `source_set` are small, closed, low-cardinality sets. Options:
+the `pending_*` / `claimed_*` set columns are small, closed, low-cardinality sets. Options:
 
 - **Portable (recommended for MVP):** canonical text encoding of a sorted set (e.g. sorted,
   delimiter-joined tokens) with application-level union on merge; no provider-specific columns.

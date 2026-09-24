@@ -84,22 +84,22 @@ States: `PENDING`, `IN_FLIGHT`, `VERIFIED`, `RETRY_WAIT`, `BLOCKED`, `SUSPENDED`
 
 | From | To | Trigger | Guard | Side effects |
 | --- | --- | --- | --- | --- |
-| (none) | `PENDING` | first merge | row absent (new key) | create with `signal_seq = 1`, sets `first_seen_at`/`last_seen_at` |
-| `PENDING` | `PENDING` | merge (any source) | item exists | `signal_seq++`, `last_seen_at=now`, **same-epoch** reason/source union, `not_before` not pushed later |
-| `PENDING` | `IN_FLIGHT` | claim | `not_before <= now` | `claimed_signal_seq = signal_seq`, `attempt_count++`, `last_attempt_started_at=now` |
-| `IN_FLIGHT` | `VERIFIED` | success | **`signal_seq == claimed_signal_seq`** | `last_verified_at`, `last_verified_signal_seq=claimed`, **clear claim**, `consecutive_failures=0` |
-| `IN_FLIGHT` | `PENDING` | success but newer signal | `signal_seq != claimed_signal_seq` | **clear claim**; **preserve** `signal_seq` (newer signal pending) |
-| `IN_FLIGHT` | `PENDING` | crash | restart recovery | **clear claim**; not a failure |
-| `IN_FLIGHT` | `RETRY_WAIT` | `TRANSIENT_PROVIDER` / `THROTTLED` / `INTERNAL` | retry allowed | **clear claim**, `consecutive_failures++`, `last_error_class`, `last_attempt_finished_at=now`, `not_before = now + backoff(..)` |
-| `IN_FLIGHT` | `BLOCKED` | `AUTH_OR_PERMISSION` / `SCOPE_TOO_LARGE` / `INVALID_SCOPE` / `CONFIG_INVALID` | — | **clear claim**, `consecutive_failures++`, `last_error_class`, `last_attempt_finished_at=now`; **no tight retry** |
-| `IN_FLIGHT` | `SUSPENDED` | `ROOT_INACTIVE` | — | **clear claim**, `last_attempt_finished_at=now`; no failure counter; state retained |
-| `RETRY_WAIT` | `PENDING` | `not_before <= now` | — | become eligible again |
-| `RETRY_WAIT` | `RETRY_WAIT` | merge | — | `signal_seq++`, same-epoch union; does **not** cancel the existing backoff |
+| (none) | `PENDING` | first merge | row absent (new key) | create with `signal_seq = 1`, `pending_*` set from the trigger |
+| `PENDING` | `PENDING` | merge (any source) | item exists | `signal_seq++`; provenance → **`pending_*` only**; `pending_not_before` not pushed later |
+| `PENDING` | `IN_FLIGHT` | claim | `pending_not_before <= now` | snapshot `claimed_* := pending_*`; **clear `pending_*`**; `attempt_count++`, `last_attempt_started_at=now` |
+| `IN_FLIGHT` | `VERIFIED` | success | **`signal_seq == claimed_signal_seq`** | `last_verified_at`, `last_verified_signal_seq=claimed`, `consecutive_failures=0`; **release `claimed_*`** (Watch counters read `claimed_source_set` first) |
+| `IN_FLIGHT` | `PENDING` | success but newer signal | `signal_seq != claimed_signal_seq` | **release & discard `claimed_*`**; keep **only** the post-claim `pending_*` |
+| `IN_FLIGHT` | `PENDING` | crash | restart recovery | **re-coalesce `claimed_*` into `pending_*`** and release; not a failure |
+| `IN_FLIGHT` | `RETRY_WAIT` | `TRANSIENT_PROVIDER` / `THROTTLED` / `INTERNAL` | retry allowed | **re-coalesce `claimed_* ∪ pending_*` → `pending_*`** and release; `consecutive_failures++`, `last_error_class`, `pending_not_before = max(pending_not_before, now+backoff)` |
+| `IN_FLIGHT` | `BLOCKED` | `AUTH_OR_PERMISSION` / `SCOPE_TOO_LARGE` / `INVALID_SCOPE` / `CONFIG_INVALID` | — | same re-coalesce + release; `consecutive_failures++`, `last_error_class`; **no tight retry** |
+| `IN_FLIGHT` | `SUSPENDED` | `ROOT_INACTIVE` | — | same re-coalesce + release; no failure counter; state retained |
+| `RETRY_WAIT` | `PENDING` | `pending_not_before <= now` | — | become eligible again |
+| `RETRY_WAIT` | `RETRY_WAIT` | merge | — | `signal_seq++`; provenance → `pending_*`; does **not** cancel the existing backoff |
 | `BLOCKED` | `PENDING` | operator/repair resolves | explicit | resume normal path |
-| `BLOCKED` | `BLOCKED` | merge | — | `signal_seq++`, same-epoch union; stays blocked (no auto-clear) |
+| `BLOCKED` | `BLOCKED` | merge | — | `signal_seq++`; provenance → `pending_*`; stays blocked (no auto-clear) |
 | `SUSPENDED` | `PENDING` | root becomes ACTIVE | — | resume; `signal_seq` preserved |
-| `SUSPENDED` | `SUSPENDED` | merge | — | `signal_seq++`, same-epoch union; no attempt while root non-ACTIVE |
-| `VERIFIED` | `PENDING` | merge | — | **new epoch**: `signal_seq++`, **reason/source reset** to the new trigger |
+| `SUSPENDED` | `SUSPENDED` | merge | — | `signal_seq++`; provenance → `pending_*`; no attempt while root non-ACTIVE |
+| `VERIFIED` | `PENDING` | merge | — | **new epoch**: `signal_seq++`; **rebuild `pending_*`** from the new trigger |
 
 ### 3.2 Invalid transitions
 
@@ -110,15 +110,18 @@ States: `PENDING`, `IN_FLIGHT`, `VERIFIED`, `RETRY_WAIT`, `BLOCKED`, `SUSPENDED`
   contract).
 - Any state `→ (deleted)` that would lose a pending/late signal (§4 lost-wakeup rule).
 - Any transition that writes Canonical Inventory or removal evidence directly.
-- `PENDING → IN_FLIGHT` while `not_before > now`.
+- `PENDING → IN_FLIGHT` while `pending_not_before > now`.
 - Budget defer must **not** produce `RETRY_WAIT`/failure transitions; the item stays `PENDING`
-  (optionally with `not_before` set) and counters do not increment.
+  (optionally with `pending_not_before` set) and counters do not increment.
 - **No merge may be ignored**: every `work_state` has a defined merge behavior (§3.1); a merge must
   never be dropped merely because the item is `IN_FLIGHT`/`RETRY_WAIT`/`BLOCKED`/`SUSPENDED`.
+- **A merge must never modify `claimed_*`** (contract §3.8 invariant 6): post-claim signals go to
+  `pending_*` only.
 - A merge into `BLOCKED`/`SUSPENDED`/`RETRY_WAIT` must **not** auto-clear that state (no automatic
   un-block, no automatic un-suspend, no cancelling of backoff).
-- **Every `IN_FLIGHT → non-IN_FLIGHT` transition must set `claimed_signal_seq = NULL`** (work invariant
-  2, contract §3.8) — including crash recovery.
+- **Every `IN_FLIGHT → non-IN_FLIGHT` transition must release the whole `claimed_*` group to `NULL`**
+  (work invariant 2, contract §3.8) — including crash recovery — and a failure must **re-coalesce
+  `claimed_*` into `pending_*`**.
 - A CAS conflict on completion must **re-read** and only record success if the claim is still valid
   (contract §4.3); no tight retry loop.
 
@@ -126,9 +129,9 @@ States: `PENDING`, `IN_FLIGHT`, `VERIFIED`, `RETRY_WAIT`, `BLOCKED`, `SUSPENDED`
 
 | Observed at startup | Action |
 | --- | --- |
-| `IN_FLIGHT` (no completion) | CAS to `PENDING` (or `RETRY_WAIT` per policy); clear `claimed_signal_seq`; preserve `signal_seq`. |
-| `PENDING` with `not_before <= now` | Immediately eligible. |
-| `PENDING` with `not_before > now` | Remains `RETRY_WAIT`-equivalent eligibility; no forced attempt. |
+| `IN_FLIGHT` (no completion) | CAS to `PENDING` (or `RETRY_WAIT` per policy); **re-coalesce `claimed_*` into `pending_*`** and release the claim; preserve `signal_seq`. |
+| `PENDING` with `pending_not_before <= now` | Immediately eligible. |
+| `PENDING` with `pending_not_before > now` | Not eligible yet; no forced attempt. |
 | `SUSPENDED` | Only resumed when root lifecycle allows. |
 | `BLOCKED` | Reported; requires operator/repair; not auto-retried. |
 

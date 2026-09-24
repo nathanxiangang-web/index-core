@@ -58,7 +58,7 @@ Canonical write directly; it only produces triggers.
 | `last_due_at` | instant, nullable | When the next-due transition fired (the schedule point). |
 | `last_attempt_started_at` | instant, nullable | Start of the most recent scheduled attempt started against this watch. |
 | `last_attempt_finished_at` | instant, nullable | End of that attempt (success or failure). |
-| `last_success_at` | instant, nullable | Most recent successful attempt **driven by this watch's own `POLL_SCHEDULE` trigger** — i.e. `POLL_SCHEDULE ∈ DirtyScopeWork.current_epoch.source_set` (the work item's current epoch), **not** this watch's own policy `source_set`. A success driven only by a hint/manual trigger does **not** update it (§6.1). |
+| `last_success_at` | instant, nullable | Most recent successful attempt **driven by this watch's own `POLL_SCHEDULE` trigger** — i.e. `POLL_SCHEDULE ∈ DirtyScopeWork.claimed_source_set` (the claim that attempt acquired), **not** this watch's own policy `source_set`. A success driven only by a hint/manual trigger does **not** update it (§6.1). |
 | `next_due_at` | instant, nullable | Next instant the watch is due; `NULL` iff not scheduled. |
 | `consecutive_failures` | int | Consecutive **provider** failures attributable to the watch schedule; budget defer does not increment (§6). |
 | `last_error_class` | enum, nullable | Provider-neutral failure class of the most recent failed attempt (§6). |
@@ -153,13 +153,16 @@ exact scope, through the accepted P0 `scan.Service.ScanScope` path.
 | `scope_key` | normalized path | Part of the logical key. |
 | `work_state` | enum | `PENDING`\|`IN_FLIGHT`\|`VERIFIED`\|`RETRY_WAIT`\|`BLOCKED`\|`SUSPENDED` (see `STATE-MACHINES.md`). |
 | `signal_seq` | bigint, monotonic | Durable count of merged triggers for this work item; incremented on every merge (§4). |
-| `claimed_signal_seq` | bigint, nullable | Value of `signal_seq` captured when an attempt claimed the item (null when not IN_FLIGHT). |
-| `reason_set` | set<reason> | Why verification is wanted (§5). Scoped to the **current outstanding epoch**: same-epoch union-merge; **reset** when a new epoch opens after `VERIFIED` (§3.4). |
-| `source_set` | set<source> | Where the triggers came from (§5). Scoped to the **current outstanding epoch**: same-epoch union-merge; **reset** at an epoch boundary (§3.4). |
-| `priority_class` | enum | `URGENT`\|`HIGH`\|`NORMAL`\|`LOW`. |
-| `first_seen_at` | instant | First signal time of the **current outstanding epoch** (reset when a new epoch opens after `VERIFIED`; used for aging/fairness within the epoch). |
-| `last_seen_at` | instant | Latest signal/merge time of the **current outstanding epoch**; reset to `now` when a new epoch opens after `VERIFIED`. |
-| `not_before` | instant, nullable | Earliest instant this work may be attempted (retry backoff / defer). |
+| `claimed_signal_seq` | bigint, nullable | `signal_seq` captured when an attempt claimed the item (non-null **iff** `IN_FLIGHT`). |
+| `claimed_source_set` | set<source>, nullable | Sources of the signals **this attempt actually claimed** (snapshot of `pending_source_set` at claim). Non-null iff `IN_FLIGHT`. **Watch health counters use this** (§6.1). |
+| `claimed_reason_set` | set<reason>, nullable | Reasons of the claimed signals (snapshot at claim). Non-null iff `IN_FLIGHT`. |
+| `claimed_priority` | enum, nullable | Priority of the claimed signals (snapshot at claim). |
+| `pending_source_set` | set<source> | Sources of signals **not yet claimed by any attempt**. Empty means "no outstanding un-claimed signal". |
+| `pending_reason_set` | set<reason> | Reasons of the un-claimed signals. |
+| `pending_priority` | enum, nullable | Highest priority among the un-claimed signals. |
+| `pending_first_seen_at` | instant, nullable | First un-claimed signal time (used for aging/fairness). |
+| `pending_not_before` | instant, nullable | Earliest eligibility for the un-claimed signals. |
+| `last_seen_at` | instant | Latest signal/merge time of the **current outstanding epoch**; reset to `now` when a new epoch opens after `VERIFIED` (bookkeeping). |
 | `attempt_count` | int | Total attempts started (diagnostic; survives retries). |
 | `consecutive_failures` | int | Consecutive provider-class failures for this work item. |
 | `last_attempt_started_at` | instant, nullable | Start of most recent attempt. |
@@ -183,22 +186,37 @@ exact scope, through the accepted P0 `scan.Service.ScanScope` path.
   completion, not across epochs, and not by `VERIFIED`. In v1 the row is never compacted/deleted
   (§G schema decision), so `signal_seq` is a single ever-increasing counter per `(root_id, scope_key)`.
 - `claimed_signal_seq` is set atomically at claim time and is the basis of the completion CAS (§4).
-- `claimed_signal_seq IS NULL` whenever `work_state != IN_FLIGHT` (work invariant, §3.8).
+- **Claim-scoped, not epoch-scoped.** An attempt is responsible only for the signals it **claimed**;
+  signals that arrive after the claim live in `pending_*` and are attributed to the **next** attempt
+  (§3.4). `claimed_*` fields are non-null **iff** `work_state = IN_FLIGHT` (work invariant 2, §3.8).
 
-### 3.4 `reason_set` and `source_set` — scoped to the **current outstanding epoch**
+### 3.4 Claim-scoped provenance: `claimed_*` vs `pending_*`
 
-- Both are **sets**, union-merged **within the current outstanding epoch** (the span from the last
-  successful clear / `VERIFIED`, or from row creation, up to the next successful clear). Within that
-  span, existing members are never removed by a newer trigger and newer provenance never replaces
-  older provenance.
-- **Epoch boundary resets provenance.** When a new signal arrives **after** the item reached
-  `VERIFIED`, it opens a **new epoch**: `reason_set`/`source_set` are **reset to the new trigger's
-  sets** — they do **not** inherit the previous epoch's members. This prevents a long-cleared
-  `POLL_SCHEDULE` (or an old hint) from permanently contaminating the provenance of a later, unrelated
-  epoch.
-- Invariant: the outstanding provenance must always describe the signals that are **still
-  outstanding**, not every signal ever seen. A set member's lifetime is exactly one outstanding epoch.
-- `reason_set` answers "why"; `source_set` answers "who asked". They evolve independently.
+Provenance is split into two independent groups so that **an attempt's attribution can never be
+polluted by signals that arrived after it started**:
+
+- **`pending_*`** — signals **not yet claimed by any attempt**. Merge fan-in writes **only** here.
+- **`claimed_*`** — a **snapshot of `pending_*` taken at claim time**, describing exactly the signals
+  this attempt is responsible for. It is **immutable for the duration of the attempt**.
+
+Transitions:
+
+- **claim**: `claimed_* := pending_*`, then `pending_*` is **cleared** (empty).
+- **merge during `IN_FLIGHT`**: `signal_seq++` and the new provenance goes to **`pending_*` only**;
+  `claimed_*` is untouched.
+- **success, no newer signal**: item → `VERIFIED`; `claimed_*` released; `pending_*` is empty.
+- **success, newer signal present**: item → `PENDING`; `claimed_*` is **released and discarded**;
+  `pending_*` **keeps only the post-claim signals** (it never inherits `claimed_*`).
+- **failure/abort**: the **un-satisfied `claimed_*`** is **re-coalesced back into `pending_*`** (union)
+  together with any post-claim `pending_*`, then the item enters `RETRY_WAIT`/`BLOCKED`/`SUSPENDED`.
+
+Epoch semantics: when a new signal arrives after `VERIFIED`, it opens a **new epoch** and **rebuilds**
+`pending_*` from the new trigger (no inheritance from the previous epoch). `signal_seq` still does not
+reset (§3.3).
+
+Invariant: **the outstanding provenance must describe exactly the still-outstanding signals** —
+`pending_*` = not-yet-claimed, `claimed_*` = currently being attempted. A pure `POLL_SCHEDULE` attempt
+must never carry `MUTATION_HINT` provenance, and vice versa.
 
 ### 3.5 Attempt/verification fields
 
@@ -208,12 +226,15 @@ exact scope, through the accepted P0 `scan.Service.ScanScope` path.
 - Success is defined by **fresh successful scope coverage + successful admission/application**, not
   by `Mutated=true` (§5 of the plan; §5 here).
 
-### 3.6 `not_before`, `attempt_count`, `consecutive_failures`
+### 3.6 `pending_not_before`, `attempt_count`, `consecutive_failures`
 
-- `not_before` is scheduling eligibility (backoff/defer); it is independent of `priority_class`.
-- A merge updates `not_before` **per state** (§4.2): only `PENDING` may become eligible sooner;
-  `RETRY_WAIT` keeps its backoff (a new signal must **not** cancel it); a new epoch (`VERIFIED`)
-  rebuilds it from the trigger.
+- `pending_not_before` is scheduling eligibility (backoff/defer) for the **un-claimed** signals; it is
+  independent of `pending_priority`.
+- A merge updates `pending_not_before` **per state** (§4.2): only `PENDING` may become eligible sooner;
+  `RETRY_WAIT`/`BLOCKED`/`SUSPENDED` keep it (a new signal must **not** cancel backoff); a new epoch
+  (`VERIFIED`) rebuilds it from the trigger.
+- A failure sets `pending_not_before = max(pending_not_before, now + backoff(class))` when entering
+  `RETRY_WAIT` (never earlier than the backoff).
 - `consecutive_failures` increments only on provider-class failures; budget defer does not touch it.
 - `attempt_count` is diagnostic and never used to gate correctness.
 
@@ -227,13 +248,17 @@ exact scope, through the accepted P0 `scan.Service.ScanScope` path.
 ### 3.8 Work invariants
 
 1. At most one active logical item per `(root_id, scope_key)`.
-2. `claimed_signal_seq IS NOT NULL` iff `work_state = IN_FLIGHT` (during an attempt).
+2. `claimed_signal_seq`, `claimed_source_set`, `claimed_reason_set` and `claimed_priority` are all
+   `NULL` iff `work_state != IN_FLIGHT`; all four are set together at claim and released together on
+   every exit from `IN_FLIGHT`.
 3. `claimed_signal_seq <= signal_seq` always.
 4. `last_verified_signal_seq` is always a previously-claimed `signal_seq` value and is `<= signal_seq`
    at write time. (There is no cross-scheme "signature" quantity to compare against.)
 5. `signal_seq` never decreases for the lifetime of a row. In v1 rows are never compacted or deleted
    (`SCHEMA-SKETCH.md`), so it is strictly monotonic for all time.
-6. Work state transitions never mutate Canonical Inventory or removal evidence (§8).
+6. **Claim isolation**: a merge never modifies `claimed_*`. A pure `POLL_SCHEDULE` attempt must never
+   carry a hint/manual source that arrived after its claim was taken.
+7. Work state transitions never mutate Canonical Inventory or removal evidence (§8).
 
 ## 4. Lost-wakeup / coalescing proof (§D)
 
@@ -249,85 +274,111 @@ the item must remain/re-enter `PENDING` (never silently dropped).
 ### 4.1 Required CAS rule
 
 ```text
-# merge (any trigger, arbitrary work_state):
+# merge (any trigger, arbitrary work_state):   # provenance -> pending_* ONLY
 CAS(version=v -> v+1):
     signal_seq   = signal_seq + 1
     last_seen_at = now
-    if work_state == VERIFIED:            # NEW EPOCH -> rebuild the outstanding epoch
-        reason_set     = new_reasons      # provenance RESET (no inheritance)
-        source_set     = new_sources
-        priority_class = trigger.priority_class
-        first_seen_at  = now              # new epoch starts now
-        last_seen_at   = now
-        not_before     = trigger.not_before
-        work_state     = PENDING
-    else:                                  # SAME outstanding epoch
-        reason_set     = reason_set ∪ new_reasons
-        source_set     = source_set ∪ new_sources
-        priority_class = max(priority_class, trigger.priority_class)   # highest outstanding signal wins
-        # not_before is handled PER STATE (NOT a blanket min()):
-        if work_state == PENDING:     not_before = min(not_before, trigger.not_before)  # may become eligible sooner
-        if work_state == IN_FLIGHT:   not_before unchanged                              # irrelevant during an attempt
-        if work_state == RETRY_WAIT:  not_before UNCHANGED                             # a new signal must NOT cancel backoff
-        if work_state == BLOCKED:     not_before unchanged                              # stays blocked
-        if work_state == SUSPENDED:   not_before unchanged                              # stays suspended
+    if work_state == VERIFIED:            # NEW EPOCH -> rebuild the pending epoch
+        claimed_signal_seq = NULL         # ensure any claim is released
+        claimed_source_set = NULL
+        claimed_reason_set = NULL
+        claimed_priority   = NULL
+        pending_source_set    = new_sources      # RESET (no inheritance)
+        pending_reason_set    = new_reasons
+        pending_priority      = trigger.priority_class
+        pending_first_seen_at = now
+        pending_not_before    = trigger.not_before
+        work_state            = PENDING
+    else:                                  # SAME epoch -> fan-in to pending_* (NEVER to claimed_*)
+        pending_source_set = pending_source_set ∪ new_sources
+        pending_reason_set = pending_reason_set ∪ new_reasons
+        pending_priority   = max(pending_priority, trigger.priority_class)
+        if pending_first_seen_at IS NULL: pending_first_seen_at = now
+        # pending_not_before is handled PER STATE (NOT a blanket min()):
+        if work_state == PENDING:     pending_not_before = min(pending_not_before, trigger.not_before)
+        if work_state == IN_FLIGHT:   pending_not_before unchanged   # does NOT touch the current claim
+        if work_state == RETRY_WAIT:  pending_not_before UNCHANGED   # a new signal must NOT cancel backoff
+        if work_state == BLOCKED:     pending_not_before unchanged
+        if work_state == SUSPENDED:   pending_not_before unchanged
 
-# claim:
-CAS(version=v -> v+1):  where work_state = PENDING and (not_before IS NULL or not_before <= now)
+# claim (snapshot pending_* -> claimed_*, then CLEAR pending_*):
+CAS(version=v -> v+1):  where work_state = PENDING and (pending_not_before IS NULL or pending_not_before <= now)
     work_state              = IN_FLIGHT
     claimed_signal_seq      = signal_seq
+    claimed_source_set      = pending_source_set      # snapshot of what this attempt owns
+    claimed_reason_set      = pending_reason_set
+    claimed_priority        = pending_priority
+    pending_source_set      = ∅                        # cleared: nothing un-claimed yet
+    pending_reason_set      = ∅
+    pending_priority        = NULL
+    pending_first_seen_at   = NULL
+    pending_not_before      = NULL
     last_attempt_started_at = now
     attempt_count           = attempt_count + 1
 
 # successful completion (CAS with re-read on conflict; see 4.3):
 CAS(version=v -> v+1):  where work_state = IN_FLIGHT and claimed_signal_seq = k
-    if signal_seq == k:
+    # Watch counters are updated from claimed_source_set HERE, BEFORE release (§6.1)
+    if signal_seq == k:                   # no newer signal during the attempt
         work_state               = VERIFIED
         last_verified_at         = now
         last_verified_signal_seq = k
-        claimed_signal_seq       = NULL
         consecutive_failures     = 0
-    else:
-        # a newer signal arrived during the attempt -> do NOT clear it
-        work_state         = PENDING
-        claimed_signal_seq = NULL
-        # signal_seq unchanged (the newer signal is preserved)
+    else:                                 # newer signal(s) arrived -> keep ONLY post-claim pending
+        work_state               = PENDING
+        # pending_* already holds ONLY the post-claim signals (never inherits claimed_*)
+    # release the whole claim in BOTH branches:
+    claimed_signal_seq = NULL
+    claimed_source_set = NULL
+    claimed_reason_set = NULL
+    claimed_priority   = NULL
 
 # failure / abort (leaving IN_FLIGHT for ANY non-IN_FLIGHT state):
 CAS(version=v -> v+1):  where work_state = IN_FLIGHT and claimed_signal_seq = k
+    # Watch counters are updated from claimed_source_set HERE, BEFORE release (§6.1)
+    # re-coalesce the un-satisfied claimed signals + any post-claim pending signals:
+    pending_source_set    = claimed_source_set ∪ pending_source_set
+    pending_reason_set    = claimed_reason_set ∪ pending_reason_set
+    pending_priority      = max(claimed_priority, pending_priority)
+    pending_first_seen_at = coalesce(pending_first_seen_at, last_attempt_started_at)
+    pending_not_before    = max(pending_not_before, now + backoff(class))   # RETRY_WAIT only; never earlier
     work_state               = <RETRY_WAIT | BLOCKED | SUSPENDED | PENDING>
-    claimed_signal_seq       = NULL            # ALWAYS cleared when leaving IN_FLIGHT
+    claimed_signal_seq = NULL
+    claimed_source_set = NULL
+    claimed_reason_set = NULL
+    claimed_priority   = NULL
     last_attempt_finished_at = now
     consecutive_failures     = consecutive_failures + 1   # provider classes only; NEVER budget defer
     last_error_class         = <class>                    # provider classes only
-    not_before               = now + backoff(class)       # RETRY_WAIT only
 ```
 
 The completion branch is the exact rule that prevents clearing signal `8` after attempt `7`.
 **Every `IN_FLIGHT -> non-IN_FLIGHT` transition (success, failure, block, suspend, crash recovery)
-MUST set `claimed_signal_seq = NULL`** — this is part of work invariant 2 (§3.8).
+MUST release the whole `claimed_*` group to `NULL`** — work invariant 2 (§3.8).
 
 ### 4.2 Merge while in each `work_state`
 
 A trigger may arrive in **any** work state; the merge CAS above always increments `signal_seq`, and one
-transition is defined per state (no state silently ignores a merge):
+transition is defined per state (no state silently ignores a merge). **In every case the new provenance
+goes to `pending_*` only — a merge never modifies `claimed_*`.**
 
 | current `work_state` | merge effect |
 | --- | --- |
-| `PENDING` | `signal_seq++`; same-epoch set union; `not_before = min(not_before, trigger.not_before)` (may become eligible sooner, never later). Stays `PENDING`. |
-| `IN_FLIGHT` | `signal_seq++`; same-epoch set union; `not_before` unchanged. The in-flight attempt continues; on completion the `signal_seq != claimed` branch returns the item to `PENDING` (newer signal preserved). |
-| `VERIFIED` | **opens a NEW EPOCH**: `signal_seq++`; `reason_set`/`source_set` **reset** to the new trigger; **`priority_class`, `first_seen_at`, `last_seen_at`, `not_before` rebuilt from the new trigger**; `work_state = PENDING`. |
-| `RETRY_WAIT` | `signal_seq++`; same-epoch set union; **`not_before` UNCHANGED** — a new signal must **not** cancel or shorten the existing bounded backoff. Stays `RETRY_WAIT`. |
-| `BLOCKED` | `signal_seq++`; same-epoch set union; `not_before` unchanged. Stays `BLOCKED` — a new signal does **not** auto-clear a block; only operator/repair (or `INVALID_SCOPE` policy) returns it to `PENDING`. |
-| `SUSPENDED` | `signal_seq++`; same-epoch set union; `not_before` unchanged. Stays `SUSPENDED` — no attempt runs while the root is non-ACTIVE; resumes to `PENDING` when the root becomes ACTIVE. |
+| `PENDING` | `signal_seq++`; `pending_*` union; `pending_not_before = min(...)` (may become eligible sooner). Stays `PENDING`. |
+| `IN_FLIGHT` | `signal_seq++`; `pending_*` union; **`claimed_*` untouched**; `pending_not_before` unchanged. On completion the `signal_seq != claimed` branch returns the item to `PENDING` keeping **only** the post-claim `pending_*`. |
+| `VERIFIED` | **opens a NEW EPOCH**: `signal_seq++`; `pending_*` **rebuilt** from the new trigger (no inheritance); `work_state = PENDING`. |
+| `RETRY_WAIT` | `signal_seq++`; `pending_*` union; **`pending_not_before` UNCHANGED** — a new signal must **not** cancel or shorten the existing bounded backoff. Stays `RETRY_WAIT`. |
+| `BLOCKED` | `signal_seq++`; `pending_*` union; `pending_not_before` unchanged. Stays `BLOCKED` — a new signal does **not** auto-clear a block; only operator/repair (or `INVALID_SCOPE` policy) returns it to `PENDING`. |
+| `SUSPENDED` | `signal_seq++`; `pending_*` union; `pending_not_before` unchanged. Stays `SUSPENDED` — no attempt runs while the root is non-ACTIVE; resumes to `PENDING` when the root becomes ACTIVE. |
 
-Notes on shared fields during a same-epoch merge:
+Notes:
 
-- **`priority_class`** always becomes the **maximum** of the currently outstanding signals'
-  priority (`max(priority_class, trigger.priority_class)`) — the highest outstanding signal wins.
-  A **new epoch** instead sets it to the triggering signal's priority.
-- **`first_seen_at`** is the first signal time of the **current epoch**; a new epoch resets it to
-  `now` (it is not a lifetime-of-row value).
+- **`pending_priority`** is always the **maximum** of the currently **un-claimed** signals' priority;
+  a new epoch sets it to the new trigger's priority.
+- **`pending_first_seen_at`** is the first time of the **current un-claimed set**; a new epoch resets it
+  to `now`.
+- **`claimed_*`** is a frozen snapshot for the attempt: it is **only** set at claim and released on
+  exit from `IN_FLIGHT`. A failure re-coalesces `claimed_* ∪ pending_*` back into `pending_*`.
 
 ### 4.3 CAS-conflict completion rule (explicit)
 
@@ -358,7 +409,7 @@ re-apply `consecutive_failures` / `last_error_class` to a stale claim.
 ### 4.4 Epoch boundary
 
 An epoch is the outstanding span between successful clears. `VERIFIED` closes the current epoch; the
-next merge opens a new one and **resets** `reason_set`/`source_set` (§3.4). `signal_seq` **does not**
+next merge opens a new one and **rebuilds `pending_*`** (§3.4). `signal_seq` **does not**
 reset across epochs (§3.3) — it remains the durable lost-wakeup guard.
 
 ### 4.5 Worked example (the required race)
@@ -368,8 +419,10 @@ signal_seq = 7
 attempt claims 7            -> claimed_signal_seq = 7, work_state = IN_FLIGHT
 new trigger arrives         -> signal_seq = 8   (merge CAS; version bump)
 attempt 7 succeeds          -> CAS sees signal_seq(8) != claimed(7)
-                            -> work_state = PENDING, claimed = NULL
-                            -> signal 8 remains pending and WILL be processed
+                            -> work_state = PENDING
+                            -> claimed_* released & DISCARDED (attempt 7's provenance)
+                            -> pending_* keeps ONLY the post-claim signal 8 (MUTATION_HINT)
+                            -> signal 8 remains pending and WILL be processed (as MUTATION_HINT)
 ```
 
 Signal 8 is **never** cleared by attempt 7.
@@ -399,9 +452,10 @@ sets (§3.4).
 ### 5.2 Reasons
 
 `POSSIBLE_CHANGE`, `DELETE_HINT`, `MOVE_UNCERTAIN`, `METADATA_UNCERTAIN`, `MANUAL_VERIFY`,
-`DRIFT_VERIFY`, `RETRY`. Reasons **union-merge within the current outstanding epoch and reset at an
-epoch boundary** (§3.4/§4.4); a newer reason never overwrites an existing **same-epoch** member, and
-no reason is retained across epochs.
+`DRIFT_VERIFY`, `RETRY`. Reasons follow the **claim/pending split** (§3.4): merges union into
+`pending_reason_set`; a claim snapshots it into `claimed_reason_set`; a new epoch rebuilds
+`pending_reason_set` from the new trigger. Reasons are never retained across an epoch, and a newer
+reason never overwrites an existing **same-group** member.
 
 ### 5.3 Mutation Hint boundary
 
@@ -413,13 +467,14 @@ no reason is retained across epochs.
 
 ### 5.4 Merge semantics
 
-- Multiple triggers merge into the outstanding item; `signal_seq++`, `last_seen_at = now`,
-  **same-epoch** `reason_set`/`source_set` union, and `not_before` handled **per state** (only
-  `PENDING` may become eligible sooner; `RETRY_WAIT`/`BLOCKED`/`SUSPENDED` keep it unchanged) (§4.1/§4.2).
-- **Cross-epoch**: a trigger arriving after `VERIFIED` opens a new epoch and **rebuilds** the
-  outstanding epoch — `reason_set`/`source_set` reset, and `priority_class`/`first_seen_at`/
-  `last_seen_at`/`not_before` are rebuilt from the new trigger (§3.4/§4.2/§4.4); `signal_seq`
-  continues monotonically (never reset).
+- Multiple triggers merge into the outstanding item; `signal_seq++`, `last_seen_at = now`, and the
+  new provenance is added to **`pending_*` only** (never `claimed_*`), with `pending_not_before`
+  handled **per state** (only `PENDING` may become eligible sooner; `RETRY_WAIT`/`BLOCKED`/`SUSPENDED`
+  keep it unchanged) (§4.1/§4.2).
+- **Cross-epoch**: a trigger arriving after `VERIFIED` opens a new epoch and **rebuilds** `pending_*`
+  (`pending_source_set`/`pending_reason_set`/`pending_priority`/`pending_first_seen_at`/
+  `pending_not_before`) from the new trigger (§3.4/§4.2/§4.4); `signal_seq` continues monotonically
+  (never reset).
 - In v1 the row is never compacted/deleted (`SCHEMA-SKETCH.md`), so the item always exists; a **fresh**
   item with `signal_seq = 1` is created only when the row is first inserted for a new
   `(root_id, scope_key)`.
@@ -455,7 +510,7 @@ Provider-neutral failure classes: `TRANSIENT_PROVIDER`, `THROTTLED`, `AUTH_OR_PE
 | `ROOT_INACTIVE` | `SUSPENDED` | No (until root ACTIVE) | No | No (watch retained) | No |
 | `CONFIG_INVALID` | `BLOCKED` | No | Yes (once) | No | **Yes** |
 | `INTERNAL` | `RETRY_WAIT` | Yes, bounded | Yes | No | If repeated, yes |
-| **budget defer** | remain `PENDING` (`not_before` may be set) | Yes (next cycle) | **No** | No | No |
+| **budget defer** | remain `PENDING` (`pending_not_before` may be set) | Yes (next cycle) | **No** | No | No |
 | crash while `IN_FLIGHT` | recovered to `PENDING`/`RETRY_WAIT` (§7) | Yes | No (not a provider failure) | No | No |
 
 Notes:
@@ -468,25 +523,33 @@ Notes:
 
 ### 6.1 Counter ownership when one attempt serves merged signals
 
-A single `ScanScope` attempt may serve a merged item whose source set contains multiple sources
-(e.g. `POLL_SCHEDULE` + `MUTATION_HINT`). The **execution unit is the `DirtyScopeWork`**, and the
-condition for touching **Watch** counters is evaluated against the **current outstanding epoch** of
-that work item — **`POLL_SCHEDULE ∈ DirtyScopeWork.current_epoch.source_set`** — **not** the watch's
-own `ScopeWatchState.source_set` (which holds only policy provenance such as
-`OPERATOR_POLICY`/`ADAPTIVE_POLICY` and can never contain `POLL_SCHEDULE`).
+A single `ScanScope` attempt serves exactly the signals it **claimed**. Watch health counters are
+attributed using the **claimed** provenance, never the whole outstanding epoch:
+
+> **Watch attribution condition: `POLL_SCHEDULE ∈ DirtyScopeWork.claimed_source_set`.**
+
+This is deliberately **not** the watch's own `ScopeWatchState.source_set` (policy provenance such as
+`OPERATOR_POLICY`/`ADAPTIVE_POLICY`, which can never contain `POLL_SCHEDULE`) and **not** the current
+`pending_source_set` (signals that arrived **after** the claim and are therefore not this attempt's
+responsibility).
 
 | Counter / field | On provider failure | On success | On budget defer |
 | --- | --- | --- | --- |
 | Work `consecutive_failures` / `last_error_class` / `last_attempt_finished_at` | **Yes** (provider classes) | reset `consecutive_failures = 0`; set `last_verified_at` / `last_verified_signal_seq` | **No** |
 | Work `attempt_count` | Yes (already incremented at claim) | Yes | **No** (no claim) |
-| Watch `consecutive_failures` / `last_error_class` | **Only if `POLL_SCHEDULE ∈ DirtyScopeWork.current_epoch.source_set`** | reset `consecutive_failures = 0`; set `last_success_at` **only if `POLL_SCHEDULE ∈ DirtyScopeWork.current_epoch.source_set`** | **No** |
-| Watch `last_attempt_started_at` / `last_attempt_finished_at` | Same rule: **only if `POLL_SCHEDULE ∈ DirtyScopeWork.current_epoch.source_set`** | same | **No** |
+| Watch `consecutive_failures` / `last_error_class` | **Only if `POLL_SCHEDULE ∈ claimed_source_set`** | reset `consecutive_failures = 0`; set `last_success_at` **only if `POLL_SCHEDULE ∈ claimed_source_set`** | **No** |
+| Watch `last_attempt_started_at` / `last_attempt_finished_at` | Same rule: **only if `POLL_SCHEDULE ∈ claimed_source_set`** | same | **No** |
 
 Rules:
 
+- Attribution uses `claimed_source_set` **as evaluated at the attempt's start**, before the claim is
+  released.
+- A failure caused **only** by a signal that arrived **after** the claim (i.e. still in `pending_*`,
+  with `POLL_SCHEDULE ∉ claimed_source_set`) updates the **Work** counters but leaves the **Watch**
+  counters/attempt fields unchanged — that watch poll did not fail, because the failure happened
+  before that `POLL_SCHEDULE` signal existed.
 - A failure caused **only** by `MUTATION_HINT`/`MANUAL_OPERATOR`/`PROVIDER_EVENT`
-  (`POLL_SCHEDULE ∉ DirtyScopeWork.current_epoch.source_set`) updates the **Work** counters but leaves
-  the **Watch** counters/attempt fields unchanged — that watch's periodic schedule did not fail.
+  (`POLL_SCHEDULE ∉ claimed_source_set`) likewise leaves the Watch counters unchanged.
 - A **budget defer** is not an attempt: it updates **neither** Work nor Watch failure counters nor
   error class (it may increment an observability-only `budget_defer_count`).
 
@@ -496,8 +559,8 @@ Single active writer per DB. P2 does **not** authorize distributed leases, fenci
 
 | Crash point | On restart |
 | --- | --- |
-| Before claim | Item remains `PENDING`; `not_before`/`signal_seq` unchanged. |
-| After claim (IN_FLIGHT, no completion persisted) | Stale `IN_FLIGHT` recovered to `PENDING` (or `RETRY_WAIT` if policy says so); `claimed_signal_seq` cleared; `signal_seq` preserved. |
+| Before claim | Item remains `PENDING`; `pending_*`/`signal_seq` unchanged. |
+| After claim (IN_FLIGHT, no completion persisted) | Stale `IN_FLIGHT` recovered to `PENDING` (or `RETRY_WAIT` per policy); the whole `claimed_*` group is **re-coalesced into `pending_*`** (`pending_* := claimed_* ∪ pending_*`) and released; `signal_seq` preserved. |
 | After provider success but before work completion | No durable success recorded; item re-runs P0 safely (idempotent, IO3-protected); `signal_seq` still prevents losing a newer trigger. |
 | After Canonical apply but before `VERIFIED` persisted | Canonical is already correct; the P0 re-run reconciles to the same/newer state safely (IO3 NOOP or normal reconcile); work then completes via the normal CAS. |
 | Restart with stale `IN_FLIGHT` | Recovered as above; no blind re-claim without CAS; no duplicate Canonical write lane. |
