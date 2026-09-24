@@ -18,7 +18,7 @@ path may be introduced.
 
 | ID | Test | Asserts |
 | --- | --- | --- |
-| T-W1 | due-watch recovery after restart | with `next_due_at <= now`, startup recomputes due watches from persisted state and emits `POLL_SCHEDULE`; no reliance on in-memory timers. |
+| T-W1 | due-watch recovery after restart | for a `HOT`/`WARM` watch with `next_due_at <= now` and no active defer, startup recomputes due state from persistence and emits `POLL_SCHEDULE`; `COLD`/`DISABLED` never become due from a stale timestamp; no reliance on in-memory timers. |
 | T-W2 | overdue watch produces exactly one trigger | one due evaluation ⇒ one `DirtyScopeWork` merge (`signal_seq` +1), not N. |
 | T-W3 | `COLD`/`DISABLED` never trigger | stale `next_due_at` on `COLD`/`DISABLED` yields **no** trigger. |
 | T-W4 | watch change does not drop work | HOT→WARM→COLD/DISABLED leaves pending `DirtyScopeWork` intact. |
