@@ -200,6 +200,11 @@ succeeds after each of:
 - parent cancellation during the cycle (release uses a fresh bounded background
   context).
 
+`TestP7IncrementalStdoutWriteFailureReturnsError` additionally proves the writer
+lock is released on the JSON-delivery-failure path:
+`AcquireWriterLock -> P6 success -> stdout write failure -> command error ->
+deferred Release -> a fresh AcquireWriterLock succeeds`.
+
 `TestP7IncrementalWriterLockExclusion` proves an externally held writer lock makes
 the command fail with `postgres.ErrWriterLockHeld`, with **zero** orchestration
 calls, and that the command proceeds once the lock is released.
@@ -299,5 +304,14 @@ New tests: `TestP7IncrementalRejectsPositionalArgs`,
 `TestP7IncrementalStdoutWriteFailureReturnsError`,
 `TestP7IncrementalStdoutWriteFailurePreservesCycleError`,
 `TestP7IncrementalMarshalErrorIsReturned`. P7 tests = 20 (cmd 3 + app 17).
+
+`FROZEN_CONTRACT_CHANGES: NONE`
+## 16. Round 2 final evidence closeout (Issue #85 review)
+
+The single remaining evidence closeout from the P7 Round 2 review was a
+test-only assertion: `TestP7IncrementalStdoutWriteFailureReturnsError` now also
+asserts `p7AssertLockFree`, proving the writer advisory lock is released even
+when the command fails on stdout JSON delivery. Production code was not changed.
+P7 tests remain 20 (cmd 3 + app 17).
 
 `FROZEN_CONTRACT_CHANGES: NONE`

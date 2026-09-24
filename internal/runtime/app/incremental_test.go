@@ -576,9 +576,16 @@ func TestP7IncrementalStdoutWriteFailureReturnsError(t *testing.T) {
 	p7StubCycle(t, func(context.Context, *postgres.Store, config.Config, *slog.Logger, incrementalexec.Config, incrementalorch.Config) (incrementalorch.Result, error) {
 		return incrementalorch.Result{StopReason: incrementalorch.StopCompleted}, nil
 	})
-	if err := RunIncremental(context.Background(), p7BaseConfig(), p7Logger(), nil); err == nil {
+	err := RunIncremental(context.Background(), p7BaseConfig(), p7Logger(), nil)
+	if err == nil {
 		t.Fatal("a stdout write failure after a successful P6 must not exit 0")
 	}
+	if !strings.Contains(err.Error(), "write incremental result") {
+		t.Fatalf("expected an output-delivery error, got %v", err)
+	}
+	// The deferred writer-lock release must still run when JSON delivery fails:
+	// success -> P6 -> stdout failure -> command error -> Release -> re-acquire.
+	p7AssertLockFree(t, context.Background())
 }
 
 func TestP7IncrementalStdoutWriteFailurePreservesCycleError(t *testing.T) {
