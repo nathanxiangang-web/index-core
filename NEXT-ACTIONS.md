@@ -6,7 +6,7 @@
 
 Architecture / acceptance owner: **ChatGPT Architect**
 
-Execution owner: **none currently**
+Execution owner: **Codex Executor / Worker for Issue #62 only**
 
 Status:
 
