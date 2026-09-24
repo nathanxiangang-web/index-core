@@ -47,16 +47,20 @@ func run(args []string) error {
 	// Subcommand-bearing commands parse their own config flags after the
 	// subcommand (e.g. `root create --database-url ...`), so they receive the
 	// env-based config as a base and parse the remaining args themselves.
-	if cmd == "root" || cmd == "scan" {
+	if cmd == "root" || cmd == "scan" || cmd == "incremental" {
 		base, err := config.Load()
 		if err != nil {
 			return err
 		}
 		logger := newLogger(base)
-		if cmd == "root" {
+		switch cmd {
+		case "root":
 			return app.Root(ctx, base, logger, rest)
+		case "scan":
+			return app.Scan(ctx, base, logger, rest)
+		default:
+			return app.Incremental(ctx, base, logger, rest)
 		}
-		return app.Scan(ctx, base, logger, rest)
 	}
 
 	cfg, _, err := loadConfig(cmd, rest)
@@ -131,9 +135,17 @@ Commands:
   doctor         validate database connectivity and schema compatibility
   root           root administration (create/list/config/lifecycle)
   scan           run the configured collector scan for a root
+  incremental    run one bounded manual incremental orchestration cycle
   version        print build version
   help           print this help
 
 Configuration is env + flags; see --help on each command.
+
+`+"`"+`indexcore incremental run`+"`"+` is one-shot/manual only: it calls the accepted P6
+orchestration exactly once under the existing single-writer advisory lock (an
+active `+"`"+`serve`+"`"+` writer makes it fail closed), stays within the hard
+prototype bounds 5/5/60s (max-due-watch-attempts<=5 / max-execute-items<=5 /
+max-wall-time<=60s), and exits 0 on a normal bounded MAX_WALL_TIME. It never starts a scheduler, ticker,
+background/daemon mode, or automatic recovery.
 `)
 }

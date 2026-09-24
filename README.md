@@ -95,6 +95,18 @@ ROOT_ID='11111111-1111-4111-8111-111111111111'
 
 Collector documentation: [docs/COLLECTORS.md](docs/COLLECTORS.md)
 
+## Run one manual incremental cycle
+
+```bash
+./bin/indexcore incremental run
+```
+
+One-shot/manual only: it calls the accepted P6 orchestration exactly once under
+the same single-writer advisory lock as `serve` (an active `serve` writer makes
+it fail closed) and prints one JSON result to stdout. Bounds are 5 due-watch
+attempts / 5 execute items / 60s wall time; there is no scheduler, ticker,
+daemon, or background mode. See [docs/CLI.md](docs/CLI.md).
+
 ## Read the API
 
 ```bash

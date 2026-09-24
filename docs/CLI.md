@@ -17,6 +17,7 @@ Configuration is environment variables plus flags. Flags override environment va
 | `serve` | Run the read-only HTTP API plus the single write-orchestration worker |
 | `root` | Root lifecycle, policy, and Collector configuration |
 | `scan` | Run one Collector scan for a root |
+| `incremental` | Run one bounded manual incremental orchestration cycle |
 | `version` | Print build identity |
 | `help` | Print top-level help |
 
@@ -170,6 +171,67 @@ indexcore serve
 A second active writer daemon for the same database fails closed.
 
 Default bind is loopback. There is no built-in authentication in the current Alpha, so keep the service on a trusted/private boundary.
+
+## Incremental manual cycle
+
+```bash
+indexcore incremental run [flags]
+```
+
+One-shot/manual only. `indexcore incremental` without a subcommand, and any
+unknown or reserved subcommand (`watch`, `daemon`, ...), fail. There is no
+`watch`, `daemon`, `recover`, or `hint` behavior and no second binary.
+
+The command reuses the accepted Scan -> P4 -> P5 -> P6 chain and calls the P6
+orchestration **exactly once**. It requires the same PostgreSQL single-writer
+advisory lock as `serve`, so an active `indexcore serve` writer on the same
+database makes it fail closed (exit 1, no provider work).
+
+Command-local flags (defaults):
+
+| Flag | Default | Bound |
+| --- | --- | --- |
+| `--max-due-watch-attempts` | `5` | `1..5` |
+| `--max-execute-items` | `5` | `1..5` |
+| `--max-wall-time` | `60s` | `>0..60s` |
+| `--max-entries-per-scope` | `1000` | `0..10000` |
+| `--retry-transient-provider` | `30s` | `>0` |
+| `--retry-throttled` | `45s` | `>0` |
+| `--retry-internal` | `60s` | `>0` |
+
+These are command-local prototype safety budgets, not production cadence/SLA.
+They are not added to persistent/global config or environment variables.
+Existing runtime flags/env (`--database-url`, `--rclone-path`, `--rclone-config`,
+`--scan-timeout`, `--shutdown-timeout`, logging) are reused.
+
+Schema is preflighted: the command never auto-migrates and fails closed on a
+missing/future/incompatible schema.
+
+After the single P6 cycle it writes exactly one snake_case JSON object to stdout:
+
+```json
+{
+  "command": "incremental run",
+  "stop_reason": "COMPLETED",
+  "started_at": "...", "finished_at": "...", "observed_at": "...",
+  "due": { "candidates": 1, "attempted": 1, "emitted": 1, "stale": 0,
+           "more_due_watches": false, "materialization_interrupted": false },
+  "executor": { "ran": true, "stop_reason": "NO_ELIGIBLE_WORK",
+                "invocations": 1, "selected_items": 1, "succeeded": 1,
+                "failed": 0, "interrupted_in_flight": false, "last": {} }
+}
+```
+
+Logs and errors go to stderr. The JSON never contains the database DSN, provider
+credentials, adapter config, or secret environment values.
+
+Exit codes reuse the existing process contract: `0` when the command returns nil
+(including a normal bounded P6 `MAX_WALL_TIME`), `1` on any error (parent
+cancellation, materialization/executor error, writer-lock conflict, invalid
+config/schema). No new exit-code classes are introduced.
+
+No automatic recovery/repair/retry promotion, scheduler, ticker, background or
+daemon mode is involved.
 
 ## Build identity
 
