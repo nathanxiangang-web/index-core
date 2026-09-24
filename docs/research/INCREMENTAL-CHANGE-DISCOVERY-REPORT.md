@@ -1,6 +1,6 @@
 # Incremental Change Discovery Research Report
 
-> Status: **RESEARCH COMPLETE — ARCHITECT DECISION PENDING**
+> Status: **RESEARCH COMPLETE — P0 SCOPED REFRESH ACCEPTED — P1 HOT-SCOPE POLLING SELECTED**
 >
 > Research issue: #59
 >
