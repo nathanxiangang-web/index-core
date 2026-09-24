@@ -130,7 +130,10 @@ func (e *Executor) ExecuteOne(ctx context.Context) (Result, error) {
 	if err != nil {
 		// Never re-scan and never tight-loop completion: durable recovery owns the
 		// repair.
-		return res, fmt.Errorf("%w: %v", ErrCompletionFailed, err)
+		// Preserve both the durable completion sentinel and the underlying cause
+		// (e.g. context.DeadlineExceeded) so a bounded caller can distinguish a
+		// budget-driven interruption from an unrelated systemic failure.
+		return res, fmt.Errorf("%w: %w", ErrCompletionFailed, err)
 	}
 	res.FinalWorkState = done.WorkState
 	return res, nil
@@ -144,7 +147,10 @@ func (e *Executor) completeFailure(ctx context.Context, res Result, claimed stat
 	done, err := e.store.CompleteFailure(ctx, claimed.RootID, claimed.ScopeKey,
 		*claimed.ClaimedSignalSeq, class, e.retryEligibility(class, completionNow), completionNow)
 	if err != nil {
-		return res, fmt.Errorf("%w: %v", ErrCompletionFailed, err)
+		// Preserve both the durable completion sentinel and the underlying cause
+		// (e.g. context.DeadlineExceeded) so a bounded caller can distinguish a
+		// budget-driven interruption from an unrelated systemic failure.
+		return res, fmt.Errorf("%w: %w", ErrCompletionFailed, err)
 	}
 	res.FailureClass = &class
 	res.FinalWorkState = done.WorkState
