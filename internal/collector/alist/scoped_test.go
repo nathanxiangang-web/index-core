@@ -178,3 +178,27 @@ func TestScanScopeRejectsOverHardCap(t *testing.T) {
 		t.Fatalf("rejected max_entries must not reach the provider, got %d requests", n)
 	}
 }
+
+// TestScanScopeAllowsExactHardCap proves the inclusive boundary: maxEntries ==
+// MaxScopedEntries is allowed, and the request uses per_page == MaxScopedEntries+1.
+func TestScanScopeAllowsExactHardCap(t *testing.T) {
+	var got scopedListReq
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"code":200,"message":"success","data":{"content":[
+			{"name":"a","is_dir":false,"size":1}],"total":1}}`)
+	}))
+	defer srv.Close()
+
+	raw, err := (alist.Adapter{BaseURL: srv.URL}).ScanScope(context.Background(), "/x", alist.MaxScopedEntries)
+	if err != nil {
+		t.Fatalf("maxEntries == MaxScopedEntries must be allowed, got %v", err)
+	}
+	if got.PerPage != alist.MaxScopedEntries+1 {
+		t.Fatalf("per_page must be MaxScopedEntries+1=%d, got %d", alist.MaxScopedEntries+1, got.PerPage)
+	}
+	if len(raw.Entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(raw.Entries))
+	}
+}

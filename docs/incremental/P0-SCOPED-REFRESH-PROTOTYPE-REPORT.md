@@ -1,6 +1,6 @@
 # P0 Targeted Scoped Refresh — Prototype Delivery Report
 
-> Status: **PROTOTYPE DELIVERED (Round 2 corrections applied) — DETERMINISTIC + POSTGRESQL VERIFIED — LIVE VALIDATION PENDING**
+> Status: **PROTOTYPE DELIVERED (Rounds 1–2 corrections applied) — DETERMINISTIC + POSTGRESQL VERIFIED — LIVE VALIDATION PENDING**
 >
 > **P0 NOT PASS** (live 115/OpenList validation not yet executed)
 >
@@ -66,7 +66,12 @@ Additional P0 rules (Round 2):
   directory, otherwise the run fails closed — a scoped observation must never
   create orphan resources whose parent is absent from the Canonical Inventory;
 - `max_entries` is clamped by a P0 hard cap (`alist.MaxScopedEntries = 10000`); a
-  caller can never widen a scoped observation, and `maxEntries+1` cannot overflow.
+  caller can never widen a scoped observation, and `maxEntries+1` cannot overflow;
+- the canonical-parent guard validates the **provider-path namespace** that
+  `Adapter.Scan()` records — e.g. configured root `/library` + scope `/sub`
+  resolves to provider `/library/sub` and must be a unique PRESENT canonical
+  directory — so scoped refresh is correct for **any** configured root path, not
+  only `/` (Round 2 fix).
 
 > **Important (Round 1 review): `max_entries` bounds only what IndexCore accepts
 > and writes — it does NOT bound the real provider cost.** OpenList loads the
@@ -90,8 +95,11 @@ Additional P0 rules (Round 2):
 | Non-root scope requires exactly one PRESENT canonical directory | `TestScanScopeFailsClosedOnBadScope` | PASS |
 | P0 hard cap rejects over-sized / overflow `max_entries` (no request made) | `TestScanScopeRejectsOverHardCap` | PASS |
 | Removal evidence stays NONE / `missing_since` NULL / counter 0; persisted Snapshot is PARTIAL/PARTIAL + FRESH_REFRESHED + WEAK | `assertRemovalEvidenceClean` / `assertSnapshotScopedSemantics` | PASS |
-| Legitimate metadata update (same path + hash, size change) | `TestScanScopeReconcileIsAdditiveSafe` | PASS |
-| Same-root FIFO (`admission_seq` strictly 1,2,3…) | `admissionSeqs` | PASS |
+| Identity continuity: same path + hash + size, changed mtime → UPDATE, `resource_id` unchanged, `resource-updated` Journal | `TestScanScopeReconcileIsAdditiveSafe` | PASS |
+| Absolute same-root FIFO: a stranded older PENDING is drained first, no leapfrog | `TestScanScopeDrainsOlderPendingHead` | PASS |
+| Persisted `acceptance_state = PARTIAL` | `assertSnapshotScopedSemantics` | PASS |
+| Configured non-`/` root path (canonical parent uses the provider-path namespace) | `TestScanScopeConfiguredRootPathNamespace` | PASS |
+| Hard-cap exact boundary (`maxEntries == MaxScopedEntries` allowed; `per_page == Max+1`) | `TestScanScopeAllowsExactHardCap` | PASS |
 | Non-AList collector + DELETED root fail closed | `TestScanScopeFailsClosedForUnsupportedAndDeletedRoot` | PASS |
 | Full regression `go test -p 1 ./...` | whole repo | PASS |
 | `go vet ./...`, `gofmt` | whole repo | clean |

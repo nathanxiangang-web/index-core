@@ -72,8 +72,13 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 	// A non-root scope MUST already be an unambiguous PRESENT canonical
 	// directory; otherwise a scoped observation would produce orphan resources
 	// whose parent does not exist in the Canonical Inventory.
+	//
+	// Validate against the SAME provider-path namespace that Adapter.Scan()
+	// records (EntryLocalID is the provider path, e.g. "/library/sub"), NOT the
+	// root-relative scope. Using rel here would wrongly fail whenever the
+	// configured root path is not "/".
 	if rel != "" {
-		if err := s.requirePresentDirectory(ctx, rootID, rel); err != nil {
+		if err := s.requirePresentDirectory(ctx, rootID, target); err != nil {
 			return Result{}, err
 		}
 	}
