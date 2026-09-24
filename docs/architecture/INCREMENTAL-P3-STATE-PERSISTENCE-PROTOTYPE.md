@@ -300,6 +300,7 @@ Required constraints include the P2 bucket invariants:
 - VERIFIED => claim absent and pending bucket empty;
 - PENDING/RETRY_WAIT/BLOCKED/SUSPENDED => claim absent and pending source bucket non-empty;
 - IN_FLIGHT => claimed source bucket non-empty; pending bucket may be empty or contain only post-claim signals;
+- RETRY_WAIT => pending_not_before is non-NULL;
 - empty pending source bucket => empty pending reason set + NULL pending priority/first_seen/not_before;
 - non-empty pending source bucket => pending_first_seen_at non-NULL.
 
@@ -429,7 +430,8 @@ It must:
 - increment attempt_count;
 - set last_attempt_started_at;
 - increment version;
-- if claimed_source_set contains POLL_SCHEDULE, update the matching watch's last_attempt_started_at in the same transaction.
+- if claimed_source_set contains POLL_SCHEDULE, the matching watch row MUST exist; otherwise roll back/fail closed;
+- if claimed_source_set contains POLL_SCHEDULE, update the matching watch's last_attempt_started_at and increment that watch row's version in the same transaction.
 
 No ScanScope call occurs in P3.
 
@@ -450,7 +452,7 @@ Given the claim watermark and expected/current version:
 - no newer pending => VERIFIED;
 - newer pending => PENDING, keeping only post-claim pending_*;
 - release claimed_*;
-- if claimed_source_set contained POLL_SCHEDULE, update Watch success/finish/failure reset in the same transaction.
+- if claimed_source_set contained POLL_SCHEDULE, the matching Watch row must exist and Watch success/finish/failure reset + Watch version increment occur in the same transaction.
 
 ### Failure completion
 
@@ -477,7 +479,7 @@ Failure:
 - provider-class failures increment Work failure counters;
 - ROOT_INACTIVE is not a provider failure;
 - RETRY_WAIT applies bounded caller-supplied retry eligibility and never makes it earlier than the required backoff;
-- Watch failure/finish counters change only if POLL_SCHEDULE belonged to claimed_source_set.
+- Watch failure/finish counters change only if POLL_SCHEDULE belonged to claimed_source_set; that Watch mutation increments Watch version and rolls back together with Work completion.
 
 ### Budget defer
 
@@ -497,6 +499,16 @@ Persistence must support the accepted state-machine transitions without a schedu
 - BLOCKED -> PENDING only via an explicit repair transition.
 
 These are primitives/tests only in P3.
+
+### Row retention
+
+P3 exposes no deletion/compaction primitive for either accepted current-state model:
+
+- DISABLED Watch rows remain retained;
+- VERIFIED DirtyScopeWork rows remain retained;
+- signal_seq is never reset by deletion/recreate.
+
+Deletion/compaction requires a later Architect decision.
 
 ## 11. Restart recovery primitive
 
