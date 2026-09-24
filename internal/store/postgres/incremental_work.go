@@ -161,6 +161,9 @@ func newWorkFromSignal(sig state.DirtySignal, active bool) state.DirtyScopeWork 
 
 // applyMerge implements the frozen P2 merge rules on a loaded (locked) row.
 func applyMerge(wk state.DirtyScopeWork, sig state.DirtySignal, active bool) (state.DirtyScopeWork, error) {
+	// A VERIFIED -> new-epoch merge starts a fresh epoch; last_seen_at must not
+	// inherit the previous epoch's value.
+	newEpoch := wk.WorkState == state.WorkVerified
 	switch wk.WorkState {
 	case state.WorkVerified:
 		p := sig.Priority
@@ -212,8 +215,9 @@ func applyMerge(wk state.DirtyScopeWork, sig state.DirtySignal, active bool) (st
 		return wk, fmt.Errorf("merge: unsupported work state %q", wk.WorkState)
 	}
 	wk.SignalSeq++
-	// last_seen_at is the latest signal time of the current epoch: never regress.
-	if sig.SeenAt.After(wk.LastSeenAt) {
+	// last_seen_at is the latest signal time of the CURRENT epoch: on a new epoch
+	// it is exactly the triggering signal; within an epoch it never regresses.
+	if newEpoch || sig.SeenAt.After(wk.LastSeenAt) {
 		wk.LastSeenAt = sig.SeenAt
 	}
 	return wk, nil
@@ -426,7 +430,7 @@ func watchRecordFailure(ctx context.Context, tx pgx.Tx, rootID, scopeKey string,
 
 // ClaimWork snapshots the pending bucket into claimed_* atomically.
 // Lock order: Root -> Watch -> Work.
-func (s *Store) ClaimWork(ctx context.Context, rootID, scopeKey string, now time.Time) (state.DirtyScopeWork, error) {
+func (s *Store) ClaimWork(ctx context.Context, rootID, scopeKey string, expectedWorkVersion int64, now time.Time) (state.DirtyScopeWork, error) {
 	if err := state.ValidateScopeKey(scopeKey); err != nil {
 		return state.DirtyScopeWork{}, err
 	}
@@ -450,6 +454,10 @@ func (s *Store) ClaimWork(ctx context.Context, rootID, scopeKey string, now time
 	}
 	if !found {
 		return state.DirtyScopeWork{}, ErrNotFound
+	}
+	if wk.Version != expectedWorkVersion {
+		// Stale caller selection: fail closed with no Work/Watch mutation.
+		return state.DirtyScopeWork{}, ErrStateCASConflict
 	}
 
 	if !activeFromLifecycle(lifecycle) {

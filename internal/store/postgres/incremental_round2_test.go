@@ -40,7 +40,7 @@ func TestP3RecoveryNullClaimEligibilityNotDelayed(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.ClaimWork(ctx, p3RootActive, "/null-elig", t0); err != nil {
+	if _, err := p3Claim(t, st, ctx, p3RootActive, "/null-elig", t0); err != nil {
 		t.Fatal(err)
 	}
 	// post-claim signal with a FUTURE barrier.
@@ -133,7 +133,7 @@ func TestP3CompleteFailureKeepsLaterBarrier(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/barrier", state.SourceMutationHint, state.ReasonPossibleChange, t0)); err != nil {
 		t.Fatal(err)
 	}
-	cl, err := st.ClaimWork(ctx, p3RootActive, "/barrier", t0)
+	cl, err := p3Claim(t, st, ctx, p3RootActive, "/barrier", t0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestP3EmitDuePollVsClaimNoDeadlock(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		_, err := st.ClaimWork(ctx, p3RootActive, "/dl", now)
+		_, err := p3Claim(t, st, ctx, p3RootActive, "/dl", now)
 		errs <- err
 	}()
 	wg.Wait()
@@ -232,7 +232,7 @@ func TestP3TransitionRootLifecycleRaceNoDeadlock(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, err := st.ClaimWork(ctx, p3RootActive, "/lifecycle", now)
+		_, err := p3Claim(t, st, ctx, p3RootActive, "/lifecycle", now)
 		errs <- err
 	}()
 	go func() {

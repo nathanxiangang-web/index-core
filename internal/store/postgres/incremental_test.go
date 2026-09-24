@@ -65,6 +65,17 @@ func p3Signal(rootID, scopeKey string, src state.TriggerSource, reason state.Tri
 	}
 }
 
+// p3Claim reads the current work row (its version) and claims it under that
+// version, mirroring the executor's select -> version -> claim sequence.
+func p3Claim(t *testing.T, st *postgres.Store, ctx context.Context, rootID, scopeKey string, now time.Time) (state.DirtyScopeWork, error) {
+	t.Helper()
+	w, err := st.GetWork(ctx, rootID, scopeKey)
+	if err != nil {
+		return state.DirtyScopeWork{}, err
+	}
+	return st.ClaimWork(ctx, rootID, scopeKey, w.Version, now)
+}
+
 // --- Migration ---------------------------------------------------------------
 
 func TestP3MigrationAddsOnlyOperationalTables(t *testing.T) {
@@ -242,7 +253,7 @@ func TestP3VerifiedOpensNewEpoch(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/e", state.SourceMutationHint, state.ReasonPossibleChange, now)); err != nil {
 		t.Fatal(err)
 	}
-	cl, err := st.ClaimWork(ctx, p3RootActive, "/e", now)
+	cl, err := p3Claim(t, st, ctx, p3RootActive, "/e", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +399,7 @@ func TestP3ClaimMovesBucketAndIsolatesClaim(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/cl", state.SourceMutationHint, state.ReasonPossibleChange, now)); err != nil {
 		t.Fatal(err)
 	}
-	cl, err := st.ClaimWork(ctx, p3RootActive, "/cl", now)
+	cl, err := p3Claim(t, st, ctx, p3RootActive, "/cl", now)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -419,7 +430,7 @@ func TestP3ClaimMissingWatchRollsBack(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/nowatch", state.SourcePollSchedule, state.ReasonPossibleChange, now)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.ClaimWork(ctx, p3RootActive, "/nowatch", now); err == nil {
+	if _, err := p3Claim(t, st, ctx, p3RootActive, "/nowatch", now); err == nil {
 		t.Fatal("claim of POLL_SCHEDULE without a watch must fail closed")
 	}
 	wk, _ := st.GetWork(ctx, p3RootActive, "/nowatch")
@@ -439,7 +450,7 @@ func TestP3ClaimOnInactiveRootSuspends(t *testing.T) {
 		`UPDATE index_root SET lifecycle_state='DEPRECATED' WHERE root_id=$1`, p3RootActive); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.ClaimWork(ctx, p3RootActive, "/sus", now); err == nil {
+	if _, err := p3Claim(t, st, ctx, p3RootActive, "/sus", now); err == nil {
 		t.Fatal("claim on inactive root must fail closed")
 	}
 	wk, _ := st.GetWork(ctx, p3RootActive, "/sus")
@@ -457,7 +468,7 @@ func TestP3PartialSuccessWatermarkAndPendingIsolation(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/s78", state.SourceMutationHint, state.ReasonPossibleChange, now)); err != nil {
 		t.Fatal(err)
 	}
-	cl, err := st.ClaimWork(ctx, p3RootActive, "/s78", now)
+	cl, err := p3Claim(t, st, ctx, p3RootActive, "/s78", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +500,7 @@ func TestP3StaleClaimCannotComplete(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/stale", state.SourceMutationHint, state.ReasonPossibleChange, now)); err != nil {
 		t.Fatal(err)
 	}
-	cl, err := st.ClaimWork(ctx, p3RootActive, "/stale", now)
+	cl, err := p3Claim(t, st, ctx, p3RootActive, "/stale", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +524,7 @@ func TestP3WatchAttributionSuccess(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/att", state.SourceMutationHint, state.ReasonPossibleChange, now)); err != nil {
 		t.Fatal(err)
 	}
-	cl, _ := st.ClaimWork(ctx, p3RootActive, "/att", now)
+	cl, _ := p3Claim(t, st, ctx, p3RootActive, "/att", now)
 	if _, err := st.CompleteSuccess(ctx, p3RootActive, "/att", *cl.ClaimedSignalSeq, now); err != nil {
 		t.Fatal(err)
 	}
@@ -526,7 +537,7 @@ func TestP3WatchAttributionSuccess(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/att", state.SourcePollSchedule, state.ReasonPossibleChange, now.Add(time.Second))); err != nil {
 		t.Fatal(err)
 	}
-	cl2, _ := st.ClaimWork(ctx, p3RootActive, "/att", now.Add(time.Second))
+	cl2, _ := p3Claim(t, st, ctx, p3RootActive, "/att", now.Add(time.Second))
 	if _, err := st.CompleteSuccess(ctx, p3RootActive, "/att", *cl2.ClaimedSignalSeq, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -546,7 +557,7 @@ func TestP3FailureMappingAndRecoalesce(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/f", state.SourceMutationHint, state.ReasonPossibleChange, now)); err != nil {
 		t.Fatal(err)
 	}
-	cl, _ := st.ClaimWork(ctx, p3RootActive, "/f", now)
+	cl, _ := p3Claim(t, st, ctx, p3RootActive, "/f", now)
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/f", state.SourceManualOperator, state.ReasonManualVerify, now)); err != nil {
 		t.Fatal(err)
 	}
@@ -584,7 +595,7 @@ func TestP3FailureMappingAndRecoalesce(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/b", state.SourceMutationHint, state.ReasonPossibleChange, now)); err != nil {
 		t.Fatal(err)
 	}
-	clb, _ := st.ClaimWork(ctx, p3RootActive, "/b", now)
+	clb, _ := p3Claim(t, st, ctx, p3RootActive, "/b", now)
 	blocked, err := st.CompleteFailure(ctx, p3RootActive, "/b", *clb.ClaimedSignalSeq, state.ErrorAuthOrPermission, nil, now)
 	if err != nil {
 		t.Fatal(err)
@@ -600,7 +611,7 @@ func TestP3RootInactiveFailureDoesNotCountProviderFailure(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/ri", state.SourceMutationHint, state.ReasonPossibleChange, now)); err != nil {
 		t.Fatal(err)
 	}
-	cl, _ := st.ClaimWork(ctx, p3RootActive, "/ri", now)
+	cl, _ := p3Claim(t, st, ctx, p3RootActive, "/ri", now)
 	out, err := st.CompleteFailure(ctx, p3RootActive, "/ri", *cl.ClaimedSignalSeq, state.ErrorRootInactive, nil, now)
 	if err != nil {
 		t.Fatalf("root-inactive failure: %v", err)
@@ -643,7 +654,7 @@ func TestP3RecoveryIsDeterministicAndIdempotent(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/rec", state.SourceMutationHint, state.ReasonPossibleChange, now)); err != nil {
 		t.Fatal(err)
 	}
-	cl, _ := st.ClaimWork(ctx, p3RootActive, "/rec", now)
+	cl, _ := p3Claim(t, st, ctx, p3RootActive, "/rec", now)
 	// post-claim signal, then "crash" (no completion).
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/rec", state.SourceManualOperator, state.ReasonManualVerify, now)); err != nil {
 		t.Fatal(err)
@@ -684,7 +695,7 @@ func TestP3RecoveryOnInactiveRootSuspends(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/rec2", state.SourceMutationHint, state.ReasonPossibleChange, now)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.ClaimWork(ctx, p3RootActive, "/rec2", now); err != nil {
+	if _, err := p3Claim(t, st, ctx, p3RootActive, "/rec2", now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.Pool().Exec(ctx,

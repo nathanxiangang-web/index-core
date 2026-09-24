@@ -92,7 +92,15 @@ docs/incremental/P3-STATE-PERSISTENCE-RESULT.md                       (new)
 
 ## 4. Real-PostgreSQL evidence (PostgreSQL 18, `testutil.Pool`)
 
-`incremental_test.go` — **20 tests, all PASS**:
+P3 test files — **38 tests total, all PASS**:
+
+| file | tests |
+| --- | --- |
+| `incremental_test.go` | 20 |
+| `incremental_round1_test.go` | 5 |
+| `incremental_round2_test.go` | 9 |
+| `incremental_round3_test.go` | 3 |
+| `incremental_rollback_internal_test.go` | 1 |
 
 | Area | Evidence |
 | --- | --- |
@@ -210,6 +218,23 @@ PR #73 Round 2 = CHANGES REQUIRED. All 7 points addressed, P3-scope only:
    `TestP3LifecycleGateOnRunnableTransitions`, `TestP3RecoveryNullClaimEligibilityNotDelayed`,
    `TestP3CompleteFailureKeepsLaterBarrier`, `TestP3LastSeenAtNeverRegresses`,
    `TestP3DBVerifiedWatermarkLowerBound`.
+
+Full `go test -p 1 ./...` green; `go vet` / `gofmt` clean; real PostgreSQL 18.
+`FROZEN_CONTRACT_CHANGES: NONE`.
+## 11. Round 3 Architect review rework (2026-09-24)
+
+PR #73 Round 3 = CHANGES REQUIRED. Two contract fixes + evidence closeout:
+
+1. **New-epoch `last_seen_at`.** Same-epoch merges still use
+   `max(last_seen_at, sig.SeenAt)` (never regress); a **VERIFIED → new-epoch** merge now sets
+   `last_seen_at = sig.SeenAt` exactly — it no longer inherits the previous epoch's value.
+   Test: `TestP3NewEpochLastSeenNotInherited`.
+2. **`ClaimWork` stale-version CAS.** Signature is now
+   `ClaimWork(ctx, rootID, scopeKey, expectedWorkVersion, now)`; if the row's version differs the
+   call fails with `ErrStateCASConflict` and leaves **Work and Watch unmodified** — matching the
+   next-stage executor flow `select work → version → claim`.
+   Tests: `TestP3ClaimStaleVersionCAS`, `TestP3ClaimStaleVersionLeavesWatchUntouched`.
+3. **Evidence counts.** P3 tests now total **38** (20 + 5 + 9 + 3 + 1), as recorded in §4.
 
 Full `go test -p 1 ./...` green; `go vet` / `gofmt` clean; real PostgreSQL 18.
 `FROZEN_CONTRACT_CHANGES: NONE`.

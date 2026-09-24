@@ -91,7 +91,7 @@ func TestP3CompleteFailureRejectsImmediateRetry(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, p3Signal(p3RootActive, "/nr", state.SourceMutationHint, state.ReasonPossibleChange, now)); err != nil {
 		t.Fatal(err)
 	}
-	cl, err := st.ClaimWork(ctx, p3RootActive, "/nr", now)
+	cl, err := p3Claim(t, st, ctx, p3RootActive, "/nr", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestP3RecoveryPreservesEarliestEligibility(t *testing.T) {
 	if _, err := st.MergeSignal(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	cl, err := st.ClaimWork(ctx, p3RootActive, "/elig", t0)
+	cl, err := p3Claim(t, st, ctx, p3RootActive, "/elig", t0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestP3InactiveClaimKeepsEligibility(t *testing.T) {
 		`UPDATE index_root SET lifecycle_state='DEPRECATED' WHERE root_id=$1`, p3RootActive); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.ClaimWork(ctx, p3RootActive, "/suspend-elig", now); err == nil {
+	if _, err := p3Claim(t, st, ctx, p3RootActive, "/suspend-elig", now); err == nil {
 		t.Fatal("claim on inactive root must fail closed")
 	}
 	wk, _ := st.GetWork(ctx, p3RootActive, "/suspend-elig")
