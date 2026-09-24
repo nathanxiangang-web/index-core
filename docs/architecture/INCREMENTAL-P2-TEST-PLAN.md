@@ -30,7 +30,7 @@ path may be introduced.
 | T-C1 | duplicate trigger coalescing | repeated triggers for the same key produce **one** active item with growing `signal_seq`; no duplicate rows. |
 | T-C2 | **signal 7 / signal 8 lost-wakeup race** | claim(7) → trigger(8) → success(7) results in `work_state = PENDING` with `signal_seq = 8` (never `VERIFIED`); 8 is subsequently processed. |
 | T-C3 | success clears only the claimed signal | success with `signal_seq == claimed` ⇒ `VERIFIED` and `last_verified_signal_seq == claimed`. |
-| T-C4 | merge during `IN_FLIGHT` preserves provenance | `reason_set`/`source_set` union-merge; `not_before` never pushed later. |
+| T-C4 | merge during `IN_FLIGHT` preserves provenance | `pending_reason_set`/`pending_source_set` union-merge; `claimed_*` untouched; `pending_not_before = min(...)`. |
 
 ## 3. Verification semantics
 
@@ -44,7 +44,7 @@ path may be introduced.
 
 | ID | Test | Asserts |
 | --- | --- | --- |
-| T-F1 | transient → `RETRY_WAIT` | `TRANSIENT_PROVIDER` sets `RETRY_WAIT` + bounded `not_before`, `consecutive_failures++`. |
+| T-F1 | transient → `RETRY_WAIT` | `TRANSIENT_PROVIDER` sets `RETRY_WAIT` + bounded `pending_not_before`, `consecutive_failures++`. |
 | T-F2 | throttled → `RETRY_WAIT` with larger backoff | `THROTTLED` is retried with a larger bounded backoff; no tight loop. |
 | T-F3 | auth → `BLOCKED` | `AUTH_OR_PERMISSION` ⇒ `BLOCKED`, **no tight automatic retry**, operator action required. |
 | T-F4 | oversized scope → `BLOCKED` | `SCOPE_TOO_LARGE` ⇒ `BLOCKED`; `max_entries` is **not** silently raised. |
@@ -119,14 +119,17 @@ These tests lock the semantics added in the Round-1 review of PR #70.
 | T-W5 | `COLD` never schedules | a `COLD` watch with a stale `next_due_at` produces **no** `POLL_SCHEDULE`; only `HOT`/`WARM` are periodically polled. |
 | T-W6 | poll-due atomicity | due re-check + schedule advance + `DirtyScopeWork` merge commit in **one** transaction; a crash mid-way leaves **neither** advance **nor** merge visible (no duplicated poll signal, no skipped due watch). |
 | T-C5 | merge while in each `work_state` | merge is defined and never ignored for `PENDING`/`IN_FLIGHT`/`VERIFIED`/`RETRY_WAIT`/`BLOCKED`/`SUSPENDED`; `BLOCKED`/`SUSPENDED`/`RETRY_WAIT` are **not** auto-cleared by a merge. |
-| T-C6 | epoch provenance reset | after `VERIFIED`, a new trigger **resets** `reason_set`/`source_set` (no inheritance from the previous epoch) while `signal_seq` keeps increasing. |
+| T-C6 | epoch provenance reset | after `VERIFIED`, a new trigger **rebuilds `pending_*`** (no inheritance from the previous epoch) while `signal_seq` keeps increasing. |
 | T-C7 | CAS-conflict completion | a merge during `IN_FLIGHT` bumps `version`; the completion CAS fails → re-read → success recorded **only if** `signal_seq == claimed_signal_seq`; otherwise `PENDING` (signal preserved); no tight retry loop. |
 | T-C8 | claim released on every exit | every `IN_FLIGHT → non-IN_FLIGHT` transition releases the whole `claimed_*` group (success/newer-signal/crash/`RETRY_WAIT`/`BLOCKED`/`SUSPENDED`); failures **re-coalesce `claimed_*` into `pending_*`**. |
 | T-F8 | counter ownership | a failing attempt updates **Work** counters; **Watch** counters/attempt fields update **only** when `POLL_SCHEDULE ∈ DirtyScopeWork.claimed_source_set`; budget defer updates neither. |
-| T-C9 | `pending_not_before` handled per state | a merge into `PENDING` may make it eligible sooner (`min`); a merge into `IN_FLIGHT`/`RETRY_WAIT`/`BLOCKED`/`SUSPENDED` may only move **later** (`max`) — a post-claim signal's eligibility is preserved and backoff is never cancelled; a new epoch (`VERIFIED`) rebuilds `pending_*`; same-group `pending_priority` = **max** of the un-claimed signals. |
+| T-C9 | `pending_not_before` handled per state | frozen: `PENDING`/`IN_FLIGHT` merge with **`min`** (`IN_FLIGHT`'s first post-claim signal initializes it); `RETRY_WAIT`/`BLOCKED`/`SUSPENDED` leave it **UNCHANGED** (a new signal never cancels **or extends** backoff); a new epoch (`VERIFIED`) sets it to the trigger value; `pending_priority` = **max** of the un-claimed signals. |
 | T-C11 | claim-scoped attribution | a `POLL_SCHEDULE` claim still running when a `MUTATION_HINT` arrives: on success the item returns to `PENDING` with `pending_* = {MUTATION_HINT}` **only** (no `POLL_SCHEDULE` bleed-through); the next attempt's `claimed_source_set` has no `POLL_SCHEDULE`, so Watch counters are **not** updated. |
 | T-C12 | pre-claim failure does not blame the watch | claim 7 = `MUTATION_HINT`; a `POLL_SCHEDULE` arrives (→ `pending_*`); attempt 7 fails: Watch counters/attempt fields are **not** touched (`POLL_SCHEDULE ∉ claimed_source_set`), and the failure **re-coalesces `claimed_* ∪ pending_*` into `pending_*`** so the `POLL_SCHEDULE` signal survives to the next attempt. |
 | T-C13 | a merge never mutates a claim | merging during `IN_FLIGHT` changes only `pending_*`; `claimed_*` stays unchanged for the attempt's lifetime. |
-| T-C10 | failure/abort CAS re-read | a merge during `IN_FLIGHT` makes the failure/abort CAS conflict → re-read → apply failure/abort **only if** the claim is still valid; otherwise stop (no stale counter update); no tight loop. || T-C14 | partial-success watermark | claim 7 succeeds while signal 8 is already pending → the item returns to `PENDING` **and** records `last_verified_at = now` / `last_verified_signal_seq = 7` (the claimed signal really was verified). |
+| T-C10 | failure/abort CAS re-read | a merge during `IN_FLIGHT` makes the failure/abort CAS conflict → re-read → apply failure/abort **only if** the claim is still valid; otherwise stop (no stale counter update); no tight loop. |
+| T-C14 | success bookkeeping (incl. partial success) | a successful attempt (both the `VERIFIED` branch and the partial-success `PENDING` branch) writes **all** of `last_attempt_finished_at = now`, `last_verified_at = now`, `last_verified_signal_seq = k`, `consecutive_failures = 0`, `last_error_class = NULL`. |
 | T-C15 | post-claim eligibility preserved | claim clears `pending_*`; a post-claim trigger with `not_before = T+60s` yields `pending_not_before = T+60s` (**not NULL**) → the item is **not** attempted before `T+60s`. |
 | T-C16 | claimed age preserved on failure | a long-waiting item (`pending_first_seen_at` old) is claimed, then fails → on re-coalesce `pending_first_seen_at` stays the **oldest** value (never reset to the attempt start), so fairness/aging is preserved. |
+| T-C17 | bucket-state invariants | `pending_source_set = ∅` ⇒ `pending_reason_set = ∅` ∧ `pending_priority IS NULL` ∧ `pending_first_seen_at IS NULL` ∧ `pending_not_before IS NULL`; `pending_source_set ≠ ∅` ⇒ `pending_first_seen_at IS NOT NULL`; `PENDING` ⇒ `pending_source_set ≠ ∅`; `IN_FLIGHT` ⇔ `claimed_signal_seq IS NOT NULL` ∧ `claimed_source_set ≠ ∅` ∧ `claimed_first_seen_at IS NOT NULL`. |
+| T-C18 | `IN_FLIGHT` first post-claim signal initializes eligibility | claim clears `pending_not_before`; the first post-claim trigger with `not_before = T+60s` sets `pending_not_before = T+60s`; a later post-claim trigger with an earlier `not_before` min-merges it sooner (never later). |
