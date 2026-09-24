@@ -754,3 +754,53 @@ func TestP4ExecuteOneLoginPermissionIsAuth(t *testing.T) {
 		t.Fatalf("AUTH_OR_PERMISSION must BLOCK, got %s", w.WorkState)
 	}
 }
+
+// demoteAfterClaimStore demotes the root immediately after a successful claim,
+// reproducing the selector-proved-ACTIVE -> root-deprecated-before-ScanScope
+// race.
+type demoteAfterClaimStore struct {
+	*postgres.Store
+	rootID string
+	done   bool
+}
+
+func (s *demoteAfterClaimStore) ClaimWork(ctx context.Context, rootID, scopeKey string, expectedVersion int64, now time.Time) (state.DirtyScopeWork, error) {
+	wk, err := s.Store.ClaimWork(ctx, rootID, scopeKey, expectedVersion, now)
+	if err == nil && !s.done {
+		s.done = true
+		if _, terr := s.Store.TransitionRootLifecycle(ctx, s.rootID, domain.RootDeprecated); terr != nil {
+			return state.DirtyScopeWork{}, terr
+		}
+	}
+	return wk, err
+}
+
+// TestP4ExecuteOneLifecycleDemotedAfterClaim proves the scoped actuator fails
+// closed when the root stops being ACTIVE after the claim committed.
+func TestP4ExecuteOneLifecycleDemotedAfterClaim(t *testing.T) {
+	st, mock, rootID := p4SetupRootPath(t, "/")
+	ctx := context.Background()
+	now := p4Now
+
+	mock.set("/", p4File("a.txt", 5, "aaa"))
+	p4SeedPending(t, st, ctx, rootID, "/", now, nil)
+
+	ex := p4Executor(t, &demoteAfterClaimStore{Store: st, rootID: rootID}, p4RealScanner(st), now)
+	res, err := ex.ExecuteOne(ctx)
+	if !errors.Is(err, incrementalexec.ErrScannerFailed) {
+		t.Fatalf("want ErrScannerFailed, got %v", err)
+	}
+	if res.FailureClass == nil || *res.FailureClass != state.ErrorRootInactive {
+		t.Fatalf("failure class = %v, want ROOT_INACTIVE", res.FailureClass)
+	}
+	if n := mock.refreshCount(); n != 0 {
+		t.Fatalf("a non-ACTIVE root must not reach the provider, got %d requests", n)
+	}
+	w, gerr := st.GetWork(ctx, rootID, "/")
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if w.WorkState != state.WorkSuspended {
+		t.Fatalf("ROOT_INACTIVE must SUSPEND the work, got %s", w.WorkState)
+	}
+}

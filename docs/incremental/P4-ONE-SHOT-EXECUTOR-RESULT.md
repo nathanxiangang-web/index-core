@@ -155,18 +155,37 @@ fail closed as INTERNAL):
 Provider classification covers **both** the scoped list call and the
 username/password login call (the scoped path uses a typed `loginScoped`, never
 the untyped generic `Adapter.login`): 401/403 → AUTH_OR_PERMISSION; 429 →
-THROTTLED; 5xx / transport / timeout / malformed body / total-count mismatch /
-`code=200,data=null` / successful login with no token → TRANSIENT_PROVIDER;
-`total > max_entries` → SCOPE_TOO_LARGE; empty base URL → CONFIG_INVALID.
+THROTTLED; 5xx / transport / timeout / malformed body / `total != len(content)`
+on a short page / successful login with no token → TRANSIENT_PROVIDER;
+`total > max_entries` → SCOPE_TOO_LARGE.
+
+**Persisted base URL validation (before any provider I/O):** the scoped adapter
+requires an absolute `http`/`https` URL with a non-empty host. Malformed syntax
+(`://bad`), non-HTTP(S) schemes (`ftp://…`), and relative-only values
+(`/relative-only`) are `CONFIG_INVALID` — a permanent adapter configuration
+defect, never a retryable provider failure. Legitimate path-prefixed
+deployments remain valid.
+
+**Scoped response structure (fail closed):** the provider must explicitly
+return both `content` (present, non-null; an empty array is a legal empty
+directory) and `total` (present, `>= 0`). `data=null`, `data={}`, a missing
+`total`, a missing/null `content`, or a negative `total` are
+`TRANSIENT_PROVIDER`; Go zero-value field completion must never fabricate a
+valid empty directory. On a non-overflowing page, `total == len(content)` is
+then enforced, while a legitimate `total > per_page` truncation remains an
+overflow.
 
 Scan-layer classification: invalid/non-directory/ambiguous canonical parent →
 INVALID_SCOPE; missing adapter binding, unsupported collector kind, invalid
 `max_entries`, invalid configured provider root path (`..` component), or
-missing/invalid reconcile policy → CONFIG_INVALID; DELETED root → ROOT_INACTIVE;
-PostgreSQL/query/storage failures and persistence/admission/reconcile failures →
-INTERNAL. `GetAdapterConfig` / `GetRootPolicy` distinguish `ErrNotFound`
-(permanent config defect) from any other error (transient storage failure), so a
-transient DB failure can never permanently BLOCK an item.
+missing/invalid reconcile policy → CONFIG_INVALID; **any non-ACTIVE root
+lifecycle (NEW / DEPRECATED / DELETED) → ROOT_INACTIVE** — the scoped actuator
+re-reads the root and fails closed, closing the `ACTIVE at claim → demoted
+before ScanScope` race; PostgreSQL/query/storage failures and
+persistence/admission/reconcile failures → INTERNAL. `GetAdapterConfig` /
+`GetRootPolicy` distinguish `ErrNotFound` (permanent config defect) from any
+other error (transient storage failure), so a transient DB failure can never
+permanently BLOCK an item.
 
 **Zero string matching / HTTP-code extraction from messages** in production code
 and tests.
@@ -286,9 +305,9 @@ New tests:
 ```text
 internal/store/postgres/incremental_selector_test.go   (8)
 internal/runtime/incrementalexec/executor_test.go      (13)
-internal/runtime/incrementalexec/integration_test.go   (11)
-internal/runtime/scan/scoped_errors_test.go            (9)
-internal/collector/alist/scoped_errors_test.go         (10)
+internal/runtime/incrementalexec/integration_test.go   (12)
+internal/runtime/scan/scoped_errors_test.go            (12)
+internal/collector/alist/scoped_errors_test.go         (12)
 ```
 
 No migration, no `cmd/**`, no `internal/runtime/app/**`, no
@@ -306,9 +325,9 @@ go vet ./...                    clean
 go test -p 1 -count=1 ./...     all packages ok (real PostgreSQL 18)
 ```
 
-`internal/runtime/incrementalexec` = 24 tests (unit 13 + integration 11);
-`internal/store/postgres` selector = 8; typed classification = 19 (scan 9 +
-alist 10). Total new P4 tests = **51**. Existing P3 tests remain green.
+`internal/runtime/incrementalexec` = 25 tests (unit 13 + integration 12);
+`internal/store/postgres` selector = 8; typed classification = 24 (scan 12 +
+alist 12). Total new P4 tests = **57**. Existing P3 tests remain green.
 
 ## 12. Boundary statement
 
@@ -366,5 +385,42 @@ New tests added in this rework: `TestP4ExecuteOneNonVerifyingOutcome`,
 `TestScopedError{EmptyBaseURLIsConfigInvalid,NullListPayloadIsTransient,LoginClassification,LoginTransportIsTransient,LoginNoTokenIsTransient}`,
 and
 `TestScanScopeTyped{RootPathIsConfigInvalid,NullPayloadIsTransient,DBFailureIsInternal,LoginPermissionIsAuth}`.
+
+`FROZEN_CONTRACT_CHANGES: NONE`
+## 14. Round 2 rework (Issue #75 review)
+
+Three final blockers + one closeout from the P4 Round 2 review were fixed,
+strictly inside the authorized P4 scoped adapter / scan / executor tests /
+result-doc surface:
+
+1. **Persisted base URL validation.** `validateScopedBaseURL` now requires an
+   absolute `http`/`https` URL with a non-empty host and rejects syntactically
+   invalid values **before any provider I/O**; `://bad`, `ftp://example.com`,
+   `/relative-only` and `http://` are `CONFIG_INVALID` (never
+   `TRANSIENT_PROVIDER`), with zero provider requests. Path-prefixed deployments
+   (`http://host/alist`) stay valid. Proved by
+   `TestScopedErrorInvalidBaseURLIsConfigInvalid` and
+   `TestScanScopeTypedInvalidBaseURLIsConfigInvalid`.
+2. **Scoped response structure fail-closed.** The scoped decoder now unmarshals
+   into `*scopedListData{Content *[]item; Total *int}`: `data` must be non-null,
+   `content` must be present and non-null, and `total` must be present and
+   `>= 0`; a missing/null field is `TRANSIENT_PROVIDER` instead of a fabricated
+   empty directory. `total == len(content)` is enforced only on a
+   non-overflowing page, so a legitimate `total > per_page` truncation remains
+   `SCOPE_TOO_LARGE`. Proved by
+   `TestScopedErrorIncompleteListPayloadIsTransient`,
+   `TestScopedErrorExplicitEmptyDirectoryIsValid` and
+   `TestScanScopeTypedIncompletePayloadIsTransient`.
+3. **Non-ACTIVE scoped lifecycle gate.** `ScanScope` now fails closed with
+   `ROOT_INACTIVE` for **any** non-ACTIVE root lifecycle (NEW / DEPRECATED /
+   DELETED), closing the `ACTIVE at claim → demoted before ScanScope` race that
+   selector/ClaimWork alone cannot cover. Generic `Service.Scan()` semantics and
+   the absence of a long-held lifecycle lock are unchanged. Proved by
+   `TestScanScopeTypedNonActiveLifecycleIsRootInactive` (NEW + DEPRECATED, zero
+   provider requests) and the real-PostgreSQL executor race test
+   `TestP4ExecuteOneLifecycleDemotedAfterClaim` (root demoted right after claim
+   → `ROOT_INACTIVE` → `SUSPENDED`, zero provider requests).
+4. **Evidence closeout.** The PR body and this report both state the current P4
+   test count (57).
 
 `FROZEN_CONTRACT_CHANGES: NONE`

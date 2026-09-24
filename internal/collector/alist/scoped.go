@@ -3,7 +3,9 @@ package alist
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -47,11 +49,12 @@ func (a Adapter) ScanScope(ctx context.Context, scope string, maxEntries int) (a
 		return adapter.RawScan{}, scopedErrorf(ScopedConfigInvalid,
 			"alist scoped list: max_entries must be within [0, %d], got %d", MaxScopedEntries, maxEntries)
 	}
-	// An empty base URL is a permanent adapter configuration defect, never a
-	// retryable provider failure.
-	if strings.TrimSpace(a.BaseURL) == "" {
+	// A persisted base URL that cannot form a valid provider request is a
+	// permanent adapter configuration defect, never a retryable provider
+	// failure: fail before any provider I/O.
+	if err := validateScopedBaseURL(a.BaseURL); err != nil {
 		return adapter.RawScan{}, scopedErrorf(ScopedConfigInvalid,
-			"alist scoped refresh requires a non-empty base URL")
+			"alist scoped refresh base URL is invalid: %v", err)
 	}
 	// maxEntries <= MaxScopedEntries, so maxEntries+1 cannot overflow.
 	perPage := maxEntries + 1
@@ -136,18 +139,54 @@ func (a Adapter) listPageRefresh(ctx context.Context, token, dir string, perPage
 		return nil, 0, scopedErrorf(scopedKindFromAPICode(resp.Code),
 			"alist scoped refresh %q failed: code=%d message=%s", dir, resp.Code, resp.Message)
 	}
-	var data *listData
+	var data *scopedListData
 	if err := json.Unmarshal(resp.Data, &data); err != nil {
 		return nil, 0, scopedWrap(ScopedTransientProvider, err)
 	}
-	if data == nil {
-		// {"code":200,"data":null} unmarshals successfully into a zero struct.
-		// Accepting it would fabricate a valid empty directory out of a payload
-		// that carries no coverage at all.
+	// The provider must explicitly return both content and total. Missing/null
+	// fields must never be completed from Go zero values into a fabricated empty
+	// directory.
+	if data == nil || data.Content == nil || data.Total == nil {
 		return nil, 0, scopedErrorf(ScopedTransientProvider,
-			"alist scoped refresh %q returned no data payload", dir)
+			"alist scoped refresh %q returned an incomplete payload (content/total missing)", dir)
 	}
-	return data.Content, data.Total, nil
+	if *data.Total < 0 {
+		return nil, 0, scopedErrorf(ScopedTransientProvider,
+			"alist scoped refresh %q returned a negative total %d", dir, *data.Total)
+	}
+	// total == len(content) is intentionally enforced by ScanScope AFTER the
+	// overflow check: a legitimate total > per_page truncation is an overflow,
+	// not a malformed short page.
+	return *data.Content, *data.Total, nil
+}
+
+// scopedListData is the scoped decoder shape. Field presence is significant:
+// content and total must both be provider-declared (an empty array is a legal
+// empty directory, but a missing/null field is not).
+type scopedListData struct {
+	Content *[]item `json:"content"`
+	Total   *int    `json:"total"`
+}
+
+// validateScopedBaseURL rejects a persisted base URL that can never form a valid
+// provider request. Legitimate path-prefixed deployments (e.g.
+// "http://host/alist") remain valid.
+func validateScopedBaseURL(raw string) error {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return fmt.Errorf("base URL is empty")
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return fmt.Errorf("base URL is not a valid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("base URL scheme must be http or https, got %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("base URL must include a host")
+	}
+	return nil
 }
 
 // loginScoped obtains a login token for the scoped-refresh path with the same

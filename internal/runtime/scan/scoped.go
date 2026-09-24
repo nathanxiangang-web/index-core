@@ -34,8 +34,13 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 	if err != nil {
 		return Result{}, scopeWrap(ScopeFailureInternal, fmt.Errorf("load root: %w", err))
 	}
-	if root.LifecycleState == domain.RootDeleted {
-		return Result{}, scopeErrorf(ScopeFailureRootInactive, "root %s is DELETED", rootID)
+	// P2/P3/P4 operational rule: routine scoped execution is only valid for an
+	// ACTIVE root. The selector/ClaimWork proved ACTIVE at claim time, but the
+	// root can transition before this read; fail closed for any non-ACTIVE
+	// lifecycle (NEW / DEPRECATED / DELETED).
+	if root.LifecycleState != domain.RootActive {
+		return Result{}, scopeErrorf(ScopeFailureRootInactive,
+			"root %s lifecycle %s does not allow scoped execution", rootID, root.LifecycleState)
 	}
 
 	acfg, err := s.store.GetAdapterConfig(ctx, rootID)

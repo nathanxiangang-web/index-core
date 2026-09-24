@@ -30,7 +30,11 @@ func p4ScanSetup(t *testing.T, adapterKind, baseURL, rootPath string, withPolicy
 		t.Fatalf("migrate: %v", err)
 	}
 	st := postgres.New(pool)
-	if err := st.CreateRoot(ctx, st.Pool(), p4ScopeRootID, []byte(`{}`), domain.RootActive); err != nil {
+	initial := domain.RootActive
+	if lifecycle == domain.RootNew {
+		initial = domain.RootNew
+	}
+	if err := st.CreateRoot(ctx, st.Pool(), p4ScopeRootID, []byte(`{}`), initial); err != nil {
 		t.Fatalf("create root: %v", err)
 	}
 	if withPolicy {
@@ -48,7 +52,7 @@ func p4ScanSetup(t *testing.T, adapterKind, baseURL, rootPath string, withPolicy
 			t.Fatalf("adapter: %v", err)
 		}
 	}
-	if lifecycle != domain.RootActive {
+	if lifecycle != initial {
 		if _, err := st.TransitionRootLifecycle(ctx, p4ScopeRootID, lifecycle); err != nil {
 			t.Fatalf("transition root to %s: %v", lifecycle, err)
 		}
@@ -275,4 +279,58 @@ func TestScanScopeTypedLoginPermissionIsAuth(t *testing.T) {
 	st, ctx := p4ScanSetupWithCreds(t, srv.URL)
 	_, err := p4ScanService(st).ScanScope(ctx, p4ScopeRootID, "/", 100)
 	assertScanScopeKind(t, err, scan.ScopeFailureAuthOrPermission)
+}
+func TestScanScopeTypedInvalidBaseURLIsConfigInvalid(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+	}))
+	defer srv.Close()
+
+	for _, raw := range []string{"://bad", "ftp://example.com", "/relative-only", "http://"} {
+		st, ctx := p4ScanSetup(t, "alist", raw, "/", true, domain.RootActive)
+		_, err := p4ScanService(st).ScanScope(ctx, p4ScopeRootID, "/", 100)
+		assertScanScopeKind(t, err, scan.ScopeFailureConfigInvalid)
+	}
+	if n := atomic.LoadInt32(&calls); n != 0 {
+		t.Fatalf("an invalid persisted base URL must not reach any provider, got %d requests", n)
+	}
+}
+
+func TestScanScopeTypedIncompletePayloadIsTransient(t *testing.T) {
+	for _, body := range []string{
+		`{"code":200,"message":"ok","data":null}`,
+		`{"code":200,"message":"ok","data":{}}`,
+		`{"code":200,"message":"ok","data":{"total":0}}`,
+		`{"code":200,"message":"ok","data":{"content":null,"total":0}}`,
+		`{"code":200,"message":"ok","data":{"content":[]}}`,
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, body)
+		}))
+		st, ctx := p4ScanSetup(t, "alist", srv.URL, "/", true, domain.RootActive)
+		_, err := p4ScanService(st).ScanScope(ctx, p4ScopeRootID, "/", 100)
+		assertScanScopeKind(t, err, scan.ScopeFailureTransientProvider)
+		srv.Close()
+	}
+}
+
+func TestScanScopeTypedNonActiveLifecycleIsRootInactive(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"code":200,"message":"ok","data":{"content":[],"total":0}}`)
+	}))
+	defer srv.Close()
+
+	for _, lc := range []domain.RootLifecycleState{domain.RootNew, domain.RootDeprecated} {
+		st, ctx := p4ScanSetup(t, "alist", srv.URL, "/", true, lc)
+		_, err := p4ScanService(st).ScanScope(ctx, p4ScopeRootID, "/", 100)
+		assertScanScopeKind(t, err, scan.ScopeFailureRootInactive)
+	}
+	if n := atomic.LoadInt32(&calls); n != 0 {
+		t.Fatalf("a non-ACTIVE root must not reach the provider, got %d requests", n)
+	}
 }

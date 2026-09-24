@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/nathanxiangang-web/index-core/internal/collector/alist"
@@ -94,11 +95,60 @@ func TestScopedErrorEmptyBaseURLIsConfigInvalid(t *testing.T) {
 	assertScopedKind(t, err, alist.ScopedConfigInvalid)
 }
 
-func TestScopedErrorNullListPayloadIsTransient(t *testing.T) {
-	// {"code":200,"data":null} must never be accepted as an empty directory.
-	srv := scopedCodeServer(t, 200)
-	_, err := (alist.Adapter{BaseURL: srv.URL}).ScanScope(context.Background(), "/x", 10)
-	assertScopedKind(t, err, alist.ScopedTransientProvider)
+func TestScopedErrorInvalidBaseURLIsConfigInvalid(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+	}))
+	defer srv.Close()
+
+	for _, raw := range []string{"://bad", "ftp://example.com", "/relative-only", "http://", "   "} {
+		_, err := (alist.Adapter{BaseURL: raw}).ScanScope(context.Background(), "/x", 10)
+		assertScopedKind(t, err, alist.ScopedConfigInvalid)
+	}
+	if n := atomic.LoadInt32(&calls); n != 0 {
+		t.Fatalf("an invalid base URL must not reach any provider, got %d requests", n)
+	}
+}
+
+func TestScopedErrorIncompleteListPayloadIsTransient(t *testing.T) {
+	// A scoped observation is only valid when the provider explicitly returns
+	// both content and total; missing/null fields must never be completed from Go
+	// zero values into a fabricated empty directory.
+	bodies := []string{
+		`{"code":200,"message":"ok","data":null}`,
+		`{"code":200,"message":"ok","data":{}}`,
+		`{"code":200,"message":"ok","data":{"total":0}}`,
+		`{"code":200,"message":"ok","data":{"content":null,"total":0}}`,
+		`{"code":200,"message":"ok","data":{"content":[]}}`,
+		`{"code":200,"message":"ok","data":{"content":[],"total":-1}}`,
+	}
+	for _, body := range bodies {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, body)
+		}))
+		_, err := (alist.Adapter{BaseURL: srv.URL}).ScanScope(context.Background(), "/x", 10)
+		assertScopedKind(t, err, alist.ScopedTransientProvider)
+		srv.Close()
+	}
+}
+
+func TestScopedErrorExplicitEmptyDirectoryIsValid(t *testing.T) {
+	// content:[] with an explicit total:0 is a legal empty directory.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"code":200,"message":"ok","data":{"content":[],"total":0}}`)
+	}))
+	defer srv.Close()
+
+	raw, err := (alist.Adapter{BaseURL: srv.URL}).ScanScope(context.Background(), "/x", 10)
+	if err != nil {
+		t.Fatalf("explicit empty directory must be valid: %v", err)
+	}
+	if len(raw.Entries) != 0 {
+		t.Fatalf("expected zero entries, got %d", len(raw.Entries))
+	}
 }
 
 func TestScopedErrorLoginClassification(t *testing.T) {
