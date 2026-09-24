@@ -1,8 +1,8 @@
 # Incremental P1 — Adaptive Hot-Scope Polling Feasibility — Result
 
-> Status: **PROTOTYPE DELIVERED — DETERMINISTIC + POSTGRESQL VERIFIED — LIVE P1 EXPERIMENT PENDING**
+> Status: **LIVE EXECUTED — EXTERNAL CHANGE DISCOVERED WITHOUT A MUTATION HINT, WITHIN ONE INTERVAL**
 >
-> **P1 NOT PASS** (live 115 Open hot-scope polling not yet executed)
+> **P1 overall PASS / merge decision: reserved for the Architect** (live evidence now available)
 >
 > Executing issue: #66 · Parent: #57 · Plan: `docs/architecture/INCREMENTAL-P1-HOT-SCOPE-POLLING-PROTOTYPE.md`
 >
@@ -114,13 +114,49 @@ no removal evidence**, which is stronger than an outcome-label check.
 - `go vet ./...` — clean; `gofmt` — clean;
 - no schema/migration; no Q1–Q9 change; full `Scan()`, P0 `ScanScope()`, and rclone unchanged.
 
-## 6. Live P1 experiment (PENDING — requires environment)
+## 6. Live P1 experiment — EXECUTED
 
-Environment (same class as P0): non-production OpenList; storage = community `115 Open` driver
-(official API); dedicated non-admin service identity with write permission; **3–5 small HOT
-directories**; out-of-band write through the official 115 channel.
+Environment: non-production OpenList **v4.2.6 / commit `2bdf16d`**; storage **id=2 `driver="115 Open"`**
+(official API, `page_size=200`, `limit_rate=1`, `cache_expiration=30 min`); dedicated non-admin
+service identity `test` (write-capable); HOT scopes **`/` `/hotA` `/hotB` `/hotC`** (4 small dirs);
+out-of-band write through the official 115 channel.
 
-Sequence:
+### Live result (2026-09-24, UTC)
+
+| Step | Time / value |
+| --- | --- |
+| Phase A baseline | 14 canonical resources; `PHASE_A_POLL_TS = 2026-09-24T03:14:32Z` |
+| T1 out-of-band upload | `p1-new.txt` into `/hotA` via official 115 channel; **T1 = 2026-09-24T03:19:30Z** |
+| Stale cache gate (read-only `refresh=false`) | `03:19:56Z` → `/hotA` status 200, **total=1, content=1**, names `[keep.txt]` → **`p1-new.txt` NOT visible** ✅ (not `NOT JUDICABLE`) |
+| Phase B poll cycle | `due=4 polled=[/ /hotA /hotB /hotC]`, `wall=4111 ms`, **`budget_exhausted=false`** |
+| T6 visibility | **2026-09-24T03:20:00Z** |
+
+Per-scope canonical metrics (each scope: exactly **one** `refresh=true`, HTTP **200**):
+
+| scope | total | canonical refresh | status | latency | response bytes | page_size | derived provider pages |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `/` | 11 | 1 | 200 | 1128 ms | 3437 | 200 | 1 |
+| `/hotA` | **2** | 1 | 200 | 959 ms | 813 | 200 | 1 |
+| `/hotB` | 1 | 1 | 200 | 1049 ms | 480 | 200 | 1 |
+| `/hotC` | 1 | 1 | 200 | 910 ms | 480 | 200 | 1 |
+
+Outcome assertions (all PASS):
+
+- **the external write was discovered with no Mutation Hint**: `added = [/hotA/p1-new.txt]`
+  (before 14 → after 15), exactly one new resource;
+- **`/hotA` `Mutated=true`; the other polled HOT scopes `Mutated=false`**;
+- **Q3 / real Q4 / Q6 agree on the same `resource_id`** for the new file;
+- all baseline `resource_id`s preserved; **no removal evidence** (Q7 empty; zero PRESENT rows
+  carrying removal evidence);
+- **`due == polled == 4`**, `budgetExhausted=false`, **total `refresh=true` count == 4**
+  (no extra refresh path);
+- **`T6 − T1 = 30.3 s` ≤ one HOT interval (120 s)**;
+- no 403 / 429 / throttle; **no retries**.
+
+> Detection occurred within one configured interval on a **stale-cache external write**, using only the
+> accepted single-observation P0 path per due scope — no root-wide traversal, no provider mutation.
+
+### Protocol
 
 ```text
 Phase A  baseline cycle for all HOT scopes
@@ -166,11 +202,17 @@ INDEXCORE_TEST_DATABASE_URL=postgres://... \
 
 ## 7. Verdict
 
-Deterministic selection/budget behavior and additive-safe reconcile through the polling harness
-are **verified**. The **live P1 experiment has not run**, so **P1 is NOT PASS** and the exit
-decision (`STOP_POLLING` / `KEEP_P0_MANUAL_ONLY` / `AUTHORIZE_MUTATION_HINT_INTEGRATION` /
-`AUTHORIZE_HYBRID_HINT_PLUS_HOT_POLLING` / `AUTHORIZE_DIRTY_SCOPE_STATE_DESIGN` /
-`RESEARCH_FURTHER`) remains with the Architect. Production scheduler/polling remains unauthorized.
+Deterministic selection/budget behavior, additive-safe reconcile through the polling harness, and
+**live execution on a real stale-cache external write** are all **verified**: the new file was
+discovered without a Mutation Hint, within one configured interval (`T6−T1 = 30.3 s ≤ 120 s`), with
+budgets enforced (`due == polled == 4`, no budget exhaustion, exactly one canonical refresh per due
+scope), the changed scope mutated and the unchanged scopes did not, Q3/Q4/Q6 agreed on one id, and no
+removal evidence was produced.
+
+**P1 overall acceptance and the exit decision** (`STOP_POLLING` / `KEEP_P0_MANUAL_ONLY` /
+`AUTHORIZE_MUTATION_HINT_INTEGRATION` / `AUTHORIZE_HYBRID_HINT_PLUS_HOT_POLLING` /
+`AUTHORIZE_DIRTY_SCOPE_STATE_DESIGN` / `RESEARCH_FURTHER`) **remain with the Architect**.
+Production scheduler/polling remains unauthorized; PR #67 does not merge.
 
 ## 8. Frozen-contract statement
 
