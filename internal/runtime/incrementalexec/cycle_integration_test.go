@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -256,6 +257,76 @@ func TestP5CycleRealPGOverdueRetryWaitNotPromoted(t *testing.T) {
 	}
 	if w.AttemptCount != 0 {
 		t.Fatalf("RETRY_WAIT must not be attempted, got attempt_count=%d", w.AttemptCount)
+	}
+}
+
+// p5BlockingCompleteStore blocks CompleteSuccess until the caller context ends,
+// reproducing a scan that succeeded but whose completion is interrupted by the
+// cycle-owned deadline.
+type p5BlockingCompleteStore struct {
+	*postgres.Store
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (s *p5BlockingCompleteStore) CompleteSuccess(ctx context.Context, _, _ string, _ int64, _ time.Time) (state.DirtyScopeWork, error) {
+	s.once.Do(func() { close(s.entered) })
+	<-ctx.Done()
+	return state.DirtyScopeWork{}, ctx.Err()
+}
+
+// TestP5CycleRealPGCompletionDeadlineIsMaxWallTime proves a real P0/P4 scan that
+// succeeded still reports MAX_WALL_TIME when its completion is interrupted by the
+// cycle-owned deadline, and leaves the Work IN_FLIGHT.
+func TestP5CycleRealPGCompletionDeadlineIsMaxWallTime(t *testing.T) {
+	st, ctx := p5NewStore(t)
+	mock := &p4AListMock{dirs: map[string][]map[string]any{}}
+	mock.set("/", p4File("a.txt", 5, "aaa"))
+	srv := httptest.NewServer(mock.handler())
+	t.Cleanup(srv.Close)
+
+	rootID := "a1000000-0000-0000-0000-0000000000a3"
+	now := p4Now
+	p5AddRoot(t, st, ctx, rootID, srv.URL)
+	p4SeedPending(t, st, ctx, rootID, "/", now, nil)
+
+	blocking := &p5BlockingCompleteStore{Store: st, entered: make(chan struct{})}
+	runner := p5RunnerFor(t, p4Executor(t, blocking, p4RealScanner(st), now))
+
+	type outcome struct {
+		res incrementalexec.CycleResult
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		res, err := runner.Run(ctx, incrementalexec.CycleConfig{MaxItems: 5, MaxWallTime: 500 * time.Millisecond})
+		done <- outcome{res: res, err: err}
+	}()
+
+	select {
+	case <-blocking.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("CompleteSuccess was not reached")
+	}
+	got := <-done
+	if got.err != nil {
+		t.Fatalf("completion deadline is a normal bounded stop, got %v", got.err)
+	}
+	if got.res.StopReason != incrementalexec.StopMaxWallTime {
+		t.Fatalf("stop reason = %s", got.res.StopReason)
+	}
+	if !got.res.InterruptedInFlight {
+		t.Fatal("a claimed item interrupted during completion must report InterruptedInFlight=true")
+	}
+	if n := mock.refreshCount(); n != 1 {
+		t.Fatalf("one scan must issue one refresh, got %d", n)
+	}
+	w, gerr := st.GetWork(ctx, rootID, "/")
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if w.WorkState != state.WorkInFlight {
+		t.Fatalf("interrupted completion must remain IN_FLIGHT, got %s", w.WorkState)
 	}
 }
 

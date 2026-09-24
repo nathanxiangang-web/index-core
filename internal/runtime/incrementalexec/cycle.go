@@ -68,9 +68,11 @@ type CycleResult struct {
 
 	Last Result
 
-	// InterruptedInFlight is true only when the cycle-owned wall deadline
-	// cancelled an in-flight ExecuteOne whose claim had already committed
-	// (ClaimedSignalSeq > 0), leaving the Work potentially IN_FLIGHT.
+	// InterruptedInFlight is true when cancellation — from EITHER the parent
+	// context or the cycle-owned wall deadline — interrupted a P4 invocation
+	// after a proven committed claim (ClaimedSignalSeq > 0), leaving the Work
+	// potentially IN_FLIGHT. A selected-but-unclaimed item, or a budget that
+	// expires between items, reports false.
 	InterruptedInFlight bool
 }
 
@@ -128,7 +130,8 @@ func (r *CycleRunner) Run(ctx context.Context, cfg CycleConfig) (CycleResult, er
 			continue
 		}
 
-		// Parent cancellation wins over any other classification.
+		// Parent cancellation wins over any other classification. It still
+		// reports a potentially interrupted in-flight claim when one committed.
 		if perr := ctx.Err(); perr != nil {
 			res.InterruptedInFlight = item.ClaimedSignalSeq > 0
 			return res.stop(StopContextCancelled), perr
@@ -142,24 +145,29 @@ func (r *CycleRunner) Run(ctx context.Context, cfg CycleConfig) (CycleResult, er
 			return res.stop(StopStaleSelection), err
 
 		case errors.Is(err, ErrScannerFailed):
-			if item.FailureClass == nil {
+			class := item.FailureClass
+			if class == nil {
 				// A scanner failure whose durable class is unknown must never be
 				// treated as an item-local continuation: fail closed.
 				return res.stop(StopSystemicError), fmt.Errorf("cycle: scanner failure without a durable class: %w", err)
 			}
-			res.Failed++
-			switch *item.FailureClass {
+			// Classify before counting: Failed counts durably completed classified
+			// item failures only, so an unknown class must not increment it.
+			switch *class {
 			case state.ErrorInternal:
 				// INTERNAL may signal a broken subsystem; do not hammer other
 				// scopes through it.
+				res.Failed++
 				return res.stop(StopInternalItemFailure), err
 			case state.ErrorTransientProvider, state.ErrorThrottled, state.ErrorAuthOrPermission,
 				state.ErrorScopeTooLarge, state.ErrorInvalidScope, state.ErrorConfigInvalid, state.ErrorRootInactive:
 				// The failed item moved to RETRY_WAIT / BLOCKED / SUSPENDED and is
 				// no longer immediately eligible; continue draining ready work.
+				res.Failed++
 				continue
 			default:
-				return res.stop(StopSystemicError), fmt.Errorf("cycle: unknown failure class %q: %w", *item.FailureClass, err)
+				// Unknown class is systemic uncertainty, not a durable failed item.
+				return res.stop(StopSystemicError), fmt.Errorf("cycle: unknown failure class %q: %w", *class, err)
 			}
 
 		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):

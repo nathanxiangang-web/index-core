@@ -26,9 +26,11 @@ type fakeStore struct {
 
 	successResult state.DirtyScopeWork
 	successErr    error
+	successFn     func(context.Context) (state.DirtyScopeWork, error)
 
 	failureResult state.DirtyScopeWork
 	failureErr    error
+	failureFn     func(context.Context) (state.DirtyScopeWork, error)
 
 	claimVersion int64
 	successCalls int32
@@ -46,15 +48,21 @@ func (f *fakeStore) ClaimWork(_ context.Context, _, _ string, expectedWorkVersio
 	return f.claimed, f.claimErr
 }
 
-func (f *fakeStore) CompleteSuccess(context.Context, string, string, int64, time.Time) (state.DirtyScopeWork, error) {
+func (f *fakeStore) CompleteSuccess(ctx context.Context, _ string, _ string, _ int64, _ time.Time) (state.DirtyScopeWork, error) {
 	atomic.AddInt32(&f.successCalls, 1)
+	if f.successFn != nil {
+		return f.successFn(ctx)
+	}
 	return f.successResult, f.successErr
 }
 
-func (f *fakeStore) CompleteFailure(_ context.Context, _, _ string, _ int64, class state.ErrorClass, retryNotBefore *time.Time, _ time.Time) (state.DirtyScopeWork, error) {
+func (f *fakeStore) CompleteFailure(ctx context.Context, _, _ string, _ int64, class state.ErrorClass, retryNotBefore *time.Time, _ time.Time) (state.DirtyScopeWork, error) {
 	atomic.AddInt32(&f.failureCalls, 1)
 	f.failClass = class
 	f.failRetry = retryNotBefore
+	if f.failureFn != nil {
+		return f.failureFn(ctx)
+	}
 	return f.failureResult, f.failureErr
 }
 
@@ -460,5 +468,63 @@ func TestP4FailureFinalStateFromCompletionRow(t *testing.T) {
 	}
 	if res.FinalWorkState != state.WorkBlocked {
 		t.Fatalf("FinalWorkState must come from the committed completion row, got %s", res.FinalWorkState)
+	}
+}
+
+// TestP4CompletionErrorPreservesContextCause proves both completion call sites
+// keep the underlying context cause in the error chain, so a bounded caller can
+// distinguish a deadline-driven interruption from a systemic completion failure.
+func TestP4CompletionErrorPreservesContextCause(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		failure bool
+	}{
+		{name: "success", failure: false},
+		{name: "failure", failure: true},
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+
+		st := &fakeStore{
+			next:    state.DirtyScopeWork{RootID: p4RootID, ScopeKey: "/a", WorkState: state.WorkPending, Version: 3},
+			found:   true,
+			claimed: p4ClaimedWork(),
+		}
+		entered := make(chan struct{})
+		block := func(c context.Context) (state.DirtyScopeWork, error) {
+			close(entered)
+			<-c.Done()
+			return state.DirtyScopeWork{}, c.Err()
+		}
+		sc := &countingScanner{result: p4AppliedResult()}
+		if tc.failure {
+			st.failureFn = block
+			sc = &countingScanner{err: scan.NewScopeError(scan.ScopeFailureTransientProvider, errors.New("boom"))}
+		} else {
+			st.successFn = block
+		}
+
+		ex, err := incrementalexec.New(st, sc, p4Config(), func() time.Time { return p4Now })
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() {
+			_, err := ex.ExecuteOne(ctx)
+			done <- err
+		}()
+
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s: completion was not reached", tc.name)
+		}
+		err = <-done
+		if !errors.Is(err, incrementalexec.ErrCompletionFailed) {
+			t.Fatalf("%s: want ErrCompletionFailed, got %v", tc.name, err)
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("%s: completion error must preserve context.DeadlineExceeded, got %v", tc.name, err)
+		}
 	}
 }

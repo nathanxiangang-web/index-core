@@ -330,22 +330,37 @@ func TestP5CycleSelectedButUnclaimedNotInterrupted(t *testing.T) {
 }
 
 func TestP5CycleParentCancellation(t *testing.T) {
-	parent, cancel := context.WithCancel(context.Background())
-	one := &fakeOneShot{fn: func(_ int, ctx context.Context) (incrementalexec.Result, error) {
-		cancel()
-		<-ctx.Done()
-		return p5Selected(7), ctx.Err()
-	}}
-	res, err := p5Runner(t, one).Run(parent,
-		incrementalexec.CycleConfig{MaxItems: 5, MaxWallTime: time.Minute})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("want parent context.Canceled, got %v", err)
-	}
-	if res.StopReason != incrementalexec.StopContextCancelled {
-		t.Fatalf("stop reason = %s", res.StopReason)
-	}
-	if one.callCount() != 1 {
-		t.Fatalf("no next item may start, calls=%d", one.callCount())
+	for _, tc := range []struct {
+		name      string
+		claimed   bool
+		interrupt bool
+	}{
+		{name: "claimed", claimed: true, interrupt: true},
+		{name: "selected-unclaimed", claimed: false, interrupt: false},
+	} {
+		parent, cancel := context.WithCancel(context.Background())
+		one := &fakeOneShot{fn: func(_ int, ctx context.Context) (incrementalexec.Result, error) {
+			cancel()
+			<-ctx.Done()
+			if !tc.claimed {
+				return incrementalexec.Result{Selected: true}, ctx.Err()
+			}
+			return p5Selected(7), ctx.Err()
+		}}
+		res, err := p5Runner(t, one).Run(parent,
+			incrementalexec.CycleConfig{MaxItems: 5, MaxWallTime: time.Minute})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("%s: want parent context.Canceled, got %v", tc.name, err)
+		}
+		if res.StopReason != incrementalexec.StopContextCancelled {
+			t.Fatalf("%s: stop reason = %s", tc.name, res.StopReason)
+		}
+		if one.callCount() != 1 {
+			t.Fatalf("%s: no next item may start, calls=%d", tc.name, one.callCount())
+		}
+		if res.InterruptedInFlight != tc.interrupt {
+			t.Fatalf("%s: InterruptedInFlight = %v, want %v", tc.name, res.InterruptedInFlight, tc.interrupt)
+		}
 	}
 }
 
@@ -392,5 +407,76 @@ func TestP5CycleSerialOnly(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&maxActive); n != 1 {
 		t.Fatalf("cycle must be strictly serial, max concurrent ExecuteOne = %d", n)
+	}
+}
+func TestP5CycleUnknownFailureClassNotCounted(t *testing.T) {
+	unknown := state.ErrorClass("SURPRISE")
+	one := &fakeOneShot{fn: func(int, context.Context) (incrementalexec.Result, error) {
+		res := p5Selected(7)
+		res.FailureClass = &unknown
+		return res, p5ScannerFailedErr(unknown)
+	}}
+	res, err := p5Runner(t, one).Run(context.Background(),
+		incrementalexec.CycleConfig{MaxItems: 5, MaxWallTime: time.Minute})
+	if err == nil {
+		t.Fatal("an unknown failure class must fail closed")
+	}
+	if res.StopReason != incrementalexec.StopSystemicError {
+		t.Fatalf("stop reason = %s", res.StopReason)
+	}
+	if res.Failed != 0 {
+		t.Fatalf("unknown class must not be counted as a durable failed item, got Failed=%d", res.Failed)
+	}
+	if one.callCount() != 1 {
+		t.Fatalf("must stop immediately, calls=%d", one.callCount())
+	}
+}
+
+// TestP5CycleCompletionDeadlineIsMaxWallTime proves that a completion error whose
+// cause is the cycle-owned deadline is classified as MAX_WALL_TIME, not as a
+// systemic completion failure.
+func TestP5CycleCompletionDeadlineIsMaxWallTime(t *testing.T) {
+	one := &fakeOneShot{fn: func(_ int, ctx context.Context) (incrementalexec.Result, error) {
+		<-ctx.Done()
+		return p5Selected(7), fmt.Errorf("%w: %w", incrementalexec.ErrCompletionFailed, ctx.Err())
+	}}
+	res, err := p5Runner(t, one).Run(context.Background(),
+		incrementalexec.CycleConfig{MaxItems: 5, MaxWallTime: 20 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("a completion interrupted by the cycle deadline is a normal bounded stop, got %v", err)
+	}
+	if res.StopReason != incrementalexec.StopMaxWallTime {
+		t.Fatalf("stop reason = %s", res.StopReason)
+	}
+	if !res.InterruptedInFlight {
+		t.Fatal("a claimed item interrupted during completion must report InterruptedInFlight=true")
+	}
+	if one.callCount() != 1 {
+		t.Fatalf("no next item may start, calls=%d", one.callCount())
+	}
+}
+
+// TestP5CycleParentDeadlineCompletionIsContextCancelled proves the same cause
+// from a parent deadline stays CONTEXT_CANCELLED with the parent error.
+func TestP5CycleParentDeadlineCompletionIsContextCancelled(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	one := &fakeOneShot{fn: func(_ int, ctx context.Context) (incrementalexec.Result, error) {
+		cancel()
+		<-ctx.Done()
+		return p5Selected(7), fmt.Errorf("%w: %w", incrementalexec.ErrCompletionFailed, ctx.Err())
+	}}
+	res, err := p5Runner(t, one).Run(parent,
+		incrementalexec.CycleConfig{MaxItems: 5, MaxWallTime: time.Minute})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want parent context.Canceled, got %v", err)
+	}
+	if res.StopReason != incrementalexec.StopContextCancelled {
+		t.Fatalf("stop reason = %s", res.StopReason)
+	}
+	if !res.InterruptedInFlight {
+		t.Fatal("parent cancellation after a proven claim must report InterruptedInFlight=true")
+	}
+	if one.callCount() != 1 {
+		t.Fatalf("no next item may start, calls=%d", one.callCount())
 	}
 }

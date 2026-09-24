@@ -119,10 +119,18 @@ in-flight `ExecuteOne` when the budget expires. `P5` does **not** call
 `RecoverStaleInflight`; a claimed item cancelled by the cycle deadline may remain
 `IN_FLIGHT` and external P3 recovery owns the repair.
 
-`InterruptedInFlight` is set **only** when the cycle deadline cancelled an
-in-flight `ExecuteOne` whose `Result.ClaimedSignalSeq > 0` (a proven committed
-claim). A selected-but-unclaimed item reports `false`; a wall budget that expires
-*between* items also reports `false` (the previous item already completed).
+`InterruptedInFlight` means cancellation interrupted a P4 invocation **after a
+proven committed claim** (`Result.ClaimedSignalSeq > 0`), whether the
+cancellation came from the **parent context** or the **cycle-owned wall
+deadline**. A selected-but-unclaimed item reports `false`; a wall budget that
+expires *between* items also reports `false` (the previous item already
+completed).
+
+The P4 completion error chain preserves the underlying cause, so a completion
+interrupted by the cycle-owned deadline is classified as `MAX_WALL_TIME` (nil
+cycle error), while a completion interrupted by the parent context stays
+`CONTEXT_CANCELLED` with the parent error — a coincident-but-unrelated
+completion failure is never hidden by the budget boundary.
 
 ## 6. Real PostgreSQL multi-item evidence
 
@@ -185,7 +193,19 @@ before the next `ExecuteOne` and reported as `MAX_WALL_TIME`, not as a systemic
 Store/selector error. `TestP5CycleSelectedButUnclaimedNotInterrupted` proves
 `InterruptedInFlight=false` when the claim never committed.
 `TestP5CycleParentCancellation` / `TestP5CycleParentCancelledBeforeFirstItem`
-prove parent cancellation is distinct and returns the parent context error.
+prove parent cancellation is distinct and returns the parent context error;
+`TestP5CycleParentCancellation` also asserts `InterruptedInFlight=true` for a
+proven claim and `false` for a selected-but-unclaimed item.
+
+`TestP5CycleCompletionDeadlineIsMaxWallTime` and the real-PostgreSQL
+`TestP5CycleRealPGCompletionDeadlineIsMaxWallTime` prove a completion interrupted
+by the **cycle-owned** deadline is `MAX_WALL_TIME` with a nil cycle error,
+`InterruptedInFlight=true`, one refresh request, and the Work left `IN_FLIGHT`.
+`TestP5CycleParentDeadlineCompletionIsContextCancelled` keeps the parent-deadline
+completion path as `CONTEXT_CANCELLED` with the parent error.
+`TestP4CompletionErrorPreservesContextCause` proves both P4 completion call sites
+keep the underlying context cause in the error chain, so a coincident unrelated
+completion failure is never hidden by the budget boundary.
 
 `TestP5CycleRealPGOverdueRetryWaitNotPromoted` proves an overdue `RETRY_WAIT` row
 is never auto-promoted: P5 executes only the eligible PENDING item and never
@@ -198,21 +218,25 @@ invocations, final Work VERIFIED), not as an inline retry.
 ## 10. Changed production files
 
 ```text
-internal/runtime/incrementalexec/cycle.go   (new)
+internal/runtime/incrementalexec/cycle.go    (new)
+internal/runtime/incrementalexec/executor.go (narrow: preserve completion cause)
 ```
 
 New tests:
 
 ```text
-internal/runtime/incrementalexec/cycle_test.go              (16)
-internal/runtime/incrementalexec/cycle_integration_test.go  (5)
+internal/runtime/incrementalexec/cycle_test.go              (19)
+internal/runtime/incrementalexec/cycle_integration_test.go  (6)
 ```
 
 No `internal/store/postgres/**`, no `internal/runtime/scan/**`, no
 `internal/collector/**`, no `internal/runtime/app/**`, no
 `internal/runtime/worker/**`, no `cmd/**`, no `internal/transport/**`, no
 `internal/query/**`, no `internal/kernel/**`, no `internal/domain/**`, no
-migration, and no `go.mod`/`go.sum` change. P4 `executor.go` is unchanged.
+migration, and no `go.mod`/`go.sum` change. The P4 `executor.go` change is
+limited to wrapping both `ErrCompletionFailed` and the underlying cause in the
+completion error chain; the P4 state machine and completion semantics are
+unchanged.
 
 ## 11. Regression results
 
@@ -222,7 +246,9 @@ go vet ./...                    clean
 go test -p 1 -count=1 ./...     all packages ok (real PostgreSQL 18)
 ```
 
-Existing P3/P4 tests remain green.
+P5-specific tests = **25** (cycle unit 19 + integration 6). P4 gained one
+completion-cause test (`executor_test.go`, 14 total). Existing P3/P4 tests remain
+green.
 
 ## 12. Boundary statement
 
@@ -234,5 +260,39 @@ daemonized executor, background goroutine worker pool, unbounded loop, automatic
 new migration, persistent cycle/lease table, HTTP API change, native
 delta/provider cursor, direct 115 client, destructive removal, or Gate 5. P5 is
 not wired into `worker`, `app`, any command, or any HTTP handler.
+
+P5 does not authorize concurrent invocation of the same `CycleRunner`: `Run` is
+serial within one call, but nothing prevents a caller from starting two `Run`
+calls. The future scheduler/orchestrator must serialize cycles unless a later
+phase explicitly authorizes parallelism.
+
+`FROZEN_CONTRACT_CHANGES: NONE`
+
+## 13. Round 1 rework (Issue #79 review)
+
+Two blockers + one closeout from the P5 Round 1 review were fixed strictly inside
+`internal/runtime/incrementalexec/**`, the P5 tests, and this result document:
+
+1. **Completion deadline cause propagation (P4 narrow fix).** Both completion
+   call sites in `executor.go` now wrap `ErrCompletionFailed` **and** the
+   underlying cause (Go multiple `%w`), so
+   `errors.Is(err, ErrCompletionFailed) && errors.Is(err, context.DeadlineExceeded)`
+   holds. The cycle therefore classifies a completion interrupted by the
+   cycle-owned deadline as `MAX_WALL_TIME` (nil cycle error,
+   `InterruptedInFlight` from `ClaimedSignalSeq`) instead of `SYSTEMIC_ERROR`,
+   while a genuinely unrelated completion failure is still surfaced. P4 state
+   semantics are unchanged. Proved by `TestP4CompletionErrorPreservesContextCause`
+   (both success and failure call sites), `TestP5CycleCompletionDeadlineIsMaxWallTime`,
+   `TestP5CycleParentDeadlineCompletionIsContextCancelled`, and the real-PG
+   `TestP5CycleRealPGCompletionDeadlineIsMaxWallTime`.
+2. **Unknown `FailureClass` must not increment `Failed`.** The `ErrScannerFailed`
+   branch now classifies the class first; only accepted P3 classes increment
+   `Failed`. An unknown non-nil class fails closed as `SYSTEMIC_ERROR` with
+   `Failed` unchanged (`TestP5CycleUnknownFailureClassNotCounted`).
+3. **`InterruptedInFlight` documentation/evidence.** The field comment, this
+   report, and the evidence now state that the flag is set for cancellation from
+   **either** the parent context or the cycle-owned deadline after a proven claim
+   (`ClaimedSignalSeq > 0`). `TestP5CycleParentCancellation` asserts `true` for a
+   proven claim and `false` for a selected-but-unclaimed item.
 
 `FROZEN_CONTRACT_CHANGES: NONE`
