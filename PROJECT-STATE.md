@@ -48,7 +48,7 @@ The experimental subagent topology is retired.
 
 Operating mode: **Stable Alpha Foundation / Maintenance**
 
-**Post-MVP Incremental D0 Change Discovery — COMPLETE / ARCHITECT_ACCEPTED.** Issue #57 remains the architecture umbrella; Issue #59 research is complete. The next step is an Architect decision on whether any prototype should be authorized. Production implementation is **NOT AUTHORIZED**.
+**Post-MVP Incremental D0 Change Discovery — COMPLETE / ARCHITECT_ACCEPTED.** The Architect has selected **P0 Targeted Scoped Refresh Prototype** as the next bounded step. Issue #62 is authorized for prototype execution only. Production incremental implementation remains **NOT AUTHORIZED**.
 
 **Gate 4 — Reference Consumer Integration — CLOSED**
 
@@ -82,7 +82,7 @@ Status:
 
 There is no active Gate-5 execution issue and no Worker implementation task.
 
-Separately, IndexCore Issue #57 tracks the incremental architecture umbrella. Issue #59 has completed the evidence-first Change Discovery research. The accepted D0 report is `docs/research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md`. No prototype or production implementation is authorized yet, and Gate 5 remains separate.
+Separately, IndexCore Issue #57 tracks the incremental architecture umbrella. Issue #59 has completed D0 research. Issue #62 now authorizes a bounded P0 prototype: known scope -> OpenList forced refresh -> PARTIAL additive-safe reconcile. This does not authorize polling, scheduler, native delta, production sync, or Gate 5.
 Do not start a formal successor product, auth/user system, search/catalog,
 preview/download product path, 115 integration, AI, or other deferred product
 work until a new Architect plan explicitly authorizes it.
@@ -325,10 +325,10 @@ Current execution status:
 ```text
 Gate 4: CLOSED
 Post-MVP Incremental D0: COMPLETE / ARCHITECT_ACCEPTED (Issue #59 under #57)
-Post-MVP Incremental: ARCHITECT DECISION PENDING
-Post-MVP Incremental implementation: NOT AUTHORIZED
+Post-MVP Incremental P0: AUTHORIZED — PROTOTYPE ONLY (Issue #62)
+Post-MVP Incremental production implementation: NOT AUTHORIZED
 Gate 5: NOT AUTHORIZED
-Active Worker task: NONE
+Active Worker task: Issue #62
 ```
 
 Next action is Architect planning for Gate 5 only. No successor-product
