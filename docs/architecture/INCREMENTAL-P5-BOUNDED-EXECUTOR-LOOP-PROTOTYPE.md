@@ -411,7 +411,7 @@ After `ExecuteOne` returns a context error:
    - `MAX_WALL_TIME`;
    - normal bounded stop;
    - return nil cycle error;
-   - if the last P4 result had `Selected=true`, set `InterruptedInFlight=true`.
+   - set `InterruptedInFlight=true` only when the last P4 result proves a committed claim (`ClaimedSignalSeq > 0`). `Selected=true` alone is insufficient because selection may have succeeded while ClaimWork did not commit.
 
 No next iteration.
 
@@ -676,7 +676,7 @@ Prove:
 - no next item starts;
 - StopReason MAX_WALL_TIME;
 - cycle returns as a normal bounded stop;
-- `InterruptedInFlight=true` when the item had been selected/claimed;
+- `InterruptedInFlight=true` only when the P4 result proves ClaimWork committed (`ClaimedSignalSeq > 0`); a merely selected-but-unclaimed item must report false;
 - real-PG Work remains IN_FLIGHT;
 - explicit external P3 `RecoverStaleInflight` requeues it.
 
