@@ -1,8 +1,8 @@
 # P0 Targeted Scoped Refresh — Prototype Delivery Report
 
-> Status: **PROTOTYPE DELIVERED (Rounds 1–2 corrections applied) — DETERMINISTIC + POSTGRESQL VERIFIED — LIVE VALIDATION PENDING**
+> Status: **PROTOTYPE DELIVERED — DETERMINISTIC + POSTGRESQL VERIFIED — LIVE VALIDATION EXECUTED — ARCHITECT_ACCEPTED**
 >
-> **P0 NOT PASS** (live 115/OpenList validation not yet executed)
+> **P0 ARCHITECT_ACCEPTED**
 >
 > Execution issue: #62
 >
@@ -120,8 +120,7 @@ deterministic in-process HTTP server.
   **`115 Open`** driver (official 115 Open API). Results:
   `docs/incremental/P0-SCOPED-REFRESH-LIVE-RESULT.md` (T0–T6; decisive stale-cache gate passed;
   increment 7→8; canonical `refresh=true` count = 1 captured via a test-only transparent proxy).
-- Final P0 acceptance and any merge remain **reserved for the Architect**; production incremental
-  implementation is **not authorized**.
+- P0 is **ARCHITECT_ACCEPTED**. Production incremental implementation remains **not authorized**.
 
 ## 5. Frozen-contract statement
 
