@@ -1,6 +1,6 @@
 # Post-MVP Incremental Ingestion Blueprint
 
-> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 ACCEPTED / P3 ACCEPTED / P4 ACCEPTED / P5 ACCEPTED / P6 ACCEPTED / P7 ACCEPTED / P8 MUTATION HINT INGESTION AUTHORIZED / PRODUCTION SCHEDULER NOT AUTHORIZED**
+> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 ACCEPTED / P3 ACCEPTED / P4 ACCEPTED / P5 ACCEPTED / P6 ACCEPTED / P7 ACCEPTED / P8 ACCEPTED / P9 TRUSTED HINT TRANSPORT AUTHORIZED / PRODUCTION SCHEDULER NOT AUTHORIZED**
 >
 > Architecture tracking: #57
 >
@@ -221,7 +221,15 @@ P8 is defined by:
 
 `docs/architecture/INCREMENTAL-P8-MUTATION-HINT-PROTOTYPE.md`
 
-P8 may prove a trusted in-process provider-neutral Mutation Hint ingress that maps one canonical directory scope into the already reserved `MUTATION_HINT` provenance and reuses `Store.MergeSignal`. It performs no provider traversal and no execution itself. It does **not** authorize a standalone hint writer, public trigger API, provider cursor, destructive delta, or Gate 5.
+P8 is ARCHITECT_ACCEPTED and merged at `ef93ed94072314213d1ef0f64005ba7c0d3c4859`. It proved trusted in-process Mutation Hint ingestion through the existing `Store.MergeSignal` state machine, including lost-wakeup safety, protected RETRY_WAIT/BLOCKED/SUSPENDED semantics, claim-scoped watch attribution, and non-destructive DELETE_HINT behavior.
+
+P8 exit decision: **AUTHORIZE_TRUSTED_HINT_TRANSPORT_DESIGN**.
+
+P9 is defined by:
+
+`docs/architecture/INCREMENTAL-P9-TRUSTED-HINT-TRANSPORT-PROTOTYPE.md`
+
+P9 may prove one separate default-disabled loopback-only authenticated Hint HTTP listener inside the existing `indexcore serve` process and writer-lock lifetime. The existing Query HTTP package remains read-only and unchanged. The Hint listener delegates only to P8 and does not execute dirty work itself.
 
 ## 5. Capability model — research hypothesis, not accepted contract
 

@@ -6,11 +6,11 @@
 
 Architecture / acceptance owner: **ChatGPT Architect**
 
-Execution owner: **Codex Executor / Worker only for the Architect-authorized P8 mutation-hint issue**
+Execution owner: **Codex Executor / Worker only for the Architect-authorized P9 trusted-hint-transport issue**
 
 Status:
 
-**P0 TARGETED SCOPED REFRESH — ARCHITECT_ACCEPTED / P1 HOT-SCOPE POLLING FEASIBILITY — ARCHITECT_ACCEPTED / P2 DIRTY-SCOPE STATE DESIGN — ARCHITECT_ACCEPTED / P3 STATE PERSISTENCE — ARCHITECT_ACCEPTED / P4 ONE-SHOT DIRTY EXECUTOR — ARCHITECT_ACCEPTED / P5 BOUNDED EXECUTOR LOOP — ARCHITECT_ACCEPTED / P6 SCHEDULER ORCHESTRATION — ARCHITECT_ACCEPTED / P7 MANUAL INCREMENTAL COMMAND — ARCHITECT_ACCEPTED / P8 MUTATION HINT INGESTION — AUTHORIZED AFTER PLAN MERGE / PRODUCTION SCHEDULER NOT AUTHORIZED**
+**P0 TARGETED SCOPED REFRESH — ARCHITECT_ACCEPTED / P1 HOT-SCOPE POLLING FEASIBILITY — ARCHITECT_ACCEPTED / P2 DIRTY-SCOPE STATE DESIGN — ARCHITECT_ACCEPTED / P3 STATE PERSISTENCE — ARCHITECT_ACCEPTED / P4 ONE-SHOT DIRTY EXECUTOR — ARCHITECT_ACCEPTED / P5 BOUNDED EXECUTOR LOOP — ARCHITECT_ACCEPTED / P6 SCHEDULER ORCHESTRATION — ARCHITECT_ACCEPTED / P7 MANUAL INCREMENTAL COMMAND — ARCHITECT_ACCEPTED / P8 MUTATION HINT INGESTION — ARCHITECT_ACCEPTED / P9 TRUSTED HINT TRANSPORT — AUTHORIZED AFTER PLAN MERGE / PRODUCTION SCHEDULER NOT AUTHORIZED**
 
 Current architecture planning:
 
@@ -36,9 +36,11 @@ Current architecture planning:
 - P7 plan: `docs/architecture/INCREMENTAL-P7-MANUAL-INCREMENTAL-COMMAND-PROTOTYPE.md`
 - Issue #85 / PR #86 — P7 manual incremental command (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `8ae9b01c6a8d2c4b8797077b280e795f71dc712b`)
 - P8 plan: `docs/architecture/INCREMENTAL-P8-MUTATION-HINT-PROTOTYPE.md`
+- Issue #88 / PR #89 — P8 Mutation Hint ingestion (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `ef93ed94072314213d1ef0f64005ba7c0d3c4859`)
+- P9 plan: `docs/architecture/INCREMENTAL-P9-TRUSTED-HINT-TRANSPORT-PROTOTYPE.md`
 - Accepted D0 report: `docs/research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md`
 
-Research and P0–P7 are complete. The next bounded step is **P8 Mutation Hint Ingestion Prototype**: add one trusted in-process provider-neutral ingestion primitive that validates one directory scope and merges exactly one `MUTATION_HINT` signal through the existing `Store.MergeSignal` path. It performs no provider traversal, no execution, no Canonical write, and exposes no new CLI/HTTP transport. Production scheduling/cadence/continuous execution remains **NOT AUTHORIZED**.
+Research and P0–P8 are complete. The next bounded step is **P9 Trusted Hint Transport Prototype**: add a separate, default-disabled, loopback-only authenticated Hint HTTP listener inside the existing `indexcore serve` process and writer-lock boundary. It may call the accepted P8 ingress only; the existing Query `/v1` listener remains read-only and unchanged. Production scheduling/cadence/continuous execution remains **NOT AUTHORIZED**.
 
 Accepted Gate-4 merge commits:
 
@@ -102,7 +104,7 @@ CloudSite 1.0 remains **Legacy / Frozen Product**.
 
 This is a separate IndexCore infrastructure extension and does **not** consume or authorize Gate 5.
 
-Capability discovery and P0–P7 are complete. The current task is **P8 mutation hint ingestion prototype**.
+Capability discovery and P0–P8 are complete. The current task is **P9 trusted hint transport prototype**.
 
 Compare:
 
@@ -123,9 +125,9 @@ Primary question:
 
 The accepted D0 report establishes the evidence baseline for 115/OpenList/AList/Xiaoya/rclone, request amplification, cache behavior, rate-limit/account risk, large-directory behavior, and remaining live-test UNKNOWNs.
 
-The Architect accepted P0 scoped refresh, P1 bounded hot-scope polling feasibility, P2 durable state design, P3 persistence, P4 one-shot execution, P5 bounded draining, P6 finite scheduler orchestration, and P7 the one-shot manual command. P7 exit decision is **AUTHORIZE_MUTATION_HINT_PROTOTYPE**.
+The Architect accepted P0 scoped refresh, P1 bounded hot-scope polling feasibility, P2 durable state design, P3 persistence, P4 one-shot execution, P5 bounded draining, P6 finite scheduler orchestration, P7 the one-shot manual command, and P8 trusted in-process Mutation Hint ingestion. P8 exit decision is **AUTHORIZE_TRUSTED_HINT_TRANSPORT_DESIGN**.
 
-P8 may add only one trusted in-process `MutationHint` ingestion service. It must map a canonical directory scope into the already-reserved `MUTATION_HINT` DirtySignal provenance and call existing `Store.MergeSignal` exactly once. It must not add a standalone hint writer, CLI/HTTP transport, provider traversal, execution, automatic recovery/repair, native delta/provider cursor, or destructive behavior.
+P9 may add only a separate loopback-only authenticated Hint listener inside the existing `serve` process after writer-lock acquisition. It may hold only the narrow P8 Ingester dependency. It must not add write capability to the existing Query `httpapi`, must not create a second writer process, and must not execute dirty work automatically.
 
 ## Next product blueprint phase
 
@@ -172,8 +174,8 @@ Do not begin:
 - Scanner Resume / multi-daemon HA unless separately planned.
 - native delta implementation unless a future provider capability review explicitly authorizes it;
 - production adaptive polling / scheduler or continuous dirty executor;
-- Mutation Hint behavior outside the bounded P8 in-process ingestion prototype;
-- any external/public Mutation Hint transport until separately authorized.
+- trusted Hint transport behavior outside the bounded P9 loopback-only prototype;
+- any network-reachable/public Mutation Hint transport until separately authorized.
 
 ## Recovery rule
 
@@ -186,4 +188,4 @@ First read:
 - `docs/gate4/GATE4-REFERENCE-CONSUMER-REPORT.md`;
 - the blueprint Gate-5 section.
 
-Then follow the active Architect-authorized phase. For incremental work, P8 is the trusted in-process Mutation Hint ingestion prototype; for product work, Gate 5 still requires a separate architecture plan.
+Then follow the active Architect-authorized phase. For incremental work, P9 is the separate loopback-only trusted Hint transport prototype; for product work, Gate 5 still requires a separate architecture plan.
