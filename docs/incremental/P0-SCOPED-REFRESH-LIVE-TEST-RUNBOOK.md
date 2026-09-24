@@ -1,6 +1,6 @@
 # P0 Scoped Refresh — Live Test Runbook
 
-> Status: **NOT YET EXECUTED — live environment unavailable to the Worker**
+> Status: **EXECUTED — see `P0-SCOPED-REFRESH-LIVE-RESULT.md` (T0–T6 observed; decisive stale-cache gate passed)**
 >
 > Execution issue: #62
 >
