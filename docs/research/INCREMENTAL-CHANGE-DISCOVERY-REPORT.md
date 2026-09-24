@@ -1,6 +1,6 @@
 # Incremental Change Discovery Research Report
 
-> Status: **IN PROGRESS — EVIDENCE COLLECTED, ARCHITECT DECISION PENDING**
+> Status: **RESEARCH COMPLETE — ARCHITECT DECISION PENDING**
 >
 > Research issue: #59
 >
@@ -40,8 +40,8 @@ Web should see the resource earlier
 
 ### 1.1 Executive Summary
 
-1. **115 官方开放平台不提供 native change feed / delta / cursor / webhook。**
-   官方 API 列表（文件管理/用户/视频/云下载共 40+ 接口）已全量核对，无 `since` /
+1. **截至 2026-09-24，在已审计的公开 115 Open API 表面中未发现 native change feed / delta / cursor / webhook。**
+   官方 API 列表（文件管理/用户/视频/云下载共 40+ 接口）已全量核对，未发现 `since` /
    `cursor` / `change token` / `recent changes` / callback / event stream。
    → 截至 2026-09-24，在**已审计的公开 115 Open API 表面**中**未发现** native delta /
    change cursor（证据级别：DIRECT；不排除存在未公开/未文档化能力）。
@@ -497,7 +497,7 @@ Architect 指出「上游具备强制刷新能力 ≠ IndexCore 现在已经会�
   body, _ := json.Marshal(map[string]any{"path": dir, "password": "", "page": page, "per_page": perPage, "refresh": false})
   ```
 
-- 含义：即使把 storage 配置为 **115 Open 官方 driver**，IndexCore 当前 adapter 请求
+- 含义：即使把 storage 配置为**基于 115 官方 Open API 的社区维护驱动**，IndexCore 当前 adapter 请求
   `/api/fs/list` 时仍带 `refresh=false`，即**始终读 OpenList/AList 目录缓存**，
   不会触发对 115 的强制刷新。
 - 因此「方案 B 可复用该社区维护驱动」是**上游能力事实**；要真正受益，IndexCore adapter 侧
@@ -894,7 +894,7 @@ KEEP_FULL_SCAN_ONLY
 
 本报告的证据含义（**不构成建议**）：
 
-- `PROTOTYPE_NATIVE_DELTA` — 对 115 **无证据支持**（UNAVAILABLE）；仅当先选定一个明确
+- `PROTOTYPE_NATIVE_DELTA` — 截至 2026-09-24，在**已审计的公开 115 Open API 表面中未发现**可用 native delta / change cursor（`UNAVAILABLE` 仅指该已审计公开表面）；仅当先选定一个明确
   支持可信 change feed 的其它 provider 时才可能有意义。
 - `PROTOTYPE_SCOPED_REFRESH` — 有源码级 DIRECT 证据支持其**技术可行性**；且可落到
   **基于 115 官方 Open API 的社区维护驱动**（规避私有接口风险、复用社区 SDK wrapper）。**须采用「第 1 页
