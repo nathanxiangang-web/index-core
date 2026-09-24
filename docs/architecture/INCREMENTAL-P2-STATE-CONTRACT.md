@@ -58,7 +58,7 @@ Canonical write directly; it only produces triggers.
 | `last_due_at` | instant, nullable | When the next-due transition fired (the schedule point). |
 | `last_attempt_started_at` | instant, nullable | Start of the most recent scheduled attempt started against this watch. |
 | `last_attempt_finished_at` | instant, nullable | End of that attempt (success or failure). |
-| `last_success_at` | instant, nullable | Most recent successful coverage of this scope (any trigger source). |
+| `last_success_at` | instant, nullable | Most recent successful attempt **driven by this watch's own `POLL_SCHEDULE` trigger** (`POLL_SCHEDULE ∈ source_set`). A success driven only by a hint/manual trigger does **not** update it (§6.1). |
 | `next_due_at` | instant, nullable | Next instant the watch is due; `NULL` iff not scheduled. |
 | `consecutive_failures` | int | Consecutive **provider** failures attributable to the watch schedule; budget defer does not increment (§6). |
 | `last_error_class` | enum, nullable | Provider-neutral failure class of the most recent failed attempt (§6). |
@@ -152,8 +152,8 @@ exact scope, through the accepted P0 `scan.Service.ScanScope` path.
 | `work_state` | enum | `PENDING`\|`IN_FLIGHT`\|`VERIFIED`\|`RETRY_WAIT`\|`BLOCKED`\|`SUSPENDED` (see `STATE-MACHINES.md`). |
 | `signal_seq` | bigint, monotonic | Durable count of merged triggers for this work item; incremented on every merge (§4). |
 | `claimed_signal_seq` | bigint, nullable | Value of `signal_seq` captured when an attempt claimed the item (null when not IN_FLIGHT). |
-| `reason_set` | set<reason> | Why verification is wanted (§5). Union-merged, never overwritten. |
-| `source_set` | set<source> | Where the triggers came from (§5). Union-merged, never overwritten. |
+| `reason_set` | set<reason> | Why verification is wanted (§5). Scoped to the **current outstanding epoch**: same-epoch union-merge; **reset** when a new epoch opens after `VERIFIED` (§3.4). |
+| `source_set` | set<source> | Where the triggers came from (§5). Scoped to the **current outstanding epoch**: same-epoch union-merge; **reset** at an epoch boundary (§3.4). |
 | `priority_class` | enum | `URGENT`\|`HIGH`\|`NORMAL`\|`LOW`. |
 | `first_seen_at` | instant | First merge time (stable; used for aging/fairness). |
 | `last_seen_at` | instant | Latest merge time. |
@@ -209,6 +209,9 @@ exact scope, through the accepted P0 `scan.Service.ScanScope` path.
 ### 3.6 `not_before`, `attempt_count`, `consecutive_failures`
 
 - `not_before` is scheduling eligibility (backoff/defer); it is independent of `priority_class`.
+- A merge updates `not_before` **per state** (§4.2): only `PENDING` may become eligible sooner;
+  `RETRY_WAIT` keeps its backoff (a new signal must **not** cancel it); a new epoch (`VERIFIED`)
+  rebuilds it from the trigger.
 - `consecutive_failures` increments only on provider-class failures; budget defer does not touch it.
 - `attempt_count` is diagnostic and never used to gate correctness.
 
@@ -224,9 +227,10 @@ exact scope, through the accepted P0 `scan.Service.ScanScope` path.
 1. At most one active logical item per `(root_id, scope_key)`.
 2. `claimed_signal_seq IS NOT NULL` iff `work_state = IN_FLIGHT` (during an attempt).
 3. `claimed_signal_seq <= signal_seq` always.
-4. `last_verified_signal_seq <= signature` of the verification, and `<= signal_seq` at write time.
-5. `signal_seq` never decreases for the lifetime of a row except on explicit compaction after
-   `VERIFIED` with no newer signal.
+4. `last_verified_signal_seq` is always a previously-claimed `signal_seq` value and is `<= signal_seq`
+   at write time. (There is no cross-scheme "signature" quantity to compare against.)
+5. `signal_seq` never decreases for the lifetime of a row. In v1 rows are never compacted or deleted
+   (`SCHEMA-SKETCH.md`), so it is strictly monotonic for all time.
 6. Work state transitions never mutate Canonical Inventory or removal evidence (§8).
 
 ## 4. Lost-wakeup / coalescing proof (§D)
@@ -245,16 +249,25 @@ the item must remain/re-enter `PENDING` (never silently dropped).
 ```text
 # merge (any trigger, arbitrary work_state):
 CAS(version=v -> v+1):
-    signal_seq     = signal_seq + 1
-    last_seen_at   = now
-    not_before     = min(not_before, trigger.not_before)   # never push later
-    if work_state == VERIFIED:            # new epoch -> provenance resets
-        reason_set = new_reasons
-        source_set = new_sources
-        work_state = PENDING
-    else:                                  # same outstanding epoch
+    signal_seq   = signal_seq + 1
+    last_seen_at = now
+    if work_state == VERIFIED:            # NEW EPOCH -> rebuild the outstanding epoch
+        reason_set     = new_reasons      # provenance RESET (no inheritance)
+        source_set     = new_sources
+        priority_class = trigger.priority_class
+        first_seen_at  = now              # new epoch starts now
+        last_seen_at   = now
+        not_before     = trigger.not_before
+        work_state     = PENDING
+    else:                                  # SAME outstanding epoch
         reason_set = reason_set ∪ new_reasons
         source_set = source_set ∪ new_sources
+        # not_before is handled PER STATE (NOT a blanket min()):
+        if work_state == PENDING:     not_before = min(not_before, trigger.not_before)  # may become eligible sooner
+        if work_state == IN_FLIGHT:   not_before unchanged                              # irrelevant during an attempt
+        if work_state == RETRY_WAIT:  not_before UNCHANGED                             # a new signal must NOT cancel backoff
+        if work_state == BLOCKED:     not_before unchanged                              # stays blocked
+        if work_state == SUSPENDED:   not_before unchanged                              # stays suspended
 
 # claim:
 CAS(version=v -> v+1):  where work_state = PENDING and (not_before IS NULL or not_before <= now)
@@ -298,12 +311,12 @@ transition is defined per state (no state silently ignores a merge):
 
 | current `work_state` | merge effect |
 | --- | --- |
-| `PENDING` | `signal_seq++`; same-epoch set union; `not_before` not pushed later. Stays `PENDING`. |
-| `IN_FLIGHT` | `signal_seq++`; same-epoch set union. The in-flight attempt continues; on completion the `signal_seq != claimed` branch returns the item to `PENDING` (newer signal preserved). |
-| `VERIFIED` | **opens a new epoch**: `signal_seq++`; `reason_set`/`source_set` **reset** to the new trigger; `work_state = PENDING`. |
-| `RETRY_WAIT` | `signal_seq++`; same-epoch set union; `not_before` not pushed later. Stays `RETRY_WAIT` — a new signal does **not** cancel the existing bounded backoff. |
-| `BLOCKED` | `signal_seq++`; same-epoch set union. Stays `BLOCKED` — a new signal does **not** auto-clear a block; only operator/repair (or `INVALID_SCOPE` policy) returns it to `PENDING`. |
-| `SUSPENDED` | `signal_seq++`; same-epoch set union. Stays `SUSPENDED` — no attempt runs while the root is non-ACTIVE; resumes to `PENDING` when the root becomes ACTIVE. |
+| `PENDING` | `signal_seq++`; same-epoch set union; `not_before = min(not_before, trigger.not_before)` (may become eligible sooner, never later). Stays `PENDING`. |
+| `IN_FLIGHT` | `signal_seq++`; same-epoch set union; `not_before` unchanged. The in-flight attempt continues; on completion the `signal_seq != claimed` branch returns the item to `PENDING` (newer signal preserved). |
+| `VERIFIED` | **opens a NEW EPOCH**: `signal_seq++`; `reason_set`/`source_set` **reset** to the new trigger; **`priority_class`, `first_seen_at`, `last_seen_at`, `not_before` rebuilt from the new trigger**; `work_state = PENDING`. |
+| `RETRY_WAIT` | `signal_seq++`; same-epoch set union; **`not_before` UNCHANGED** — a new signal must **not** cancel or shorten the existing bounded backoff. Stays `RETRY_WAIT`. |
+| `BLOCKED` | `signal_seq++`; same-epoch set union; `not_before` unchanged. Stays `BLOCKED` — a new signal does **not** auto-clear a block; only operator/repair (or `INVALID_SCOPE` policy) returns it to `PENDING`. |
+| `SUSPENDED` | `signal_seq++`; same-epoch set union; `not_before` unchanged. Stays `SUSPENDED` — no attempt runs while the root is non-ACTIVE; resumes to `PENDING` when the root becomes ACTIVE. |
 
 ### 4.3 CAS-conflict completion rule (explicit)
 
@@ -318,6 +331,18 @@ though `signal_seq` is still `k`**. The required behavior on any CAS conflict is
 
 Equivalently: success is recorded **only** by a CAS that succeeds with
 `signal_seq == claimed_signal_seq == k`.
+
+**Failure/abort uses the same re-read discipline.** A failure/abort CAS (`IN_FLIGHT -> RETRY_WAIT /
+BLOCKED / SUSPENDED / PENDING`) may also fail because a merge bumped `version`. On conflict:
+
+1. **re-read** the row;
+2. if `work_state == IN_FLIGHT` **and** `claimed_signal_seq == k` → the claim is still valid; retry the
+   CAS (bounded, **no tight loop**);
+3. otherwise the claim is no longer valid → **stop and do NOT write the failure/abort transition**; the
+   newer merge/state owns the item.
+
+A failure/abort transition must never overwrite a state a newer merge already advanced, and must never
+re-apply `consecutive_failures` / `last_error_class` to a stale claim.
 
 ### 4.4 Epoch boundary
 
@@ -376,9 +401,12 @@ sets (§3.4).
 ### 5.4 Merge semantics
 
 - Multiple triggers merge into the outstanding item; `signal_seq++`, `last_seen_at = now`,
-  **same-epoch** `reason_set`/`source_set` union, `not_before` never pushed later (§4.1/§4.2).
-- **Cross-epoch**: a trigger arriving after `VERIFIED` opens a new epoch and **resets**
-  `reason_set`/`source_set` (§3.4/§4.4); `signal_seq` continues monotonically (never reset).
+  **same-epoch** `reason_set`/`source_set` union, and `not_before` handled **per state** (only
+  `PENDING` may become eligible sooner; `RETRY_WAIT`/`BLOCKED`/`SUSPENDED` keep it unchanged) (§4.1/§4.2).
+- **Cross-epoch**: a trigger arriving after `VERIFIED` opens a new epoch and **rebuilds** the
+  outstanding epoch — `reason_set`/`source_set` reset, and `priority_class`/`first_seen_at`/
+  `last_seen_at`/`not_before` are rebuilt from the new trigger (§3.4/§4.2/§4.4); `signal_seq`
+  continues monotonically (never reset).
 - In v1 the row is never compacted/deleted (`SCHEMA-SKETCH.md`), so the item always exists; a **fresh**
   item with `signal_seq = 1` is created only when the row is first inserted for a new
   `(root_id, scope_key)`.
