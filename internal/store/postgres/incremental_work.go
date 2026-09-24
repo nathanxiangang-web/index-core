@@ -212,7 +212,10 @@ func applyMerge(wk state.DirtyScopeWork, sig state.DirtySignal, active bool) (st
 		return wk, fmt.Errorf("merge: unsupported work state %q", wk.WorkState)
 	}
 	wk.SignalSeq++
-	wk.LastSeenAt = sig.SeenAt
+	// last_seen_at is the latest signal time of the current epoch: never regress.
+	if sig.SeenAt.After(wk.LastSeenAt) {
+		wk.LastSeenAt = sig.SeenAt
+	}
 	return wk, nil
 }
 
@@ -620,7 +623,8 @@ func (s *Store) CompleteFailure(ctx context.Context, rootID, scopeKey string, cl
 
 	switch target {
 	case state.WorkRetryWait:
-		wk.PendingNotBefore = retryNotBefore
+		// Never earlier than an existing post-claim barrier: keep the later one.
+		wk.PendingNotBefore = state.MaxTimePtr(wk.PendingNotBefore, retryNotBefore)
 	case state.WorkBlocked, state.WorkSuspended:
 		wk.PendingNotBefore = nil
 	}

@@ -130,8 +130,9 @@ CREATE TABLE index_dirty_scope_work (
     CONSTRAINT c_dsw_claimed_le_signal CHECK (
         claimed_signal_seq IS NULL OR claimed_signal_seq <= signal_seq
     ),
-    CONSTRAINT c_dsw_verified_le_signal CHECK (
-        last_verified_signal_seq IS NULL OR last_verified_signal_seq <= signal_seq
+    CONSTRAINT c_dsw_verified_signal_range CHECK (
+        last_verified_signal_seq IS NULL
+        OR (last_verified_signal_seq >= 1 AND last_verified_signal_seq <= signal_seq)
     ),
 
     -- P2 bucket invariant: claimed_* present as one group iff IN_FLIGHT.

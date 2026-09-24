@@ -188,3 +188,28 @@ New tests: `incremental_round1_test.go` (DB fail-closed, normalized reads, immed
 rejection, recovery eligibility preservation, inactive-claim eligibility) and
 `incremental_rollback_internal_test.go` (due-poll rollback). Full `go test -p 1 ./...` green,
 `go vet` / `gofmt` clean, real PostgreSQL 18. `FROZEN_CONTRACT_CHANGES: NONE`.
+## 10. Round 2 Architect review rework (2026-09-24)
+
+PR #73 Round 2 = CHANGES REQUIRED. All 7 points addressed, P3-scope only:
+
+1. **Recovery lock order fixed.** `RecoverStaleInflight` now locks the root **before** scanning/locking
+   work rows (Root -> Work), removing the last reverse-order path.
+2. **Lifecycle gate on every runnable transition.** `RetryReady`, `ResumeSuspended` and
+   `RepairBlocked` now run in a transaction that locks the root, requires ACTIVE, and only then moves
+   the item to PENDING (lock order Root -> Watch -> Work).
+3. **Recovery NULL-eligibility fixed.** A claimed signal with no barrier (`claimed_not_before IS NULL`)
+   stays immediately runnable after recovery; a post-claim future `not_before` can no longer delay it.
+4. **Failure keeps the later barrier.** `CompleteFailure -> RETRY_WAIT` now uses
+   `pending_not_before = max(pending_not_before, retryNotBefore)` (never earlier).
+5. **DB watermark lower bound.** `last_verified_signal_seq` now has
+   `>= 1 AND <= signal_seq` (`c_dsw_verified_signal_range`).
+6. **`last_seen_at` monotonic.** Same-epoch merges use `max(last_seen_at, sig.SeenAt)` (never regress).
+7. **Concurrency / upgrade evidence added** (new real-PG tests):
+   `TestP3EmitDuePollVsClaimNoDeadlock`, `TestP3TransitionRootLifecycleRaceNoDeadlock`,
+   `TestP3PreMigrationUpgradePreservesData`, `TestP3RunnableTransitionsSucceedOnActiveRoot`,
+   `TestP3LifecycleGateOnRunnableTransitions`, `TestP3RecoveryNullClaimEligibilityNotDelayed`,
+   `TestP3CompleteFailureKeepsLaterBarrier`, `TestP3LastSeenAtNeverRegresses`,
+   `TestP3DBVerifiedWatermarkLowerBound`.
+
+Full `go test -p 1 ./...` green; `go vet` / `gofmt` clean; real PostgreSQL 18.
+`FROZEN_CONTRACT_CHANGES: NONE`.

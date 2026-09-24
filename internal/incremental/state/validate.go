@@ -182,3 +182,19 @@ func MinTimePtr(ts ...*time.Time) *time.Time {
 	}
 	return out
 }
+
+// MaxTimePtr returns the latest non-nil instant, or nil if all are nil. It keeps
+// the later barrier when combining eligibility (never earlier).
+func MaxTimePtr(ts ...*time.Time) *time.Time {
+	var out *time.Time
+	for _, t := range ts {
+		if t == nil {
+			continue
+		}
+		if out == nil || t.After(*out) {
+			v := *t
+			out = &v
+		}
+	}
+	return out
+}

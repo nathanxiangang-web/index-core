@@ -20,6 +20,13 @@ func (s *Store) RecoverStaleInflight(ctx context.Context, rootID string, now tim
 	}
 	defer tx.Rollback(ctx)
 
+	// Lock order Root -> Work: the root lock must precede any work-row lock.
+	lifecycle, err := lockRootForUpdate(ctx, tx, rootID)
+	if err != nil {
+		return 0, err
+	}
+	active := activeFromLifecycle(lifecycle)
+
 	rows, err := tx.Query(ctx, `
 		SELECT scope_key FROM index_dirty_scope_work
 		WHERE root_id=$1 AND work_state='IN_FLIGHT'
@@ -45,12 +52,6 @@ func (s *Store) RecoverStaleInflight(ctx context.Context, rootID string, now tim
 		return 0, nil
 	}
 
-	lifecycle, err := lockRootForUpdate(ctx, tx, rootID)
-	if err != nil {
-		return 0, err
-	}
-	active := activeFromLifecycle(lifecycle)
-
 	recovered := 0
 	for _, key := range keys {
 		wk, found, err := loadWorkForUpdate(ctx, tx, rootID, key)
@@ -72,9 +73,14 @@ func (s *Store) RecoverStaleInflight(ctx context.Context, rootID string, now tim
 		wk.PendingReasonSet = reasons
 		wk.PendingPriority = mergedPriority(wk.PendingPriority, derefPriority(wk.ClaimedPriority))
 		wk.PendingFirstSeenAt = state.MinTimePtr(wk.PendingFirstSeenAt, wk.ClaimedFirstSeenAt, wk.LastAttemptStartedAt)
-		// Preserve the earliest eligibility so a post-claim future not_before does
-		// not delay an already-due claimed signal.
-		wk.PendingNotBefore = state.MinTimePtr(wk.ClaimedNotBefore, wk.PendingNotBefore)
+		// Eligibility: a claimed signal with no barrier (claimed_not_before NULL)
+		// was immediately runnable, so the merged item must NOT be delayed by a
+		// post-claim future not_before. Otherwise keep the earliest barrier.
+		if wk.ClaimedNotBefore == nil {
+			wk.PendingNotBefore = nil
+		} else {
+			wk.PendingNotBefore = state.MinTimePtr(wk.ClaimedNotBefore, wk.PendingNotBefore)
+		}
 		releaseClaim(&wk)
 		if active {
 			wk.WorkState = state.WorkPending
