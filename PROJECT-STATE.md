@@ -48,7 +48,7 @@ The experimental subagent topology is retired.
 
 Operating mode: **Stable Alpha Foundation / Maintenance**
 
-**Post-MVP Incremental D0 Change Discovery — COMPLETE / ARCHITECT_ACCEPTED.** The Architect has selected **P0 Targeted Scoped Refresh Prototype** as the next bounded step. Issue #62 is authorized for prototype execution only. Production incremental implementation remains **NOT AUTHORIZED**.
+**Post-MVP Incremental D0 Change Discovery — COMPLETE / ARCHITECT_ACCEPTED.** **P0 Targeted Scoped Refresh — COMPLETE / ARCHITECT_ACCEPTED** (Issue #62, PR #64 merged at `a4b6ec83e637c25f26585f56c3fb906410fa4b9a`). The Architect has selected **P1 Adaptive Hot-Scope Polling Feasibility Prototype** as the next bounded step. Production incremental implementation remains **NOT AUTHORIZED**.
 
 **Gate 4 — Reference Consumer Integration — CLOSED**
 
@@ -80,9 +80,11 @@ Status:
 
 **NOT AUTHORIZED / ARCHITECT PLANNING REQUIRED**
 
-There is no active Gate-5 execution issue. The only active Worker task is the bounded IndexCore P0 prototype in Issue #62.
+There is no active Gate-5 execution issue.
 
-Separately, IndexCore Issue #57 tracks the incremental architecture umbrella. Issue #59 has completed D0 research. Issue #62 now authorizes a bounded P0 prototype: known scope -> OpenList forced refresh -> PARTIAL additive-safe reconcile. This does not authorize polling, scheduler, native delta, production sync, or Gate 5.
+Separately, IndexCore Issue #57 tracks the incremental architecture umbrella. Issue #59 completed D0 research. Issue #62 / PR #64 completed and accepted P0: known scope -> OpenList forced refresh -> PARTIAL additive-safe reconcile.
+
+The next bounded IndexCore step is P1 **hot-scope polling feasibility**. P1 may use only a gated/test-only polling harness with in-memory prototype state and the accepted P0 `ScanScope` path. It does not authorize a production scheduler, persistent dirty-scope state, native delta, production sync, destructive behavior, or Gate 5.
 Do not start a formal successor product, auth/user system, search/catalog,
 preview/download product path, 115 integration, AI, or other deferred product
 work until a new Architect plan explicitly authorizes it.
