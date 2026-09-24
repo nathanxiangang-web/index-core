@@ -1,6 +1,6 @@
 # Post-MVP Incremental Ingestion Blueprint
 
-> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 ACCEPTED / P3 ACCEPTED / P4 ACCEPTED / P5 ACCEPTED / P6 SCHEDULER ORCHESTRATION AUTHORIZED / PRODUCTION SCHEDULER NOT AUTHORIZED**
+> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 ACCEPTED / P3 ACCEPTED / P4 ACCEPTED / P5 ACCEPTED / P6 ACCEPTED / P7 MANUAL INCREMENTAL COMMAND AUTHORIZED / PRODUCTION SCHEDULER NOT AUTHORIZED**
 >
 > Architecture tracking: #57
 >
@@ -205,7 +205,15 @@ P6 is defined by:
 
 `docs/architecture/INCREMENTAL-P6-SCHEDULER-ORCHESTRATION-PROTOTYPE.md`
 
-P6 may prove a finite manually-invoked watch-materialization + execution cycle: snapshot persisted due watches once, attempt at most five atomic `EmitDuePoll` operations, then invoke one accepted P5 bounded cycle under a total `<=60s` wall budget. It does **not** authorize ticker/cadence, a continuous daemon, public trigger API, provider cursor, destructive delta, or Gate 5.
+P6 is ARCHITECT_ACCEPTED and merged at `3aa02bb9f6cf9c6de52ac5fb88310d17c735af12`. It proved the finite manually-invoked watch-materialization + execution cycle, including fixed due snapshot, bounded poll materialization, P5 composition, cancellation precedence, watch attribution, protected RETRY_WAIT/BLOCKED state, and non-destructive PARTIAL absence.
+
+P6 exit decision: **AUTHORIZE_MANUAL_INCREMENTAL_COMMAND_PROTOTYPE**.
+
+P7 is defined by:
+
+`docs/architecture/INCREMENTAL-P7-MANUAL-INCREMENTAL-COMMAND-PROTOTYPE.md`
+
+P7 may prove a narrow one-shot operator entrypoint `indexcore incremental run` that acquires the existing writer advisory lock, composes the accepted P4/P5/P6 runtime chain, invokes P6 once, emits structured JSON, and exits. It does **not** authorize ticker/cadence, a continuous daemon, public trigger API, provider cursor, destructive delta, or Gate 5.
 
 ## 5. Capability model — research hypothesis, not accepted contract
 
