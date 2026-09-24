@@ -6,11 +6,11 @@
 
 Architecture / acceptance owner: **ChatGPT Architect**
 
-Execution owner: **Codex Executor / Worker only for the Architect-authorized P3 persistence-prototype issue**
+Execution owner: **Codex Executor / Worker only for the Architect-authorized P4 one-shot executor issue**
 
 Status:
 
-**P0 TARGETED SCOPED REFRESH — ARCHITECT_ACCEPTED / P1 HOT-SCOPE POLLING FEASIBILITY — ARCHITECT_ACCEPTED / P2 DIRTY-SCOPE STATE DESIGN — ARCHITECT_ACCEPTED / P3 STATE PERSISTENCE PROTOTYPE — AUTHORIZED AFTER PLAN MERGE / PRODUCTION SCHEDULER NOT AUTHORIZED**
+**P0 TARGETED SCOPED REFRESH — ARCHITECT_ACCEPTED / P1 HOT-SCOPE POLLING FEASIBILITY — ARCHITECT_ACCEPTED / P2 DIRTY-SCOPE STATE DESIGN — ARCHITECT_ACCEPTED / P3 STATE PERSISTENCE — ARCHITECT_ACCEPTED / P4 ONE-SHOT DIRTY EXECUTOR — AUTHORIZED AFTER PLAN MERGE / PRODUCTION SCHEDULER NOT AUTHORIZED**
 
 Current architecture planning:
 
@@ -26,9 +26,11 @@ Current architecture planning:
 - P2 plan: `docs/architecture/INCREMENTAL-P2-DIRTY-SCOPE-STATE-DESIGN.md`
 - Issue #69 / PR #70 — P2 durable state design (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `e1f9c734e30502a133e5e7df8f54b2d1e3e1338a`)
 - P3 plan: `docs/architecture/INCREMENTAL-P3-STATE-PERSISTENCE-PROTOTYPE.md`
+- Issue #72 / PR #73 — P3 state persistence (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `c7c7091412a92c66e35d4d70f65a326ddc82a132`)
+- P4 plan: `docs/architecture/INCREMENTAL-P4-ONE-SHOT-DIRTY-EXECUTOR-PROTOTYPE.md`
 - Accepted D0 report: `docs/research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md`
 
-Research, P0, P1, and P2 are complete. The next bounded step is **P3 State Persistence Prototype**: additive migration + Store CAS/transaction/recovery primitives + real PostgreSQL proof only. Production scheduler/executor remains **NOT AUTHORIZED**.
+Research and P0–P3 are complete. The next bounded step is **P4 One-shot Dirty Executor Prototype**: deterministically select at most one eligible persisted item, version-claim it, call the existing P0 `ScanScope` path once, then complete through P3 state. Production scheduling/continuous execution remains **NOT AUTHORIZED**.
 
 Accepted Gate-4 merge commits:
 
@@ -92,7 +94,7 @@ CloudSite 1.0 remains **Legacy / Frozen Product**.
 
 This is a separate IndexCore infrastructure extension and does **not** consume or authorize Gate 5.
 
-Capability discovery, P0 scoped-refresh validation, P1 hot-scope polling feasibility, and P2 durable state design are complete. The current task is **P3 state persistence prototype**.
+Capability discovery and P0–P3 are complete. The current task is **P4 one-shot dirty executor prototype**.
 
 Compare:
 
@@ -113,9 +115,9 @@ Primary question:
 
 The accepted D0 report establishes the evidence baseline for 115/OpenList/AList/Xiaoya/rclone, request amplification, cache behavior, rate-limit/account risk, large-directory behavior, and remaining live-test UNKNOWNs.
 
-The Architect accepted P0 scoped refresh, P1 bounded hot-scope polling feasibility, and P2 durable state design. P2 exit decision is **AUTHORIZE_STATE_PERSISTENCE_PROTOTYPE**.
+The Architect accepted P0 scoped refresh, P1 bounded hot-scope polling feasibility, P2 durable state design, and P3 persistence. P3 exit decision is **AUTHORIZE_ONE_SHOT_DIRTY_EXECUTOR_PROTOTYPE**.
 
-P3 may add the inert additive `0005_incremental_scope_state.sql` migration, provider-neutral operational state types, PostgreSQL Store CAS/transaction/recovery primitives, and real-PG deterministic/concurrency tests. It must not add a production scheduler, executor, Mutation Hint API, native delta/provider cursor, production `sync`, or destructive behavior.
+P4 may add a deterministic read-only eligible-work selector, a one-shot runtime executor, typed scoped-refresh error classification, and real-PG/httptest integration proof. One invocation may process zero or one item and may call `ScanScope` at most once. It must not add a polling scheduler, continuous executor daemon, Mutation Hint API, native delta/provider cursor, production `sync`, or destructive behavior.
 
 ## Next product blueprint phase
 
@@ -161,8 +163,8 @@ Do not begin:
 - changes to frozen Gate 1B/1C semantics;
 - Scanner Resume / multi-daemon HA unless separately planned.
 - native delta implementation unless a future provider capability review explicitly authorizes it;
-- production adaptive polling / scheduler or long-running dirty executor;
-- persistence work outside the bounded P3 state prototype;
+- production adaptive polling / scheduler or continuous dirty executor;
+- executor behavior outside the bounded P4 one-shot prototype;
 - Mutation Hint production integration until separately authorized.
 
 ## Recovery rule
@@ -176,4 +178,4 @@ First read:
 - `docs/gate4/GATE4-REFERENCE-CONSUMER-REPORT.md`;
 - the blueprint Gate-5 section.
 
-Then follow the active Architect-authorized phase. For incremental work, P3 is the bounded persistence prototype; for product work, Gate 5 still requires a separate architecture plan.
+Then follow the active Architect-authorized phase. For incremental work, P4 is the bounded one-shot executor prototype; for product work, Gate 5 still requires a separate architecture plan.
