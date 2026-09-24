@@ -48,7 +48,7 @@ The experimental subagent topology is retired.
 
 Operating mode: **Stable Alpha Foundation / Maintenance**
 
-**Post-MVP Incremental D0 Change Discovery — COMPLETE / ARCHITECT_ACCEPTED.** **P0 Targeted Scoped Refresh — COMPLETE / ARCHITECT_ACCEPTED** (Issue #62, PR #64 merged at `a4b6ec83e637c25f26585f56c3fb906410fa4b9a`). The Architect has selected **P1 Adaptive Hot-Scope Polling Feasibility Prototype** as the next bounded step. Production incremental implementation remains **NOT AUTHORIZED**.
+**Post-MVP Incremental D0 Change Discovery — COMPLETE / ARCHITECT_ACCEPTED.** **P0 Targeted Scoped Refresh — COMPLETE / ARCHITECT_ACCEPTED** (Issue #62, PR #64). **P1 Adaptive Hot-Scope Polling Feasibility — COMPLETE / ARCHITECT_ACCEPTED** (Issue #66, PR #67 merged at `41c4a26de85532a1d43da073e4256b7befb39d36`). P1 exit decision: **AUTHORIZE_DIRTY_SCOPE_STATE_DESIGN**. P2 design is the next bounded step. Production incremental implementation remains **NOT AUTHORIZED**.
 
 **Gate 4 — Reference Consumer Integration — CLOSED**
 
@@ -82,9 +82,9 @@ Status:
 
 There is no active Gate-5 execution issue.
 
-Separately, IndexCore Issue #57 tracks the incremental architecture umbrella. Issue #59 completed D0 research. Issue #62 / PR #64 completed and accepted P0: known scope -> OpenList forced refresh -> PARTIAL additive-safe reconcile.
+Separately, IndexCore Issue #57 tracks the incremental architecture umbrella. Issue #59 completed D0 research. Issue #62 / PR #64 completed P0 scoped refresh. Issue #66 / PR #67 completed P1 bounded hot-scope polling feasibility with a cadence-valid real 115 Open run (`T6-T1=59.1s <= 120s`).
 
-The next bounded IndexCore step is P1 **hot-scope polling feasibility**. P1 may use only a gated/test-only polling harness with in-memory prototype state and the accepted P0 `ScanScope` path. It does not authorize a production scheduler, persistent dirty-scope state, native delta, production sync, destructive behavior, or Gate 5.
+The next bounded IndexCore step is P2 **Dirty / Hot Scope Durable State Design**. P2 separates recurring `ScopeWatchState` from one-shot coalesced `DirtyScopeWork`, defines restart-safe due/work semantics and `signal_seq` lost-wakeup protection, and remains design-only. It does not authorize a production scheduler, SQL migration, persistent dirty-scope implementation, Mutation Hint API, native delta, production sync, destructive behavior, or Gate 5.
 Do not start a formal successor product, auth/user system, search/catalog,
 preview/download product path, 115 integration, AI, or other deferred product
 work until a new Architect plan explicitly authorizes it.
@@ -327,10 +327,12 @@ Current execution status:
 ```text
 Gate 4: CLOSED
 Post-MVP Incremental D0: COMPLETE / ARCHITECT_ACCEPTED (Issue #59 under #57)
-Post-MVP Incremental P0: AUTHORIZED — PROTOTYPE ONLY (Issue #62)
+Post-MVP Incremental P0: COMPLETE / ARCHITECT_ACCEPTED (Issue #62 / PR #64)
+Post-MVP Incremental P1: COMPLETE / ARCHITECT_ACCEPTED (Issue #66 / PR #67)
+Post-MVP Incremental P2: DIRTY-SCOPE STATE DESIGN AUTHORIZED
 Post-MVP Incremental production implementation: NOT AUTHORIZED
 Gate 5: NOT AUTHORIZED
-Active Worker task: Issue #62
+Active Worker task: P2 design only
 ```
 
 Next action is Architect planning for Gate 5 only. No successor-product
