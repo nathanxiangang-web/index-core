@@ -4,6 +4,12 @@ IndexCore exposes a deliberately small **read-only** HTTP surface.
 
 There are no canonical mutation endpoints. Root administration and scans are CLI/runtime responsibilities.
 
+> P9 prototype note: the trusted hint transport is a **separate, loopback-only,
+> bearer-authenticated listener** (`POST /internal/v1/mutation-hints`), not part
+> of this public read-only `/v1` API. It is disabled by default and never exposes
+> Query Q1–Q9. See [OPERATIONS.md](OPERATIONS.md) and
+> [incremental/P9-TRUSTED-HINT-TRANSPORT-RESULT.md](incremental/P9-TRUSTED-HINT-TRANSPORT-RESULT.md).
+
 Default address:
 
 ```text

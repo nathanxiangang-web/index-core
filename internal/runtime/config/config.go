@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -24,6 +25,11 @@ type Config struct {
 	ShutdownTimeout    time.Duration `json:"shutdown_timeout"`
 	LogLevel           string        `json:"log_level"`
 	LogFormat          string        `json:"log_format"`
+
+	// P9 trusted hint transport. HintAddr empty disables it; HintToken is an
+	// env-only secret (never serialized, never exposed as a CLI flag).
+	HintAddr  string `json:"hint_addr,omitempty"`
+	HintToken string `json:"-"`
 }
 
 // Defaults returns the default configuration (loopback HTTP, safe limits).
@@ -77,6 +83,8 @@ func Load() (Config, error) {
 	if v := os.Getenv("INDEXCORE_LOG_FORMAT"); v != "" {
 		c.LogFormat = v
 	}
+	c.HintAddr = os.Getenv("INDEXCORE_HINT_ADDR")
+	c.HintToken = os.Getenv("INDEXCORE_HINT_TOKEN")
 	return c, nil
 }
 
@@ -91,6 +99,8 @@ func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 	fs.DurationVar(&c.ShutdownTimeout, "shutdown-timeout", c.ShutdownTimeout, "graceful shutdown timeout")
 	fs.StringVar(&c.LogLevel, "log-level", c.LogLevel, "log level: debug|info|warn|error")
 	fs.StringVar(&c.LogFormat, "log-format", c.LogFormat, "log format: text|json")
+	// P9: the hint token is deliberately env-only (no --hint-token flag).
+	fs.StringVar(&c.HintAddr, "hint-addr", c.HintAddr, "loopback address for the trusted hint transport (disabled when empty)")
 }
 
 // LoopbackOnly reports whether the HTTP address binds only to loopback.
@@ -134,6 +144,45 @@ func (c Config) Validate() error {
 	case "debug", "info", "warn", "error":
 	default:
 		return fmt.Errorf("log-level must be debug|info|warn|error, got %q", c.LogLevel)
+	}
+	if c.HintEnabled() {
+		if err := validateHintAddr(c.HintAddr); err != nil {
+			return err
+		}
+		if len(c.HintToken) < minHintTokenBytes {
+			return fmt.Errorf("INDEXCORE_HINT_TOKEN must be at least %d bytes when the hint transport is enabled", minHintTokenBytes)
+		}
+	}
+	return nil
+}
+
+const minHintTokenBytes = 32
+
+// HintEnabled reports whether the P9 trusted hint transport is enabled. An empty
+// HintAddr keeps the transport disabled so existing deployments are unchanged.
+func (c Config) HintEnabled() bool {
+	return strings.TrimSpace(c.HintAddr) != ""
+}
+
+// validateHintAddr requires a literal loopback IP host with an explicit non-zero
+// port: 127.0.0.1:<port> or [::1]:<port>. Wildcard, non-loopback, hostname,
+// missing/invalid and zero ports are rejected; a non-loopback address is never
+// silently rewritten.
+func validateHintAddr(addr string) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("hint address %q must be <literal-loopback-ip>:<port>: %w", addr, err)
+	}
+	p, err := strconv.Atoi(port)
+	if err != nil || p < 1 || p > 65535 {
+		return fmt.Errorf("hint address %q must use a port in 1..65535", addr)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Errorf("hint address %q must use a literal IP host (no hostnames)", addr)
+	}
+	if !ip.IsLoopback() {
+		return fmt.Errorf("hint address %q must bind a loopback IP (127.0.0.1 or ::1)", addr)
 	}
 	return nil
 }
