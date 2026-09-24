@@ -1,6 +1,6 @@
 # Post-MVP Incremental Ingestion Blueprint
 
-> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 ACCEPTED / P3 ACCEPTED / P4 ONE-SHOT DIRTY EXECUTOR AUTHORIZED / PRODUCTION SCHEDULER NOT AUTHORIZED**
+> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 ACCEPTED / P3 ACCEPTED / P4 ACCEPTED / P5 BOUNDED EXECUTOR LOOP AUTHORIZED / PRODUCTION SCHEDULER NOT AUTHORIZED**
 >
 > Architecture tracking: #57
 >
@@ -189,7 +189,15 @@ P4 is defined by:
 
 `docs/architecture/INCREMENTAL-P4-ONE-SHOT-DIRTY-EXECUTOR-PROTOTYPE.md`
 
-P4 may prove exactly one persisted-work execution through the existing P0 `ScanScope` path. It does **not** authorize a scheduler, continuous executor, public trigger API, provider cursor, destructive delta, or Gate 5.
+P4 is ARCHITECT_ACCEPTED and merged at `10668d6203ad86cad3eee074df19a1ee62dea7f7`. It proved one persisted work item can safely execute through the existing P0 `ScanScope` path with typed failures, cancellation/recovery safety, and no second Canonical write lane.
+
+P4 exit decision: **AUTHORIZE_BOUNDED_EXECUTOR_LOOP_PROTOTYPE**.
+
+P5 is defined by:
+
+`docs/architecture/INCREMENTAL-P5-BOUNDED-EXECUTOR-LOOP-PROTOTYPE.md`
+
+P5 may prove finite multi-item draining by repeatedly invoking the accepted P4 one-shot executor under hard caps (`<=5` items, `<=60s` wall time). It does **not** authorize polling cadence, a continuous daemon, public trigger API, provider cursor, destructive delta, or Gate 5.
 
 ## 5. Capability model — research hypothesis, not accepted contract
 
