@@ -1,6 +1,6 @@
 # Post-MVP Incremental Ingestion Blueprint
 
-> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 ACCEPTED / P3 ACCEPTED / P4 ACCEPTED / P5 ACCEPTED / P6 ACCEPTED / P7 MANUAL INCREMENTAL COMMAND AUTHORIZED / PRODUCTION SCHEDULER NOT AUTHORIZED**
+> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 ACCEPTED / P3 ACCEPTED / P4 ACCEPTED / P5 ACCEPTED / P6 ACCEPTED / P7 ACCEPTED / P8 MUTATION HINT INGESTION AUTHORIZED / PRODUCTION SCHEDULER NOT AUTHORIZED**
 >
 > Architecture tracking: #57
 >
@@ -213,7 +213,15 @@ P7 is defined by:
 
 `docs/architecture/INCREMENTAL-P7-MANUAL-INCREMENTAL-COMMAND-PROTOTYPE.md`
 
-P7 may prove a narrow one-shot operator entrypoint `indexcore incremental run` that acquires the existing writer advisory lock, composes the accepted P4/P5/P6 runtime chain, invokes P6 once, emits structured JSON, and exits. It does **not** authorize ticker/cadence, a continuous daemon, public trigger API, provider cursor, destructive delta, or Gate 5.
+P7 is ARCHITECT_ACCEPTED and merged at `8ae9b01c6a8d2c4b8797077b280e795f71dc712b`. It proved the one-shot operator command, existing writer-lock exclusion, structured JSON evidence, CLI fail-closed behavior, and real command -> P6 -> Canonical execution path.
+
+P7 exit decision: **AUTHORIZE_MUTATION_HINT_PROTOTYPE**.
+
+P8 is defined by:
+
+`docs/architecture/INCREMENTAL-P8-MUTATION-HINT-PROTOTYPE.md`
+
+P8 may prove a trusted in-process provider-neutral Mutation Hint ingress that maps one canonical directory scope into the already reserved `MUTATION_HINT` provenance and reuses `Store.MergeSignal`. It performs no provider traversal and no execution itself. It does **not** authorize a standalone hint writer, public trigger API, provider cursor, destructive delta, or Gate 5.
 
 ## 5. Capability model — research hypothesis, not accepted contract
 
