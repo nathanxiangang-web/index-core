@@ -161,7 +161,6 @@ Do not begin:
 - changes to frozen Gate 1B/1C semantics;
 - Scanner Resume / multi-daemon HA unless separately planned.
 - native delta implementation unless a future provider capability review explicitly authorizes it;
-- production adaptive polling / scheduler;
 - production adaptive polling / scheduler or long-running dirty executor;
 - persistence work outside the bounded P3 state prototype;
 - Mutation Hint production integration until separately authorized.
