@@ -121,40 +121,47 @@ Environment: non-production OpenList **v4.2.6 / commit `2bdf16d`**; storage **id
 service identity `test` (write-capable); HOT scopes **`/` `/hotA` `/hotB` `/hotC`** (4 small dirs);
 out-of-band write through the official 115 channel.
 
-### Live result (2026-09-24, UTC)
+### Round 4 — clean-cadence live run (authoritative)
+
+An earlier run had `T1` land **after** the next 120s poll deadline, so it only proved "an already
+overdue poll discovers quickly". Round 4 fixes the timeline and adds a **temporal guard** in the probe
+(`T0 < T1 < T0 + interval`).
 
 | Step | Time / value |
 | --- | --- |
-| Phase A baseline | 14 canonical resources; `PHASE_A_POLL_TS = 2026-09-24T03:14:32Z` |
-| T1 out-of-band upload | `p1-new.txt` into `/hotA` via official 115 channel; **T1 = 2026-09-24T03:19:30Z** |
-| Stale cache gate (read-only `refresh=false`) | `03:19:56Z` → `/hotA` status 200, **total=1, content=1**, names `[keep.txt]` → **`p1-new.txt` NOT visible** ✅ (not `NOT JUDICABLE`) |
-| Phase B poll cycle | `due=4 polled=[/ /hotA /hotB /hotC]`, `wall=4111 ms`, **`budget_exhausted=false`** |
-| T6 visibility | **2026-09-24T03:20:00Z** |
+| Phase A baseline (T0) | 15 canonical resources; **`T0 = 2026-09-24T13:22:25Z`** |
+| T1 out-of-band upload | `133.txt` into `/hotA` via official 115 channel; **`T1 = 2026-09-24T13:23:50Z`** |
+| temporal guard | `T0 13:22:25Z < T1 13:23:50Z < T0+120s 13:24:25Z` ✅ (upload strictly within one interval) |
+| stale gate (read-only `refresh=false`, `per_page=maxEntries+1`, `total==len(content)`) | `13:24:44Z` → `/hotA` status 200, **total=2, content=2**, `[p1-new.txt, keep.txt]` → **`133.txt` NOT visible** ✅ (not `NOT JUDICABLE`) |
+| Phase B poll cycle | `due=4 polled=[/ /hotA /hotB /hotC]`, `wall=4132 ms`, **`budget_exhausted=false`** |
+| T3 / T5 / T6 | `13:24:44Z` / `13:24:49Z` / `13:24:49Z` |
 
 Per-scope canonical metrics (each scope: exactly **one** `refresh=true`, HTTP **200**):
 
 | scope | total | canonical refresh | status | latency | response bytes | page_size | derived provider pages |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `/` | 11 | 1 | 200 | 1128 ms | 3437 | 200 | 1 |
-| `/hotA` | **2** | 1 | 200 | 959 ms | 813 | 200 | 1 |
-| `/hotB` | 1 | 1 | 200 | 1049 ms | 480 | 200 | 1 |
-| `/hotC` | 1 | 1 | 200 | 910 ms | 480 | 200 | 1 |
+| `/` | 11 | 1 | 200 | 1161 ms | 3437 | 200 | 1 |
+| `/hotA` | **3** | 1 | 200 | 982 ms | 1142 | 200 | 1 |
+| `/hotB` | 1 | 1 | 200 | 948 ms | 480 | 200 | 1 |
+| `/hotC` | 1 | 1 | 200 | 971 ms | 480 | 200 | 1 |
 
 Outcome assertions (all PASS):
 
-- **the external write was discovered with no Mutation Hint**: `added = [/hotA/p1-new.txt]`
-  (before 14 → after 15), exactly one new resource;
+- **the external write was discovered with no Mutation Hint**: `added = [/hotA/133.txt]`
+  (before 15 → after 16), exactly one new resource;
 - **`/hotA` `Mutated=true`; the other polled HOT scopes `Mutated=false`**;
 - **Q3 / real Q4 / Q6 agree on the same `resource_id`** for the new file;
 - all baseline `resource_id`s preserved; **no removal evidence** (Q7 empty; zero PRESENT rows
   carrying removal evidence);
 - **`due == polled == 4`**, `budgetExhausted=false`, **total `refresh=true` count == 4**
   (no extra refresh path);
-- **`T6 − T1 = 30.3 s` ≤ one HOT interval (120 s)**;
+- **`T6 − T1 = 59.1 s` ≤ one HOT interval (120 s)** — with `T1` strictly inside `T0..T0+120s`;
 - no 403 / 429 / throttle; **no retries**.
 
-> Detection occurred within one configured interval on a **stale-cache external write**, using only the
-> accepted single-observation P0 path per due scope — no root-wide traversal, no provider mutation.
+> This is the **authoritative cadence proof**: the upload happened strictly within one interval of the
+> previous poll, and the change became visible within one interval — a steady 120s HOT cadence would
+> have discovered it by the next due poll. (The earlier `03:19:30Z` run had `T1` after the `03:16:32Z`
+> deadline and is **superseded**.) No root-wide traversal; no provider mutation.
 
 ### Protocol
 

@@ -302,12 +302,24 @@ func TestLiveP1HotScopesPhaseBCycle(t *testing.T) {
 	if got := parentOf(expectPath); got != expectScope {
 		t.Fatalf("parentOf(EXPECT_PATH)=%q must equal EXPECT_SCOPE %q", got, expectScope)
 	}
-	prevPoll := mustParseTS(t, "INDEXCORE_P1_LIVE_PREV_POLL_TS")
+	prevPoll := mustParseTS(t, "INDEXCORE_P1_LIVE_PREV_POLL_TS") // == Phase A poll time (T0)
 	t1 := mustParseTS(t, "INDEXCORE_P1_LIVE_T1_TS")
 	interval := time.Duration(atoiOr(t, "INDEXCORE_P1_LIVE_HOT_INTERVAL", 120)) * time.Second
 	ctx := context.Background()
 	lim := defaultPollLimits()
 	lim.minimumScopeInterval = interval
+
+	// Round 4 temporal guard — the out-of-band write MUST happen strictly within
+	// ONE HOT interval after the Phase A poll (T0 < T1 < T0+interval). If T1 lands
+	// at/after the next poll deadline, the poll was already overdue when the file
+	// was uploaded, so a quick discovery would be a false positive and cannot
+	// prove the configured 120s cadence (T0 == PREV_POLL_TS).
+	if !t1.After(prevPoll) || !t1.Before(prevPoll.Add(interval)) {
+		t.Fatalf("temporal guard FAILED: T1=%s must satisfy T0(%s) < T1 < T0+interval(%s); "+
+			"otherwise the poll was already overdue at upload time and cannot prove the cadence. "+
+			"Re-run with a fresh file uploaded within one interval of Phase A.",
+			t1.Format(time.RFC3339), prevPoll.Format(time.RFC3339), prevPoll.Add(interval).Format(time.RFC3339))
+	}
 
 	st := liveStore(t, false)
 	if _, err := st.GetRoot(ctx, st.Pool(), liveRootID); err != nil {
