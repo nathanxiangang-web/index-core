@@ -43,7 +43,8 @@ Web should see the resource earlier
 1. **115 官方开放平台不提供 native change feed / delta / cursor / webhook。**
    官方 API 列表（文件管理/用户/视频/云下载共 40+ 接口）已全量核对，无 `since` /
    `cursor` / `change token` / `recent changes` / callback / event stream。
-   → `native delta` 对 115 的判定为 **UNAVAILABLE**（证据级别：DIRECT）。
+   → 截至 2026-09-24，在**已审计的公开 115 Open API 表面**中**未发现** native delta /
+   change cursor（证据级别：DIRECT；不排除存在未公开/未文档化能力）。
 
 2. **`OpenList/AList /api/fs/list?refresh=true` 是真正绕过目录缓存、直达 provider 的强制刷新。**
    源码证实：`refresh=false` 时命中内存 `dirCache` 直接返回缓存；`refresh=true`
@@ -62,15 +63,16 @@ Web should see the resource earlier
    一个 30k 直接子项目录 ≈ ⌈N / page_limit⌉ 次 provider 列表请求。
    （证据级别：DERIVABLE，来自源码调用链）
 
-5. **OpenList/AList 同时提供两条 115 接入路径，其中一条是官方开放平台驱动（Round 1 修正）。**
+5. **OpenList/AList 同时提供两条 115 接入路径，其中一条走 115 官方开放平台 API（Round 1 修正）。**
    - **方案 A「115 Cloud」**：社区库 `SheltonZhu/115driver` + `webapi.115.com` 私有接口 +
      Cookie/二维码；OpenList 官方文档自述为 "reverse-engineered interface based on legacy
      products"；115 官方《开发须知》禁止调用非公开接口 → 风险 **HIGH**、复用价值有限。
-   - **方案 B「115 Open」**：**115 官方开放平台 API**，使用官方 SDK
-     （OpenList `OpenListTeam/115-sdk-go`；AList `xhofe/115-sdk-go`）+ OAuth2
-     （AccessToken/RefreshToken）；OpenList 官方文档标注为 "115 Open Platform API /
-     Official Open API" → **风险为正常官方 API 风险、复用价值高**。
-   → 「为避开私有接口只能自己重写 115 adapter」**不成立**：成熟轮子（官方驱动）已存在。
+   - **方案 B「115 Open」**：走 **115 官方开放平台 API**（`proapi.115.com/open/*`），
+     经**社区维护的 SDK wrapper**（OpenList `OpenListTeam/115-sdk-go`；AList `xhofe/115-sdk-go`）
+     调用，认证为 OAuth2（AccessToken/RefreshToken）；OpenList 官方文档标注为
+     "115 Open Platform API / Official Open API" → **风险为正常官方 API 风险、复用价值高**。
+     注意：wrapper 由 OpenListTeam / xhofe 维护，**不是 115 官方发布的 SDK**（Round 2 修正）。
+   → 「为避开私有接口只能自己重写 115 adapter」**不成立**：成熟轮子（官方 API + 社区 wrapper）已存在。
    （证据级别：DIRECT）
 
 6. **Xiaoya（小雅）是「预生成清单 + 客户端 diff」的成熟实践，不是 provider-native change feed。**
@@ -91,6 +93,31 @@ Web should see the resource earlier
    Full Scan fallback）**，但：
    - 最终是否采用、先做哪条、SLA 定多少，**由 Architect 决定**；
    - 上传成功后 provider list 何时可见（最终一致性）仍为 **UNKNOWN，需要 live test**。
+
+10. **（Round 2 新增）不能把 `refresh:false` 简单改成 `refresh:true` —— 会产生请求量爆炸。**
+    IndexCore adapter 对**每个 HTTP page** 都请求一次 `/api/fs/list`
+    （`pageSize=1000`，`internal/collector/alist/adapter.go:126-152`）。若每页都带
+    `refresh=true`，则每页都会触发对**整个目录**的 provider 强制刷新：
+    30k 目录 = ceil(30000/1000)=30 页 × 每次刷新约 150 次 provider 请求（115 Open 默认
+    page 200）≈ **4500 次真实 provider 请求**。**正确候选语义**应为：
+    **第 1 页 `refresh=true`（强制刷新一次整个目录并写入 OpenList cache），
+    第 2~N 页 `refresh=false`（只从刚刷新的 cache 分页）**。
+    （证据级别：DIRECT 源码 + DERIVABLE 推算）
+
+11. **（Round 2 新增）`refresh=true` 需要 OpenList 侧写权限。**
+    `server/handles/fsread.go:96-99`：`if req.Refresh && !canWriteContentAtPath` →
+    403 `Refresh without permission`。因此 Scoped Refresh 要求 IndexCore 在 OpenList 的
+    service account 具备 **write-capable** 权限（即便 IndexCore 本身不修改 provider）。
+    建议：专用 service account / 最小权限 / 不暴露浏览器 / 不调用任何 mutation endpoint。
+    （证据级别：DIRECT）
+
+12. **（Round 2 新增）`fid` 未透传到 IndexCore。**
+    115 Open 有稳定 `fid`，但链路 `115 Open → OpenList → /api/fs/list → IndexCore` 中，
+    OpenList 的 `/api/fs/list` 响应（`toObjsResp`，`server/handles/fsread.go:228-248`）
+    **不包含 provider `fid`**；IndexCore adapter 只解析
+    `name/size/is_dir/modified/type/hash_info`（`adapter.go:208-213`）。
+    → Scoped Refresh 能让 IndexCore **更快发现新增/修改**，但**不会自动获得更强的 provider ID
+    身份能力**；move/rename 仍主要依赖现有 identity evidence 规则。（证据级别：DIRECT）
 
 ---
 
@@ -114,8 +141,8 @@ Web should see the resource earlier
 | OpenList | `90acfa18e461e052482c6f80528f464d15ed1365`（2026-09-24） | 2026-09-24 | source |
 | AList | `fb0731a6953012e7b72b89bf5473817caa4625f9`（2026-09-19） | 2026-09-24 | source |
 | `SheltonZhu/115driver` | `542720cb0034954750454e89f32b4852add6e2a9`（2026-09-14） | 2026-09-24 | source |
-| 115 官方 SDK — `OpenListTeam/115-sdk-go` | OpenList `go.mod` = `v0.2.6` | 2026-09-24 | DIRECT |
-| 115 官方 SDK — `xhofe/115-sdk-go` | AList `go.mod` = `v0.1.5` | 2026-09-24 | DIRECT |
+| 115 Open SDK wrapper（**社区维护**）— `OpenListTeam/115-sdk-go` | OpenList `go.mod` = `v0.2.6` | 2026-09-24 | DIRECT |
+| 115 Open SDK wrapper（**社区维护**）— `xhofe/115-sdk-go` | AList `go.mod` = `v0.1.5` | 2026-09-24 | DIRECT |
 | OpenList 官方驱动文档（115 Open vs 115 Cloud 定性） | `doc.oplist.org/guide/drivers/115_open`、`/115` | 2026-09-24 | DIRECT |
 | rclone | `cfb90e3ebed479119718e3ae44b1171b060079e9`（D03 记录）；本次复核 `fs/features.go` | 2026-09-24 | source |
 | Xiaoya — `universonic/xiaoya-emby` | `2af6db2dd8511e4591e6a69b90604f2b3bd8a74c`（2026-09-13） | 2026-09-24 | source |
@@ -168,7 +195,7 @@ Xiaoya **不是** provider 接口能力的来源，而是「预生成清单 + �
 | Capability | 115 Cloud（`drivers/115`） | 115 Open（`drivers/115_open`） | Evidence |
 | --- | --- | --- | --- |
 | API 类型 | 私有 / 逆向 | **官方开放平台** | DIRECT |
-| 官方 SDK | ❌（社区 `115driver`） | ✅（`OpenListTeam/115-sdk-go` / `xhofe/115-sdk-go`） | DIRECT |
+| SDK | ❌（社区逆向库 `115driver`） | ✅ **社区维护 wrapper**（`OpenListTeam/115-sdk-go` / `xhofe/115-sdk-go`，调用官方 Open API） | DIRECT |
 | 认证 | Cookie / 二维码 | OAuth2 AccessToken+RefreshToken | DIRECT |
 | Scoped Refresh（`refresh=true`） | ✅ | ✅ | DIRECT |
 | PageSize 默认/上限 | 1000 / 1150 | 200 / 1150 | DIRECT |
@@ -176,7 +203,7 @@ Xiaoya **不是** provider 接口能力的来源，而是「预生成清单 + �
 | 复用价值 | 有限（风险 HIGH） | **高**（正常官方风险） | DIRECT |
 
 IndexCore 直连 115 Open（不经 OpenList/AList）：技术上可行，但需自行实现 OAuth/token 轮换/
-分页/driver 兼容 → **默认 DO_NOT_BUILD**（重复造轮子；官方 SDK 已存在且已被 OpenList/AList 集成）。
+分页/driver 兼容 → **默认 DO_NOT_BUILD**（重复造轮子；社区 SDK wrapper 已存在且已被 OpenList/AList 集成）。
 
 详见 §6.2 与 §12。
 
@@ -232,7 +259,8 @@ IndexCore 直连 115 Open（不经 OpenList/AList）：技术上可行，但需�
 - `GET /open/rb/list`：回收站列表（含 `dtime`、原父目录 `cid`），可轮询发现删除，
   但仍需全量比对，且不覆盖 move/rename（DIRECT）。
 
-结论：**115 官方 native delta = UNAVAILABLE。**
+结论：**截至 2026-09-24，在已审计的公开 115 Open API 表面中未发现 native delta /
+change cursor**（不排除未公开能力）。
 
 ### 5.2 OpenList / AList
 
@@ -254,11 +282,11 @@ interval」。D03 已证实：14/69 backend 实现，**全部为 polling，不�
 - 其「generation」是发布方的 `Last-Modified`，只能回答「清单整体是否更新」，
   不能回答「provider 自某点以来发生了什么」。
 - 因此 Xiaoya 的增量能力**不能**计入 provider-native delta；它属于 §14 的「成熟实践参考」。
-- 结论：**不改变本节对 115/OpenList/rclone 的 native delta = UNAVAILABLE 判定。**
+- 结论：**不改变本节「截至 2026-09-24 未发现 native delta」的判定。**
 
 ### 5.5 Overall
 
-**没有任何被审查来源为 115 提供可信的 native delta / cursor。**
+**截至 2026-09-24，没有任何被审查来源为 115 提供可信的 native delta / cursor**（公开、已审计范围内）。
 即便未来某个 provider 支持，也必须逐 provider 验证 cursor 的持久性、可 replay 性、
 过期/重置、gap 检测、retention、create/update/move/delete 完整度（blueprint §17 的 fail-closed 要求）。
 
@@ -290,8 +318,8 @@ storage driver
 | **API 类型** | **私有 / 逆向**（`webapi.115.com`） | **官方开放平台**（`proapi.115.com/open/*`） |
 | OpenList 官方文档定性 | "reverse-engineered interface based on legacy products；项目组不会主动维护，请勿提逆向相关 issue" | "**115 Open Platform API** / Official Open API" |
 | 认证 | Cookie / 二维码 + `115Browser` UA | **OAuth2** `AccessToken` + `RefreshToken`（SDK 自动轮换） |
-| OpenList 使用库 | 社区 `SheltonZhu/115driver v1.3.5` | 官方 SDK `OpenListTeam/115-sdk-go v0.2.6` |
-| AList 使用库 | `SheltonZhu/115driver`（replace `okatu-loli/115driver`） | 官方 SDK `xhofe/115-sdk-go v0.1.5` |
+| OpenList 使用库 | 社区逆向库 `SheltonZhu/115driver v1.3.5` | **社区维护 SDK wrapper** `OpenListTeam/115-sdk-go v0.2.6`（调用 115 官方 Open API） |
+| AList 使用库 | `SheltonZhu/115driver`（replace `okatu-loli/115driver`） | **社区维护 SDK wrapper** `xhofe/115-sdk-go v0.1.5` |
 | 列表 API | `webapi.115.com/files` | 官方 `GetFiles`（`/open/ufile/files`） |
 | **Scoped Refresh（`refresh=true`）** | **可以** | **可以** |
 | 客户端限速默认 | **2 r/s** | **1 r/s** |
@@ -343,7 +371,7 @@ daemon driver（drivers/115 = Cloud，或 drivers/115_open = Open）→ 115 API
     - 经 OpenList 自身的写操作：会（Put 更新父目录缓存；move/rename/remove 失效目录树）。
     - **外部**变更（不经 OpenList）：不会，必须 `refresh=true` 或等待 TTL 过期。（DIRECT）
 
-### 6.5 大目录成本（拆分 Cloud vs Open）
+### 6.5 大目录成本与 refresh 分页陷阱（拆分 Cloud vs Open；Round 2 扩展）
 
 两条路径都是**「循环分页拉全目录」**模型，但分页大小与限速不同：
 
@@ -373,6 +401,34 @@ daemon driver（drivers/115 = Cloud，或 drivers/115_open = Open）→ 115 API
 > 把 Open 的 `page_size` 调到 1150 可降到约 27 次。**两者都可配置，成本差异取决于配置。**
 > 红线不变：不能假设「一次 scoped refresh = 1 次 provider 请求」。（证据级别：DERIVABLE）
 
+#### 6.5.1 分页陷阱（Round 2 新增，最关键）
+
+IndexCore adapter 对**每一个 HTTP page** 都发一次 `/api/fs/list`：
+
+```text
+internal/collector/alist/adapter.go
+  const pageSize = 1000                                          // :126
+  for page := 1; ; page++ {                                      // :129
+      items = listPage(ctx, token, dir, page, pageSize)         // 每页一次 /api/fs/list
+  }
+  listPage body: {"path","password","page","per_page","refresh":false}   // :152
+```
+
+因此：
+
+- **错误做法**：把 `refresh:false` 全量改成 `refresh:true` →
+  **每一页**都会触发**整个目录**的 provider 强制刷新。
+  30k 目录 = 30 页 × ~150 次/刷新（115 Open 默认 page 200）≈ **4500 次真实 provider 请求**。
+- **正确候选语义**：
+  1. **第 1 页** `refresh=true` → 强制刷新一次整个目录，并写入 OpenList cache；
+  2. **第 2~N 页** `refresh=false` → 只从刚刷新的 cache 分页读取。
+
+  这样 30k 目录是 **~30 次 HTTP 调用 + 1 次完整 provider 刷新（~150 次 provider 请求）**，
+  而不是 30 × 150。
+
+> 该语义属**候选**（是否采用由 Architect 决定）；目的是避免把「减少真实网盘请求」做成
+> 「请求量暴涨几十倍」。（证据级别：DIRECT 源码 + DERIVABLE）
+
 ### 6.6 两条路径的 provider 来源与风险
 
 **方案 A（115 Cloud，私有/逆向）**：
@@ -387,13 +443,22 @@ daemon driver（drivers/115 = Cloud，或 drivers/115_open = Open）→ 115 API
 
 **方案 B（115 Open，官方开放平台）**：
 
-- 使用**官方 SDK**：OpenList `github.com/OpenListTeam/115-sdk-go v0.2.6`；
-  AList `github.com/xhofe/115-sdk-go v0.1.5`。
+- 使用**社区维护的 SDK wrapper**（封装 115 官方 Open API，**非 115 官方发布**）：
+  OpenList `github.com/OpenListTeam/115-sdk-go v0.2.6`；AList `github.com/xhofe/115-sdk-go v0.1.5`。
 - 端点对应官方 `proapi.115.com/open/*`（`GetFiles` / `GetFolderInfo` / `UserInfo` / `OfflineTaskList`）。
 - 认证为官方 OAuth2（`AccessToken` + `RefreshToken`），SDK 通过 `WithOnRefreshToken`
   回调自动轮换并保存新 token。
 - OpenList 官方文档明确标注为 **"115 Open Platform API" / "Official Open API"**。
 → 风险为**正常官方 API 风险**（限流细则仍不公开）；**复用价值高**。（DIRECT）
+
+**但 `fid` 不会经 OpenList 传到 IndexCore（Round 2 新增）**：链路为
+`115 Open → OpenList → /api/fs/list → IndexCore`，而 OpenList 的 list 响应
+（`toObjsResp`，`server/handles/fsread.go:228-248`）只含
+`name / size / is_dir / modified / created / hashinfo / sign / thumb / type / mount_details`，
+**不含 provider `fid`**；IndexCore 侧也只解析 `name/size/is_dir/modified/type/hash_info`
+（`adapter.go:208-213`）。→ Scoped Refresh 能让 IndexCore **更快发现新增/修改**，
+**但不会自动获得更强的 provider ID 身份能力**；move/rename 仍主要依赖既有 identity evidence
+规则处理。（证据级别：DIRECT）
 
 ### 6.7 IndexCore 现状缺口（Round 1 新增，DIRECT）
 
@@ -411,6 +476,12 @@ Architect 指出「上游具备强制刷新能力 ≠ IndexCore 现在已经会�
 - 因此「方案 B 可复用官方驱动」是**上游能力事实**；要真正受益，IndexCore adapter 侧
   还需具备触发 `refresh=true` 的能力（是否启用、触发策略、权限与风险控制由 Architect 决定）。
 - 本阶段**不修改代码**，仅记录该缺口（证据级别：DIRECT，代码位置已核实）。
+
+**`refresh=true` 的权限前提（Round 2 新增）**：`server/handles/fsread.go:96-99` 要求调用者
+满足 `canWriteContentAtPath`，否则返回 **403 `Refresh without permission`**。因此即便 IndexCore
+不修改 provider，做 Scoped Refresh 时其 OpenList **service account 必须具备 write-capable 权限**。
+推荐：**专用 service account + 最小权限 + 不暴露浏览器 + 不调用任何 mutation endpoint**。
+（证据级别：DIRECT）
 
 ### 6.8 AList 对照
 
@@ -461,6 +532,8 @@ Adaptive Polling 在**不引入 native delta** 的前提下是覆盖「外部变
 
 假设：对某目录做一次 `refresh=true` 的 provider 请求数 ≈ `ceil(N / page)`。
 **Round 1 修正**：Cloud 与 Open 的分页大小、客户端限速不同，必须分开算。
+**Round 2 修正**：还要乘以 **IndexCore 的 HTTP 分页次数**——`refresh=true` 只应放在第 1 页
+（见 §6.5.1），后续页必须 `refresh=false`，否则总请求数会按页数倍增。
 
 ### 9.1 单次刷新（拆分 Cloud / Open）
 
@@ -505,6 +578,16 @@ Adaptive Polling 在**不引入 native delta** 的前提下是覆盖「外部变
 - 115 Cloud：客户端默认 2 r/s，大目录刷新耗时可能达数十秒。
 - 115 Open：客户端默认 1 r/s、page 默认 200；服务端限流细则未知（官方不公开）。
 
+### 9.5 分页陷阱对照（30k 目录，115 Open 默认 page 200，Round 2 新增）
+
+| 策略 | provider 请求数 | 说明 |
+| --- | --- | --- |
+| 每页 `refresh=true`（**错误**） | **~4,500** | 30 页 × ~150 次/完整刷新 |
+| 第 1 页 `refresh=true`，其余 `refresh=false`（**正确候选**） | **~150** + 30 次缓存分页 | 1 次完整刷新 + 30 次 HTTP 分页 |
+
+> 结论：Scoped Refresh 的收益成立的前提是「**只刷新一次**、其余页读缓存」；
+> 简单把参数全量改成 `refresh=true` 会把收益反转为数十倍放大。（DIRECT 源码 + DERIVABLE）
+
 ---
 
 ## 10. Risk register
@@ -524,6 +607,8 @@ Adaptive Polling 在**不引入 native delta** 的前提下是覆盖「外部变
 | 10 | dirty scope 爆炸 | MEDIUM | 阈值超出应转 FULL_RESYNC_REQUIRED（Blueprint §15） |
 | 11 | 缓存语义漂移 | MEDIUM | 直接依赖 OpenList 缓存行为，版本升级可能变化（`CustomCachePolicies` 等为近期新增） |
 | 12 | 许可证 | MEDIUM | OpenList/AList AGPL-3.0；以外部进程/HTTP 边界使用而非链接/复制（D02/D03 策略） |
+| 13 | `refresh=true` 需 OpenList 写权限 | MEDIUM | 403 `Refresh without permission`（`fsread.go:96-99`）；service account 需 write-capable；建议专用账号 + 最小权限 + 不调 mutation endpoint（DIRECT，Round 2 新增） |
+| 14 | 每页 `refresh=true` 请求量爆炸 | HIGH | 30k 目录 ≈4500 次 provider 请求；须第 1 页 refresh、其余页读缓存（§6.5.1，Round 2 新增） |
 
 ---
 
@@ -531,10 +616,10 @@ Adaptive Polling 在**不引入 native delta** 的前提下是覆盖「外部变
 
 分类：`USE_EXISTING` / `WRAP_EXISTING` / `ADAPT` / `CLEAN_ROOM_REWRITE` / `BUILD_NEW` / `DO_NOT_BUILD`
 
-| Capability | OpenList/AList 已解决 | rclone 已解决 | 115 官方 SDK/API | IndexCore 候选归属 |
+| Capability | OpenList/AList 已解决 | rclone 已解决 | 115 Open（官方 API / 社区 wrapper） | IndexCore 候选归属 |
 | --- | --- | --- | --- | --- |
 | provider 登录 / token / Cookie | ✅（115 Cloud Cookie/QR） | ✅（多 backend） | ✅ OAuth2 | **USE_EXISTING**（不要自建 115 登录） |
-| 115 官方 OAuth / token 轮换（方案 B） | ✅ `115_open` driver | ❌（无 115 backend） | ✅ 官方 SDK | **USE_EXISTING / WRAP_EXISTING**（IndexCore 不自写 115 Open client；直连默认 DO_NOT_BUILD） |
+| 115 官方 OAuth / token 轮换（方案 B） | ✅ `115_open` driver | ❌（无 115 backend） | ✅ 社区 SDK wrapper（调用官方 Open API） | **USE_EXISTING / WRAP_EXISTING**（IndexCore 不自写 115 Open client；直连默认 DO_NOT_BUILD） |
 | 分页 / driver 差异 | ✅ | ✅ | 官方分页 | **USE_EXISTING** |
 | 目录级强制刷新（绕过缓存） | ✅ `refresh=true`（对 Cloud/Open driver 都生效） | 部分（重新 List） | N/A | **WRAP_EXISTING**（IndexCore adapter 当前硬编码 `refresh:false`，见 §6.7） |
 | 目录缓存 / per-path TTL | ✅（+ `CustomCachePolicies`） | ✅ DirCache | — | **USE_EXISTING** |
@@ -553,7 +638,7 @@ Adaptive Polling 在**不引入 native delta** 的前提下是覆盖「外部变
 - IndexCore 真正需要自己拥有的，是**变更发现策略的编排 + dirty scope + 安全 fallback**，
   以及（未来若真有 native feed 时的）cursor continuity 语义——这是一层薄逻辑，
   **不是** 又一个 provider client。
-- **115 Open 官方驱动已存在**（OpenList/AList 均集成官方 SDK）→ 对「避开私有接口」的目标，
+- **115 Open 官方驱动已存在**（OpenList/AList 均集成社区 SDK wrapper）→ 对「避开私有接口」的目标，
   候选是**复用官方驱动**而非自写 115 adapter；IndexCore 直连 115 Open 默认 **DO_NOT_BUILD**。
 - Xiaoya 提供的是**消费端模式参考**（manifest / generation / diff / 跨代删除确认），
   不是可复用的 provider 能力；其**生成端未找到**，故「清单由谁生成」仍需 IndexCore 自己承担。
@@ -580,13 +665,13 @@ Adaptive Polling 在**不引入 native delta** 的前提下是覆盖「外部变
 | API 类型 | 官方（`proapi.115.com/open/*`） |
 | 技术可行性 | **可以** |
 | 重复造轮子成本 | 高（需自实现 OAuth / token 轮换 / 分页 / driver 兼容） |
-| 默认归属 | **DO_NOT_BUILD**（官方 SDK 已存在且被 OpenList/AList 集成） |
+| 默认归属 | **DO_NOT_BUILD**（社区 SDK wrapper 已存在且被 OpenList/AList 集成） |
 
 ### 12.3 官方能力判定（与所选路径无关）
 
 | 能力 | 判定 |
 | --- | --- |
-| 官方 change feed / delta / cursor / recent changes | **UNAVAILABLE**（官方 API 全量核对） |
+| 官方 change feed / delta / cursor / recent changes | 截至 2026-09-24，**已审计的公开 API 表面未发现**（不排除未公开能力） |
 | 官方 webhook / callback / SSE | **UNAVAILABLE** |
 | 官方稳定对象 ID | **DIRECT**（`fid` + `pid`） |
 | 官方目录级 list（scoped refresh 基础） | **DIRECT**（`cid` + `offset/limit`，limit ≤ 1150） |
@@ -611,7 +696,7 @@ Adaptive Polling 在**不引入 native delta** 的前提下是覆盖「外部变
 - 自身写操作会维护缓存；**外部变更不会**。
 - 无 native delta / webhook / cursor。
 - **115 支持有两条路径**：`115 Cloud`（私有/逆向，风险 HIGH，复用价值有限）与
-  **`115 Open`（官方开放平台 + 官方 SDK，复用价值高）**；`refresh=true` 对两者都生效。
+  **`115 Open`（官方开放平台 + 社区 SDK wrapper，复用价值高）**；`refresh=true` 对两者都生效。
 - 大目录刷新 = 多次 provider 请求 + OpenList 内存放大（Cloud/Open 分页与限速不同，见 §9.1）。
 
 ---
@@ -734,7 +819,7 @@ change feed**。但它依赖一个**外部生成端**持续产出清单；IndexC
 10. **Xiaoya `.scan.list.gz` 上游生成器**：生成成本、频率、覆盖范围未证实（生成器源码未找到）。
 11. **轻量 manifest 模式对 IndexCore 的适配方式**：「清单由谁生成」尚无证据——115 侧只能由
     scoped list / 轮询产出，需评估其成本与收益。
-12. **115 Open 官方接入的增量可用性**：官方 SDK 是否暴露任何「变更 / 最近」辅助接口
+12. **115 Open 官方接入的增量可用性**：社区 SDK wrapper 是否暴露任何「变更 / 最近」辅助接口
     （当前 API 列表未见）；官方 OAuth token 在长期轮询下的稳定性与配额表现。
 13. **115 Open vs 115 Cloud 的实际可见延迟与成本差异**：外部上传后两条路径经 `refresh=true`
     的可见时间与请求成本对比（决定优先路径）。
@@ -777,8 +862,10 @@ KEEP_FULL_SCAN_ONLY
 - `PROTOTYPE_NATIVE_DELTA` — 对 115 **无证据支持**（UNAVAILABLE）；仅当先选定一个明确
   支持可信 change feed 的其它 provider 时才可能有意义。
 - `PROTOTYPE_SCOPED_REFRESH` — 有源码级 DIRECT 证据支持其**技术可行性**；且可落到
-  **115 Open 官方驱动**（规避私有接口风险、复用官方 SDK）。请求放大（Cloud/Open 不同，§9.1）、
-  IndexCore adapter 的 `refresh:false` 缺口（§6.7）、最终一致性仍待处理 / 验证。
+  **115 Open 官方驱动**（规避私有接口风险、复用社区 SDK wrapper）。**须采用「第 1 页
+  `refresh=true`、其余页 `refresh=false`」的候选语义（§6.5.1），且需 OpenList 写权限（§6.7）**；
+  请求放大（Cloud/Open 不同，§9.1）、IndexCore adapter 的 `refresh:false` 缺口（§6.7）、
+  最终一致性仍待处理 / 验证。
 - `PROTOTYPE_115_OPEN_REUSE`（候选命名，供参考）— 复用 OpenList/AList 的 **115 Open 官方驱动**
   做 scoped refresh；与本报告「不重造轮子」方向一致。是否作为独立选项由 Architect 决定。
 - `PROTOTYPE_MUTATION_HINT` — 只覆盖「已知写入」，须与轮询/验证配合。
@@ -796,6 +883,7 @@ authorize implementation.**
 - 不声称 `refresh=true` 安全或廉价（大目录会放大）。
 - 不声称一次目录刷新 = 一次 provider 请求（不成立）。
 - 不声称 2 分钟轮询合理（需预算与 live test）。
+- 不声称可以简单把 `refresh:false` 全量改成 `refresh:true`（会按 HTTP 页数放大 provider 请求，见 §6.5.1）。
 - 不声称删除事件可信（首次实现不得直接 canonical 删除）。
 - 不声称 rclone 所有 backend 行为一致（DRIVER_DEPENDENT）。
 - 不替 Architect 决定最终方案。
