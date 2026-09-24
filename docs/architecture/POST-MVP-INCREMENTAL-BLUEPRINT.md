@@ -1,6 +1,6 @@
 # Post-MVP Incremental Ingestion Blueprint
 
-> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 ACCEPTED / P3 ACCEPTED / P4 ACCEPTED / P5 BOUNDED EXECUTOR LOOP AUTHORIZED / PRODUCTION SCHEDULER NOT AUTHORIZED**
+> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 ACCEPTED / P3 ACCEPTED / P4 ACCEPTED / P5 ACCEPTED / P6 SCHEDULER ORCHESTRATION AUTHORIZED / PRODUCTION SCHEDULER NOT AUTHORIZED**
 >
 > Architecture tracking: #57
 >
@@ -197,7 +197,15 @@ P5 is defined by:
 
 `docs/architecture/INCREMENTAL-P5-BOUNDED-EXECUTOR-LOOP-PROTOTYPE.md`
 
-P5 may prove finite multi-item draining by repeatedly invoking the accepted P4 one-shot executor under hard caps (`<=5` items, `<=60s` wall time). It does **not** authorize polling cadence, a continuous daemon, public trigger API, provider cursor, destructive delta, or Gate 5.
+P5 is ARCHITECT_ACCEPTED and merged at `88e3e8ffa9c791f0ae6b04529cf82a65a6431d1e`. It proved finite serial draining through the accepted P4 one-shot executor under hard caps (`<=5` items, `<=60s` wall time), including cancellation/error-chain and no-auto-retry semantics.
+
+P5 exit decision: **AUTHORIZE_SCHEDULER_ORCHESTRATION_PROTOTYPE**.
+
+P6 is defined by:
+
+`docs/architecture/INCREMENTAL-P6-SCHEDULER-ORCHESTRATION-PROTOTYPE.md`
+
+P6 may prove a finite manually-invoked watch-materialization + execution cycle: snapshot persisted due watches once, attempt at most five atomic `EmitDuePoll` operations, then invoke one accepted P5 bounded cycle under a total `<=60s` wall budget. It does **not** authorize ticker/cadence, a continuous daemon, public trigger API, provider cursor, destructive delta, or Gate 5.
 
 ## 5. Capability model — research hypothesis, not accepted contract
 
