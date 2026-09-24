@@ -6,11 +6,11 @@
 
 Architecture / acceptance owner: **ChatGPT Architect**
 
-Execution owner: **Codex Executor / Worker only for the Architect-authorized P4 one-shot executor issue**
+Execution owner: **Codex Executor / Worker only for the Architect-authorized P5 bounded executor-loop issue**
 
 Status:
 
-**P0 TARGETED SCOPED REFRESH — ARCHITECT_ACCEPTED / P1 HOT-SCOPE POLLING FEASIBILITY — ARCHITECT_ACCEPTED / P2 DIRTY-SCOPE STATE DESIGN — ARCHITECT_ACCEPTED / P3 STATE PERSISTENCE — ARCHITECT_ACCEPTED / P4 ONE-SHOT DIRTY EXECUTOR — AUTHORIZED AFTER PLAN MERGE / PRODUCTION SCHEDULER NOT AUTHORIZED**
+**P0 TARGETED SCOPED REFRESH — ARCHITECT_ACCEPTED / P1 HOT-SCOPE POLLING FEASIBILITY — ARCHITECT_ACCEPTED / P2 DIRTY-SCOPE STATE DESIGN — ARCHITECT_ACCEPTED / P3 STATE PERSISTENCE — ARCHITECT_ACCEPTED / P4 ONE-SHOT DIRTY EXECUTOR — ARCHITECT_ACCEPTED / P5 BOUNDED EXECUTOR LOOP — AUTHORIZED AFTER PLAN MERGE / PRODUCTION SCHEDULER NOT AUTHORIZED**
 
 Current architecture planning:
 
@@ -28,9 +28,11 @@ Current architecture planning:
 - P3 plan: `docs/architecture/INCREMENTAL-P3-STATE-PERSISTENCE-PROTOTYPE.md`
 - Issue #72 / PR #73 — P3 state persistence (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `c7c7091412a92c66e35d4d70f65a326ddc82a132`)
 - P4 plan: `docs/architecture/INCREMENTAL-P4-ONE-SHOT-DIRTY-EXECUTOR-PROTOTYPE.md`
+- Issue #75 / PR #76 — P4 one-shot dirty executor (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `10668d6203ad86cad3eee074df19a1ee62dea7f7`)
+- P5 plan: `docs/architecture/INCREMENTAL-P5-BOUNDED-EXECUTOR-LOOP-PROTOTYPE.md`
 - Accepted D0 report: `docs/research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md`
 
-Research and P0–P3 are complete. The next bounded step is **P4 One-shot Dirty Executor Prototype**: deterministically select at most one eligible persisted item, version-claim it, call the existing P0 `ScanScope` path once, then complete through P3 state. Production scheduling/continuous execution remains **NOT AUTHORIZED**.
+Research and P0–P4 are complete. The next bounded step is **P5 Bounded Executor Loop Prototype**: repeatedly invoke the accepted P4 `ExecuteOne` under hard limits of at most 5 selected items and at most 60 seconds per cycle. Production scheduling/cadence/continuous execution remains **NOT AUTHORIZED**.
 
 Accepted Gate-4 merge commits:
 
@@ -94,7 +96,7 @@ CloudSite 1.0 remains **Legacy / Frozen Product**.
 
 This is a separate IndexCore infrastructure extension and does **not** consume or authorize Gate 5.
 
-Capability discovery and P0–P3 are complete. The current task is **P4 one-shot dirty executor prototype**.
+Capability discovery and P0–P4 are complete. The current task is **P5 bounded executor-loop prototype**.
 
 Compare:
 
@@ -115,9 +117,9 @@ Primary question:
 
 The accepted D0 report establishes the evidence baseline for 115/OpenList/AList/Xiaoya/rclone, request amplification, cache behavior, rate-limit/account risk, large-directory behavior, and remaining live-test UNKNOWNs.
 
-The Architect accepted P0 scoped refresh, P1 bounded hot-scope polling feasibility, P2 durable state design, and P3 persistence. P3 exit decision is **AUTHORIZE_ONE_SHOT_DIRTY_EXECUTOR_PROTOTYPE**.
+The Architect accepted P0 scoped refresh, P1 bounded hot-scope polling feasibility, P2 durable state design, P3 persistence, and P4 one-shot execution. P4 exit decision is **AUTHORIZE_BOUNDED_EXECUTOR_LOOP_PROTOTYPE**.
 
-P4 may add a deterministic read-only eligible-work selector, a one-shot runtime executor, typed scoped-refresh error classification, and real-PG/httptest integration proof. One invocation may process zero or one item and may call `ScanScope` at most once. It must not add a polling scheduler, continuous executor daemon, Mutation Hint API, native delta/provider cursor, production `sync`, or destructive behavior.
+P5 may add only a finite cycle runner above the accepted P4 `ExecuteOne`, with explicit hard budgets (`max_items <= 5`, `max_wall_time <= 60s`) and a deterministic stop matrix. It must not add polling cadence, ticker/sleep, continuous daemon execution, automatic RetryReady/Resume/Repair/Recovery, Mutation Hint API, native delta/provider cursor, production `sync`, or destructive behavior.
 
 ## Next product blueprint phase
 
@@ -164,7 +166,7 @@ Do not begin:
 - Scanner Resume / multi-daemon HA unless separately planned.
 - native delta implementation unless a future provider capability review explicitly authorizes it;
 - production adaptive polling / scheduler or continuous dirty executor;
-- executor behavior outside the bounded P4 one-shot prototype;
+- executor behavior outside the bounded P5 finite-cycle prototype;
 - Mutation Hint production integration until separately authorized.
 
 ## Recovery rule
@@ -178,4 +180,4 @@ First read:
 - `docs/gate4/GATE4-REFERENCE-CONSUMER-REPORT.md`;
 - the blueprint Gate-5 section.
 
-Then follow the active Architect-authorized phase. For incremental work, P4 is the bounded one-shot executor prototype; for product work, Gate 5 still requires a separate architecture plan.
+Then follow the active Architect-authorized phase. For incremental work, P5 is the bounded finite executor-cycle prototype; for product work, Gate 5 still requires a separate architecture plan.
