@@ -32,30 +32,30 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 
 	root, err := s.store.GetRoot(ctx, s.store.Pool(), rootID)
 	if err != nil {
-		return Result{}, fmt.Errorf("load root: %w", err)
+		return Result{}, scopeWrap(ScopeFailureInternal, fmt.Errorf("load root: %w", err))
 	}
 	if root.LifecycleState == domain.RootDeleted {
-		return Result{}, errors.New("root is DELETED")
+		return Result{}, scopeErrorf(ScopeFailureRootInactive, "root %s is DELETED", rootID)
 	}
 
 	acfg, err := s.store.GetAdapterConfig(ctx, rootID)
 	if err != nil {
-		return Result{}, fmt.Errorf("load adapter config: %w", err)
+		return Result{}, scopeWrap(ScopeFailureConfigInvalid, fmt.Errorf("load adapter config: %w", err))
 	}
 	var ac adapterConfig
 	if err := json.Unmarshal(acfg.Config, &ac); err != nil {
-		return Result{}, fmt.Errorf("parse adapter config: %w", err)
+		return Result{}, scopeWrap(ScopeFailureConfigInvalid, fmt.Errorf("parse adapter config: %w", err))
 	}
 
 	// P0 scoped refresh is defined only for AList/OpenList single-response
 	// refresh semantics. Any other collector kind fails closed.
 	if acfg.CollectorKind != "alist" && acfg.CollectorKind != "openlist" {
-		return Result{}, fmt.Errorf(
+		return Result{}, scopeErrorf(ScopeFailureConfigInvalid,
 			"scoped refresh is not supported for collector kind %q (P0: alist/openlist only)", acfg.CollectorKind)
 	}
 	// P0 hard cap: the caller must never be able to widen a scoped observation.
 	if maxEntries < 0 || maxEntries > alist.MaxScopedEntries {
-		return Result{}, fmt.Errorf(
+		return Result{}, scopeErrorf(ScopeFailureConfigInvalid,
 			"scoped refresh max_entries must be within [0, %d], got %d", alist.MaxScopedEntries, maxEntries)
 	}
 
@@ -63,11 +63,11 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 	// guarantee the resolved provider path stays inside the root.
 	rel, err := canonicalScopePath(scope)
 	if err != nil {
-		return Result{}, err
+		return Result{}, scopeWrap(ScopeFailureInvalidScope, err)
 	}
 	target, err := scopeAPIPath(ac.Path, rel)
 	if err != nil {
-		return Result{}, err
+		return Result{}, scopeWrap(ScopeFailureInvalidScope, err)
 	}
 	// A non-root scope MUST already be an unambiguous PRESENT canonical
 	// directory; otherwise a scoped observation would produce orphan resources
@@ -79,7 +79,7 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 	// configured root path is not "/".
 	if rel != "" {
 		if err := s.requirePresentDirectory(ctx, rootID, target); err != nil {
-			return Result{}, err
+			return Result{}, scopeWrap(ScopeFailureInvalidScope, err)
 		}
 	}
 
@@ -93,11 +93,13 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 	raw, err := col.ScanScope(ctx, target, maxEntries)
 	if err != nil {
 		// Fail closed: no Snapshot is created on any refresh/permission/
-		// truncation/overflow error.
-		return Result{}, fmt.Errorf("scoped collector refresh: %w", err)
+		// truncation/overflow error. The classification is typed, never string
+		// parsed.
+		return Result{}, mapAListScopedError(err)
 	}
 	if raw.TraversalStatus != domain.TraversalPartial {
-		return Result{}, fmt.Errorf("internal: scoped observation must be PARTIAL, got %s", raw.TraversalStatus)
+		return Result{}, scopeErrorf(ScopeFailureInternal,
+			"internal: scoped observation must be PARTIAL, got %s", raw.TraversalStatus)
 	}
 
 	snapID := reconcile.NewUUID()
@@ -123,37 +125,38 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 	// never strand a SUBMITTED Snapshot.
 	cfg, err := s.store.RootReconcileConfig(ctx, rootID)
 	if err != nil {
-		return Result{}, fmt.Errorf("load root policy: %w", err)
+		return Result{}, scopeWrap(ScopeFailureConfigInvalid, fmt.Errorf("load root policy: %w", err))
 	}
 	coord := postgres.NewCoordinator(s.store, cfg)
 
 	// Root-scoped recovery + head drain (same guarantees as Service.Scan).
 	resolved, ambiguous, rerr := s.store.ResolveUnadmittedSubmittedForRoot(ctx, rootID)
 	if rerr != nil {
-		return Result{}, fmt.Errorf("resolve stranded snapshots: %w", rerr)
+		return Result{}, scopeWrap(ScopeFailureInternal, fmt.Errorf("resolve stranded snapshots: %w", rerr))
 	}
 	if ambiguous {
-		return Result{}, fmt.Errorf("ambiguous unadmitted SUBMITTED snapshots for root %s; refusing to guess order", rootID)
+		return Result{}, scopeErrorf(ScopeFailureInternal,
+			"ambiguous unadmitted SUBMITTED snapshots for root %s; refusing to guess order", rootID)
 	}
 	if resolved > 0 {
 		s.logger.Info("scoped scan: recovered stranded submitted snapshots", "root_id", rootID, "resolved", resolved)
 	}
 	if err := drainHead(ctx, coord, rootID); err != nil {
-		return Result{}, fmt.Errorf("drain existing pending head: %w", err)
+		return Result{}, scopeWrap(ScopeFailureInternal, fmt.Errorf("drain existing pending head: %w", err))
 	}
 
 	entries := toEntries(raw)
 	if err := s.store.CreateDraftSnapshot(ctx, snap, entries); err != nil {
-		return Result{}, fmt.Errorf("persist draft snapshot: %w", err)
+		return Result{}, scopeWrap(ScopeFailureInternal, fmt.Errorf("persist draft snapshot: %w", err))
 	}
 	if _, err := s.store.SubmitAndAdmitSnapshot(ctx, rootID, snapID); err != nil {
-		return Result{}, fmt.Errorf("submit and admit snapshot: %w", err)
+		return Result{}, scopeWrap(ScopeFailureInternal, fmt.Errorf("submit and admit snapshot: %w", err))
 	}
 
 	out, err := coord.ProcessSnapshot(ctx, rootID, snapID)
 	if errors.Is(err, postgres.ErrNotHead) {
 		if derr := drainHead(ctx, coord, rootID); derr != nil {
-			return Result{SnapshotID: snapID, Outcome: out}, fmt.Errorf("drain head: %w", derr)
+			return Result{SnapshotID: snapID, Outcome: out}, scopeWrap(ScopeFailureInternal, fmt.Errorf("drain head: %w", derr))
 		}
 		out, err = coord.ProcessSnapshot(ctx, rootID, snapID)
 	}
@@ -174,12 +177,45 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 		"reconcile_outcome", string(out.Status), "generation", out.Generation,
 		"applied_generation", out.AppliedGeneration, "error_class", errClass)
 	if err != nil {
-		return Result{SnapshotID: snapID, Outcome: out}, fmt.Errorf("reconcile: %w", err)
+		return Result{SnapshotID: snapID, Outcome: out}, scopeWrap(ScopeFailureInternal, fmt.Errorf("reconcile: %w", err))
 	}
 	if serr := scanOutcomeError(raw.TraversalStatus, out); serr != nil {
-		return Result{SnapshotID: snapID, Outcome: out}, serr
+		return Result{SnapshotID: snapID, Outcome: out}, scopeWrap(s.lifecycleFailureKind(ctx, rootID), serr)
 	}
 	return Result{SnapshotID: snapID, Outcome: out}, nil
+}
+
+// lifecycleFailureKind attributes a post-observation rejection to a root
+// lifecycle condition when that is positive, otherwise INTERNAL (doc P4 Sec 9.2).
+func (s *Service) lifecycleFailureKind(ctx context.Context, rootID string) ScopeFailureKind {
+	root, err := s.store.GetRoot(ctx, s.store.Pool(), rootID)
+	if err == nil && root.LifecycleState != domain.RootActive {
+		return ScopeFailureRootInactive
+	}
+	return ScopeFailureInternal
+}
+
+// mapAListScopedError translates a typed AList scoped failure into the
+// provider-neutral scan classification. Untyped errors fail closed as INTERNAL.
+func mapAListScopedError(err error) *ScopeError {
+	var se *alist.ScopedError
+	if errors.As(err, &se) {
+		switch se.Kind {
+		case alist.ScopedAuthOrPermission:
+			return scopeWrap(ScopeFailureAuthOrPermission, err)
+		case alist.ScopedThrottled:
+			return scopeWrap(ScopeFailureThrottled, err)
+		case alist.ScopedTransientProvider:
+			return scopeWrap(ScopeFailureTransientProvider, err)
+		case alist.ScopedTooLarge:
+			return scopeWrap(ScopeFailureTooLarge, err)
+		case alist.ScopedInvalidScope:
+			return scopeWrap(ScopeFailureInvalidScope, err)
+		case alist.ScopedConfigInvalid:
+			return scopeWrap(ScopeFailureConfigInvalid, err)
+		}
+	}
+	return scopeWrap(ScopeFailureInternal, err)
 }
 
 // canonicalScopePath normalizes a root-relative scope and rejects "." / ".."

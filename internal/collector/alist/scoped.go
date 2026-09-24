@@ -3,7 +3,7 @@ package alist
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+
 	"net/http"
 	"time"
 
@@ -44,7 +44,7 @@ func (a Adapter) ScanScope(ctx context.Context, scope string, maxEntries int) (a
 		defer cancel()
 	}
 	if maxEntries < 0 || maxEntries > MaxScopedEntries {
-		return adapter.RawScan{}, fmt.Errorf(
+		return adapter.RawScan{}, scopedErrorf(ScopedConfigInvalid,
 			"alist scoped list: max_entries must be within [0, %d], got %d", MaxScopedEntries, maxEntries)
 	}
 	// maxEntries <= MaxScopedEntries, so maxEntries+1 cannot overflow.
@@ -70,11 +70,11 @@ func (a Adapter) ScanScope(ctx context.Context, scope string, maxEntries int) (a
 		return adapter.RawScan{}, err
 	}
 	if total > maxEntries {
-		return adapter.RawScan{}, fmt.Errorf(
+		return adapter.RawScan{}, scopedErrorf(ScopedTooLarge,
 			"alist scoped list %q exceeds max_entries: total=%d max_entries=%d", dir, total, maxEntries)
 	}
 	if total != len(items) {
-		return adapter.RawScan{}, fmt.Errorf(
+		return adapter.RawScan{}, scopedErrorf(ScopedTransientProvider,
 			"alist scoped list %q total/count mismatch: total=%d content=%d", dir, total, len(items))
 	}
 
@@ -121,16 +121,18 @@ func (a Adapter) listPageRefresh(ctx context.Context, token, dir string, perPage
 	})
 	var resp apiResp
 	if err := a.post(ctx, "/api/fs/list", token, body, &resp); err != nil {
-		return nil, 0, err
+		// Transport failure / provider-side timeout / malformed body.
+		return nil, 0, scopedWrap(ScopedTransientProvider, err)
 	}
 	if resp.Code != http.StatusOK {
 		// Surfaces refresh-permission failures (403 "Refresh without permission")
-		// and any other provider/list error.
-		return nil, 0, fmt.Errorf("alist scoped refresh %q failed: code=%d message=%s", dir, resp.Code, resp.Message)
+		// and any other provider/list error as a typed kind.
+		return nil, 0, scopedErrorf(scopedKindFromAPICode(resp.Code),
+			"alist scoped refresh %q failed: code=%d message=%s", dir, resp.Code, resp.Message)
 	}
 	var data listData
 	if err := json.Unmarshal(resp.Data, &data); err != nil {
-		return nil, 0, err
+		return nil, 0, scopedWrap(ScopedTransientProvider, err)
 	}
 	return data.Content, data.Total, nil
 }
