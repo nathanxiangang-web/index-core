@@ -58,7 +58,7 @@ Canonical write directly; it only produces triggers.
 | `last_due_at` | instant, nullable | When the next-due transition fired (the schedule point). |
 | `last_attempt_started_at` | instant, nullable | Start of the most recent scheduled attempt started against this watch. |
 | `last_attempt_finished_at` | instant, nullable | End of that attempt (success or failure). |
-| `last_success_at` | instant, nullable | Most recent successful attempt **driven by this watch's own `POLL_SCHEDULE` trigger** (`POLL_SCHEDULE ∈ source_set`). A success driven only by a hint/manual trigger does **not** update it (§6.1). |
+| `last_success_at` | instant, nullable | Most recent successful attempt **driven by this watch's own `POLL_SCHEDULE` trigger** — i.e. `POLL_SCHEDULE ∈ DirtyScopeWork.current_epoch.source_set` (the work item's current epoch), **not** this watch's own policy `source_set`. A success driven only by a hint/manual trigger does **not** update it (§6.1). |
 | `next_due_at` | instant, nullable | Next instant the watch is due; `NULL` iff not scheduled. |
 | `consecutive_failures` | int | Consecutive **provider** failures attributable to the watch schedule; budget defer does not increment (§6). |
 | `last_error_class` | enum, nullable | Provider-neutral failure class of the most recent failed attempt (§6). |
@@ -122,8 +122,9 @@ Canonical write directly; it only produces triggers.
 
 - On single-writer startup, **no in-memory timer state is trusted**. Due watches are recomputed from
   persisted rows.
-- If `next_due_at <= now` at startup, the watch is due immediately; it produces a
-  `POLL_SCHEDULE` trigger on the first scheduling pass.
+- After restart a watch is due **only if** it is `HOT`/`WARM` **and** `next_due_at <= now`; it then
+  produces a `POLL_SCHEDULE` trigger on the first scheduling pass. `COLD`/`DISABLED` are **never** due
+  by a stale `next_due_at` (§2.2/§2.6/§2.10).
 - Restart must lose **neither** due watches **nor** pending dirty work (§7).
 - A stale `last_attempt_started_at` without a matching finished value does not suppress due-ness.
 
@@ -155,7 +156,7 @@ exact scope, through the accepted P0 `scan.Service.ScanScope` path.
 | `reason_set` | set<reason> | Why verification is wanted (§5). Scoped to the **current outstanding epoch**: same-epoch union-merge; **reset** when a new epoch opens after `VERIFIED` (§3.4). |
 | `source_set` | set<source> | Where the triggers came from (§5). Scoped to the **current outstanding epoch**: same-epoch union-merge; **reset** at an epoch boundary (§3.4). |
 | `priority_class` | enum | `URGENT`\|`HIGH`\|`NORMAL`\|`LOW`. |
-| `first_seen_at` | instant | First merge time (stable; used for aging/fairness). |
+| `first_seen_at` | instant | First signal time of the **current outstanding epoch** (reset when a new epoch opens after `VERIFIED`; used for aging/fairness within the epoch). |
 | `last_seen_at` | instant | Latest merge time. |
 | `not_before` | instant, nullable | Earliest instant this work may be attempted (retry backoff / defer). |
 | `attempt_count` | int | Total attempts started (diagnostic; survives retries). |
@@ -260,8 +261,9 @@ CAS(version=v -> v+1):
         not_before     = trigger.not_before
         work_state     = PENDING
     else:                                  # SAME outstanding epoch
-        reason_set = reason_set ∪ new_reasons
-        source_set = source_set ∪ new_sources
+        reason_set     = reason_set ∪ new_reasons
+        source_set     = source_set ∪ new_sources
+        priority_class = max(priority_class, trigger.priority_class)   # highest outstanding signal wins
         # not_before is handled PER STATE (NOT a blanket min()):
         if work_state == PENDING:     not_before = min(not_before, trigger.not_before)  # may become eligible sooner
         if work_state == IN_FLIGHT:   not_before unchanged                              # irrelevant during an attempt
@@ -317,6 +319,14 @@ transition is defined per state (no state silently ignores a merge):
 | `RETRY_WAIT` | `signal_seq++`; same-epoch set union; **`not_before` UNCHANGED** — a new signal must **not** cancel or shorten the existing bounded backoff. Stays `RETRY_WAIT`. |
 | `BLOCKED` | `signal_seq++`; same-epoch set union; `not_before` unchanged. Stays `BLOCKED` — a new signal does **not** auto-clear a block; only operator/repair (or `INVALID_SCOPE` policy) returns it to `PENDING`. |
 | `SUSPENDED` | `signal_seq++`; same-epoch set union; `not_before` unchanged. Stays `SUSPENDED` — no attempt runs while the root is non-ACTIVE; resumes to `PENDING` when the root becomes ACTIVE. |
+
+Notes on shared fields during a same-epoch merge:
+
+- **`priority_class`** always becomes the **maximum** of the currently outstanding signals'
+  priority (`max(priority_class, trigger.priority_class)`) — the highest outstanding signal wins.
+  A **new epoch** instead sets it to the triggering signal's priority.
+- **`first_seen_at`** is the first signal time of the **current epoch**; a new epoch resets it to
+  `now` (it is not a lifetime-of-row value).
 
 ### 4.3 CAS-conflict completion rule (explicit)
 
@@ -388,7 +398,9 @@ sets (§3.4).
 ### 5.2 Reasons
 
 `POSSIBLE_CHANGE`, `DELETE_HINT`, `MOVE_UNCERTAIN`, `METADATA_UNCERTAIN`, `MANUAL_VERIFY`,
-`DRIFT_VERIFY`, `RETRY`. Reasons accumulate; they never overwrite.
+`DRIFT_VERIFY`, `RETRY`. Reasons **union-merge within the current outstanding epoch and reset at an
+epoch boundary** (§3.4/§4.4); a newer reason never overwrites an existing **same-epoch** member, and
+no reason is retained across epochs.
 
 ### 5.3 Mutation Hint boundary
 
@@ -455,21 +467,25 @@ Notes:
 
 ### 6.1 Counter ownership when one attempt serves merged signals
 
-A single `ScanScope` attempt may serve a merged item whose `source_set` contains multiple sources
-(e.g. `POLL_SCHEDULE` + `MUTATION_HINT`). The **execution unit is the `DirtyScopeWork`**, so:
+A single `ScanScope` attempt may serve a merged item whose source set contains multiple sources
+(e.g. `POLL_SCHEDULE` + `MUTATION_HINT`). The **execution unit is the `DirtyScopeWork`**, and the
+condition for touching **Watch** counters is evaluated against the **current outstanding epoch** of
+that work item — **`POLL_SCHEDULE ∈ DirtyScopeWork.current_epoch.source_set`** — **not** the watch's
+own `ScopeWatchState.source_set` (which holds only policy provenance such as
+`OPERATOR_POLICY`/`ADAPTIVE_POLICY` and can never contain `POLL_SCHEDULE`).
 
 | Counter / field | On provider failure | On success | On budget defer |
 | --- | --- | --- | --- |
 | Work `consecutive_failures` / `last_error_class` / `last_attempt_finished_at` | **Yes** (provider classes) | reset `consecutive_failures = 0`; set `last_verified_at` / `last_verified_signal_seq` | **No** |
 | Work `attempt_count` | Yes (already incremented at claim) | Yes | **No** (no claim) |
-| Watch `consecutive_failures` / `last_error_class` | **Only if `POLL_SCHEDULE ∈ source_set`** | reset `consecutive_failures = 0`; set `last_success_at` **only if `POLL_SCHEDULE ∈ source_set`** | **No** |
-| Watch `last_attempt_started_at` / `last_attempt_finished_at` | Same rule: **only if `POLL_SCHEDULE ∈ source_set`** | same | **No** |
+| Watch `consecutive_failures` / `last_error_class` | **Only if `POLL_SCHEDULE ∈ DirtyScopeWork.current_epoch.source_set`** | reset `consecutive_failures = 0`; set `last_success_at` **only if `POLL_SCHEDULE ∈ DirtyScopeWork.current_epoch.source_set`** | **No** |
+| Watch `last_attempt_started_at` / `last_attempt_finished_at` | Same rule: **only if `POLL_SCHEDULE ∈ DirtyScopeWork.current_epoch.source_set`** | same | **No** |
 
 Rules:
 
-- A failure caused **only** by `MUTATION_HINT`/`MANUAL_OPERATOR`/`PROVIDER_EVENT` (no `POLL_SCHEDULE`)
-  updates the **Work** counters but leaves the **Watch** counters/attempt fields unchanged — that
-  watch's periodic schedule did not fail.
+- A failure caused **only** by `MUTATION_HINT`/`MANUAL_OPERATOR`/`PROVIDER_EVENT`
+  (`POLL_SCHEDULE ∉ DirtyScopeWork.current_epoch.source_set`) updates the **Work** counters but leaves
+  the **Watch** counters/attempt fields unchanged — that watch's periodic schedule did not fail.
 - A **budget defer** is not an attempt: it updates **neither** Work nor Watch failure counters nor
   error class (it may increment an observability-only `budget_defer_count`).
 
@@ -484,7 +500,7 @@ Single active writer per DB. P2 does **not** authorize distributed leases, fenci
 | After provider success but before work completion | No durable success recorded; item re-runs P0 safely (idempotent, IO3-protected); `signal_seq` still prevents losing a newer trigger. |
 | After Canonical apply but before `VERIFIED` persisted | Canonical is already correct; the P0 re-run reconciles to the same/newer state safely (IO3 NOOP or normal reconcile); work then completes via the normal CAS. |
 | Restart with stale `IN_FLIGHT` | Recovered as above; no blind re-claim without CAS; no duplicate Canonical write lane. |
-| Restart with overdue watches | Recomputed from `next_due_at <= now`; due immediately (§2.9). |
+| Restart with overdue watches | For `HOT`/`WARM` only: recomputed from `next_due_at <= now`, due immediately (§2.9). `COLD`/`DISABLED` never become due from a stale `next_due_at`. |
 | New signal during recovery | Merge CAS increments `signal_seq`; recovery must not clear it (same rule as §4). |
 
 Recovery is **single-writer**, CAS-guarded, and must not invent distributed coordination.
