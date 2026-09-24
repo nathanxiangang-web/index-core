@@ -1,10 +1,10 @@
 # Post-MVP Incremental Ingestion Blueprint
 
-> Status: **DISCOVERY ACTIVE / IMPLEMENTATION NOT AUTHORIZED**
+> Status: **D0 DISCOVERY COMPLETE / ARCHITECT DECISION PENDING / IMPLEMENTATION NOT AUTHORIZED**
 >
 > Architecture tracking: #57
 >
-> Active research: #59
+> Completed research: #59
 >
 > Scope: IndexCore infrastructure only. This is **not Gate 5 product architecture**.
 
@@ -56,7 +56,7 @@ Gate 1–4 are now closed, so this is the correct time to design the deferred ca
 
 No incremental implementation shape is selected yet.
 
-The current task is to determine, with evidence:
+D0 research has completed the evidence collection for this question:
 
 ```text
 Can we discover real provider changes materially faster
@@ -77,7 +77,7 @@ Full-scan only
 Stop / do not implement
 ```
 
-The architecture must not select one of these until Issue #59 produces the capability report.
+Issue #59 has produced the accepted capability report. The Architect must now choose whether any prototype path should be authorized; no implementation path is selected merely by completing the research.
 
 ### Candidate future outcome — only if evidence supports native delta
 
@@ -465,9 +465,9 @@ Meaning:
 
 Immediately transition the root to `FULL_RESYNC_REQUIRED`.
 
-## 12. Discovery Gate D0 — Change Discovery Capability Research
+## 12. Discovery Gate D0 — Change Discovery Capability Research — COMPLETE
 
-Before I0/I1 implementation planning, complete Issue #59 and publish:
+Completed in Issue #59 and published as:
 
 `docs/research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md`
 
@@ -503,7 +503,7 @@ The report must determine:
 - realistic latency targets;
 - UNKNOWNs requiring live tests.
 
-No production code, Store schema, IncrementalCollector interface, `sync` command, or provider cursor persistence may be implemented during D0.
+D0 is complete. It introduced no production code, Store schema, IncrementalCollector interface, `sync` command, or provider cursor persistence.
 
 ### D0 exit decision
 
@@ -1065,7 +1065,7 @@ The desired end state is:
 
 ## 32. Current architecture decision
 
-**Current decision: RESEARCH FIRST. No implementation direction is approved yet.**
+**Current decision: D0 RESEARCH COMPLETE. No implementation direction is approved yet; Architect decision is pending.**
 
 The only design principle accepted before research is:
 
@@ -1073,9 +1073,9 @@ The only design principle accepted before research is:
 
 Everything else remains subject to evidence.
 
-### Research authorization
+### D0 research authorization — completed
 
-Authorized now:
+D0 authorized and completed:
 
 - official documentation research;
 - source-code research;
@@ -1084,7 +1084,7 @@ Authorized now:
 - request-path/rate-limit analysis;
 - controlled non-production live tests when credentials/environment are explicitly provided.
 
-Not authorized now:
+Still not authorized:
 
 - production Go code;
 - SQL/migrations;
@@ -1097,8 +1097,8 @@ Not authorized now:
 
 ### Implementation authorization requires
 
-1. Issue #59 research report completed;
-2. Architect decision on the discovery strategy;
+1. Issue #59 research report completed; **DONE**
+2. Architect decision on the discovery strategy; **PENDING**
 3. explicit prototype/implementation scope;
 4. exact provider/tool selected;
 5. exact safety/fallback contract;
