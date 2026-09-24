@@ -122,9 +122,10 @@ Canonical write directly; it only produces triggers.
 
 - On single-writer startup, **no in-memory timer state is trusted**. Due watches are recomputed from
   persisted rows.
-- After restart a watch is due **only if** it is `HOT`/`WARM` **and** `next_due_at <= now`; it then
-  produces a `POLL_SCHEDULE` trigger on the first scheduling pass. `COLD`/`DISABLED` are **never** due
-  by a stale `next_due_at` (§2.2/§2.6/§2.10).
+- After restart a watch is due **only if** it is `HOT`/`WARM`, `next_due_at <= now`, **and**
+  (`deferred_until IS NULL OR deferred_until <= now`); it then produces a `POLL_SCHEDULE` trigger on
+  the first scheduling pass. `COLD`/`DISABLED` are **never** due by a stale `next_due_at`
+  (§2.2/§2.6/§2.10).
 - Restart must lose **neither** due watches **nor** pending dirty work (§7).
 - A stale `last_attempt_started_at` without a matching finished value does not suppress due-ness.
 
@@ -157,7 +158,7 @@ exact scope, through the accepted P0 `scan.Service.ScanScope` path.
 | `source_set` | set<source> | Where the triggers came from (§5). Scoped to the **current outstanding epoch**: same-epoch union-merge; **reset** at an epoch boundary (§3.4). |
 | `priority_class` | enum | `URGENT`\|`HIGH`\|`NORMAL`\|`LOW`. |
 | `first_seen_at` | instant | First signal time of the **current outstanding epoch** (reset when a new epoch opens after `VERIFIED`; used for aging/fairness within the epoch). |
-| `last_seen_at` | instant | Latest merge time. |
+| `last_seen_at` | instant | Latest signal/merge time of the **current outstanding epoch**; reset to `now` when a new epoch opens after `VERIFIED`. |
 | `not_before` | instant, nullable | Earliest instant this work may be attempted (retry backoff / defer). |
 | `attempt_count` | int | Total attempts started (diagnostic; survives retries). |
 | `consecutive_failures` | int | Consecutive provider-class failures for this work item. |
