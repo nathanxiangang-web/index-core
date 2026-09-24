@@ -87,8 +87,8 @@ States: `PENDING`, `IN_FLIGHT`, `VERIFIED`, `RETRY_WAIT`, `BLOCKED`, `SUSPENDED`
 | (none) | `PENDING` | first merge | row absent (new key) | create with `signal_seq = 1`, `pending_*` set from the trigger |
 | `PENDING` | `PENDING` | merge (any source) | item exists | `signal_seq++`; provenance → **`pending_*` only**; `pending_not_before` not pushed later |
 | `PENDING` | `IN_FLIGHT` | claim | `pending_not_before <= now` | snapshot `claimed_* := pending_*`; **clear `pending_*`**; `attempt_count++`, `last_attempt_started_at=now` |
-| `IN_FLIGHT` | `VERIFIED` | success | **`signal_seq == claimed_signal_seq`** | `last_verified_at`, `last_verified_signal_seq=claimed`, `consecutive_failures=0`; **release `claimed_*`** (Watch counters read `claimed_source_set` first) |
-| `IN_FLIGHT` | `PENDING` | success but newer signal | `signal_seq != claimed_signal_seq` | **release & discard `claimed_*`**; keep **only** the post-claim `pending_*` |
+| `IN_FLIGHT` | `VERIFIED` | success | **`signal_seq == claimed_signal_seq`** | `last_attempt_finished_at=now`; `last_verified_at=now`; `last_verified_signal_seq=claimed`; `consecutive_failures=0`; `last_error_class=NULL`; **release `claimed_*`** (Watch counters read `claimed_source_set` first) |
+| `IN_FLIGHT` | `PENDING` | success but newer signal | `signal_seq != claimed_signal_seq` | same success bookkeeping (`last_attempt_finished_at`, verified watermark, failure reset/error clear); **release & discard `claimed_*`**; keep **only** the post-claim `pending_*` |
 | `IN_FLIGHT` | `PENDING` | crash | restart recovery | **re-coalesce `claimed_*` into `pending_*`** and release; not a failure |
 | `IN_FLIGHT` | `RETRY_WAIT` | `TRANSIENT_PROVIDER` / `THROTTLED` / `INTERNAL` | retry allowed | **re-coalesce `claimed_* ∪ pending_*` → `pending_*`** and release; `consecutive_failures++`, `last_error_class`, `pending_not_before = max(pending_not_before, now+backoff)` |
 | `IN_FLIGHT` | `BLOCKED` | `AUTH_OR_PERMISSION` / `SCOPE_TOO_LARGE` / `INVALID_SCOPE` / `CONFIG_INVALID` | — | same re-coalesce + release; `consecutive_failures++`, `last_error_class`; **no tight retry** |
