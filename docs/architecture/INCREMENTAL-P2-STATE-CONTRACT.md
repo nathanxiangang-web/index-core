@@ -303,8 +303,8 @@ CAS(version=v -> v+1):
         #   RETRY_WAIT -> unchanged (a new signal must NOT cancel OR extend the existing backoff)
         #   BLOCKED    -> unchanged
         #   SUSPENDED  -> unchanged
-        if work_state == PENDING:     pending_not_before = min(pending_not_before, trigger.not_before)
-        if work_state == IN_FLIGHT:   pending_not_before = min(pending_not_before, trigger.not_before)
+        if work_state == PENDING:     pending_not_before = min_nonnull(pending_not_before, trigger.not_before)
+        if work_state == IN_FLIGHT:   pending_not_before = min_nonnull(pending_not_before, trigger.not_before)
         if work_state == RETRY_WAIT:  pending_not_before UNCHANGED
         if work_state == BLOCKED:     pending_not_before UNCHANGED
         if work_state == SUSPENDED:   pending_not_before UNCHANGED
@@ -379,8 +379,8 @@ goes to `pending_*` only — a merge never modifies `claimed_*`.**
 
 | current `work_state` | merge effect |
 | --- | --- |
-| `PENDING` | `signal_seq++`; `pending_*` union; `pending_not_before = min(...)` (may become eligible sooner). Stays `PENDING`. |
-| `IN_FLIGHT` | `signal_seq++`; `pending_*` union; **`claimed_*` untouched**; **`pending_not_before = min(...)`** — the FIRST post-claim signal initializes it, later ones min-merge. On completion the `signal_seq != claimed` branch returns the item to `PENDING` keeping **only** the post-claim `pending_*`, and records the success bookkeeping. |
+| `PENDING` | `signal_seq++`; `pending_*` union; `pending_not_before = min_nonnull(...)` (may become eligible sooner). Stays `PENDING`. |
+| `IN_FLIGHT` | `signal_seq++`; `pending_*` union; **`claimed_*` untouched**; **`pending_not_before = min_nonnull(...)`** — the FIRST post-claim signal initializes it, later ones min-merge. On completion the `signal_seq != claimed` branch returns the item to `PENDING` keeping **only** the post-claim `pending_*`, and records the success bookkeeping. |
 | `VERIFIED` | **opens a NEW EPOCH**: `signal_seq++`; `pending_*` **rebuilt** from the new trigger (no inheritance); `pending_not_before = trigger.not_before`; `work_state = PENDING`. |
 | `RETRY_WAIT` | `signal_seq++`; `pending_*` union; **`pending_not_before` UNCHANGED** — a new signal must **not** cancel **or extend** the existing bounded backoff. Stays `RETRY_WAIT`. |
 | `BLOCKED` | `signal_seq++`; `pending_*` union; `pending_not_before` **UNCHANGED**. Stays `BLOCKED` — a new signal does **not** auto-clear a block; only operator/repair (or `INVALID_SCOPE` policy) returns it to `PENDING`. |
@@ -414,7 +414,7 @@ Let `P = pending_source_set` and `C = claimed_source_set`.
 2. **Non-empty bucket ⇒ timestamped**: `P ≠ ∅` ⇒ `pending_first_seen_at IS NOT NULL`.
 3. **Claim existence**: `work_state = IN_FLIGHT` ⇔ `claimed_signal_seq IS NOT NULL` ∧ `C ≠ ∅` ∧
    `claimed_first_seen_at IS NOT NULL`.
-4. **PENDING has work**: `work_state = PENDING` ⇒ `P ≠ ∅`.
+4. **Outstanding non-flight states have pending work**: `work_state ∈ {PENDING,RETRY_WAIT,BLOCKED,SUSPENDED}` ⇒ `P ≠ ∅`. `work_state = VERIFIED` ⇒ `P = ∅` and the whole `claimed_*` group is `NULL`.
 5. **Signal accounting**: `claimed_signal_seq <= signal_seq`; the claimed signals are exactly the
    pre-claim `pending` epoch, and post-claim merges live only in `P`.
 6. **No cross-writes**: a merge never writes `C`; claim/release never writes `P` except the defined
