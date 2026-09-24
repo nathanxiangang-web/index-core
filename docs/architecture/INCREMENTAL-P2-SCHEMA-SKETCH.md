@@ -45,7 +45,7 @@ Covers Issue #69 §G.
 
 **Due-watch selection index (conceptual):** on
 `(watch_state, next_due_at)` and/or a partial index restricted to
-`watch_state IN (HOT,WARM,COLD) AND next_due_at IS NOT NULL`, optionally including
+`watch_state IN (HOT,WARM) AND next_due_at IS NOT NULL`, optionally including
 `priority_class`, `scope_key` for deterministic ordering. `deferred_until` is checked in the query
 guard.
 
@@ -73,23 +73,24 @@ are retained (audit) and simply not selected.
 | `created_at` / `updated_at` | Instants. |
 | `version` | Int; CAS token. |
 
-**Unique key (active logical item):** `(root_id, scope_key)`.
+**Unique key (v1 decision):** `(root_id, scope_key)` — a **plain unique key**.
 
-- Option A (recommended): the table stores exactly one **current** row per `(root_id, scope_key)`;
-  `VERIFIED` is either retained as current state or compacted/deleted once no newer signal exists.
-- Option B: allow historical rows and keep a **partial unique index** on
-  `(root_id, scope_key) WHERE work_state <> 'VERIFIED'`. This preserves history but is heavier.
+**v1 current-row decision (no history table):**
 
-P2 does **not** freeze the retention strategy; either option is acceptable provided the
-"one active logical item per key" invariant holds (contract §4 / Issue #69 invariant 4).
+- There is **exactly one current row per `(root_id, scope_key)`, permanently** — the table is **not**
+  append-only history and there is **no** partial-unique-index variant.
+- `VERIFIED` is **retained** as the current state (never deleted/compacted in v1), keeping the
+  "already verified at signal N" fast path and simple provenance/audit.
+- `signal_seq` therefore remains a **single, strictly monotonic ever-increasing counter per key**
+  (contract §3.3) — never reset, not across epochs and not after `VERIFIED`.
+- History/compaction may be introduced only by a later Architect decision; **v1 does not** include it.
+
+Rationale: a plain unique key makes the "one active logical item per key" invariant (contract §4 /
+Issue #69 invariant 4) trivially enforceable in the database, with no partial-index ambiguity.
 
 **Eligible-work selection index (conceptual):** on
 `(work_state, not_before, priority_class, first_seen_at, scope_key)` restricted to the eligible states
 (`PENDING`, `RETRY_WAIT`), enabling deterministic selection order.
-
-**VERIFIED retention:** may be retained as current-state metadata (fast "already verified at
-signal N") or compacted; if compacted, a fresh item is created with `signal_seq = 1` on the next
-trigger.
 
 ## 4. Set representation (conceptual)
 
@@ -99,8 +100,9 @@ trigger.
   delimiter-joined tokens) with application-level union on merge; no provider-specific columns.
 - **Native:** a Postgres `text[]`/enum array with set-union on merge.
 
-Either is acceptable. Constraints: sets **union-merge** (never overwrite), order-independent
-equality, and equality must not depend on insertion order.
+Either is acceptable. Constraints: sets **union-merge within the current outstanding epoch** (§3.4 of
+the contract) and are **reset at each epoch boundary**; order-independent equality; equality must not
+depend on insertion order.
 
 ## 5. Attempt history: MVP necessity
 
@@ -118,10 +120,10 @@ The sketch is migration-ready when:
 
 1. both logical keys and every index above are named and justified;
 2. `version` CAS columns exist on both tables;
-3. the "one active logical item" invariant is enforceable by a unique key (Option A) or a partial
-   unique index (Option B);
-4. set columns have a chosen portable or native representation with union-merge semantics;
-5. retention for `VERIFIED` is chosen (retain or compact);
+3. the "one active logical item" invariant is enforceable by the plain unique key `(root_id, scope_key)`;
+4. set columns have a chosen portable or native representation with **same-epoch union + epoch reset**;
+5. `VERIFIED` rows are **retained** (v1) and `signal_seq` remains strictly monotonic — no compaction,
+   no history table;
 6. no operational-table column leaks into Q1–Q9 or the Canonical Journal.
 
 ## 7. Explicitly **not** defined here

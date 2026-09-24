@@ -110,3 +110,16 @@ path may be introduced.
 | 11 same-root ordering | T-I3 |
 | 12 no direct Canonical/removal mutation | T-V3, T-G2 |
 | 13 Q1–Q9 unchanged | T-G1 |
+## 10. Round-1 review additions (contract sharpening)
+
+These tests lock the semantics added in the Round-1 review of PR #70.
+
+| ID | Test | Asserts |
+| --- | --- | --- |
+| T-W5 | `COLD` never schedules | a `COLD` watch with a stale `next_due_at` produces **no** `POLL_SCHEDULE`; only `HOT`/`WARM` are periodically polled. |
+| T-W6 | poll-due atomicity | due re-check + schedule advance + `DirtyScopeWork` merge commit in **one** transaction; a crash mid-way leaves **neither** advance **nor** merge visible (no duplicated poll signal, no skipped due watch). |
+| T-C5 | merge while in each `work_state` | merge is defined and never ignored for `PENDING`/`IN_FLIGHT`/`VERIFIED`/`RETRY_WAIT`/`BLOCKED`/`SUSPENDED`; `BLOCKED`/`SUSPENDED`/`RETRY_WAIT` are **not** auto-cleared by a merge. |
+| T-C6 | epoch provenance reset | after `VERIFIED`, a new trigger **resets** `reason_set`/`source_set` (no inheritance from the previous epoch) while `signal_seq` keeps increasing. |
+| T-C7 | CAS-conflict completion | a merge during `IN_FLIGHT` bumps `version`; the completion CAS fails → re-read → success recorded **only if** `signal_seq == claimed_signal_seq`; otherwise `PENDING` (signal preserved); no tight retry loop. |
+| T-C8 | claim cleared on every exit | every `IN_FLIGHT → non-IN_FLIGHT` transition (success/newer-signal/crash/`RETRY_WAIT`/`BLOCKED`/`SUSPENDED`) sets `claimed_signal_seq = NULL`. |
+| T-F8 | counter ownership | a merged `POLL_SCHEDULE` + `MUTATION_HINT` attempt that fails updates **Work** counters; **Watch** counters/attempt fields update **only** when `POLL_SCHEDULE ∈ source_set`; budget defer updates neither. |

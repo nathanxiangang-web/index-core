@@ -68,10 +68,14 @@ Canonical write directly; it only produces triggers.
 
 ### 2.2 `watch_state`
 
-- `HOT` / `WARM` / `COLD`: schedule classes; only these produce `POLL_SCHEDULE` triggers.
-- `DISABLED`: no scheduling. Retained for audit; selection ignores it entirely.
-- `DISABLED` is **not** deletion. Watch demotion (HOT→WARM→COLD) must **never** discard pending
-  `DirtyScopeWork` (§15 of the plan; §8 here).
+- `HOT` / `WARM`: **scheduling classes**. Only these are eligible for periodic polling and produce
+  `POLL_SCHEDULE` triggers.
+- `COLD`: **retained state only — never periodically polled.** A `COLD` watch produces **no**
+  `POLL_SCHEDULE` trigger, even if a stale `next_due_at` exists; it keeps its state (and any pending
+  `DirtyScopeWork`) so it can be promoted later. `effective_interval IS NULL` for `COLD`.
+- `DISABLED`: no scheduling at all. Retained for audit; selection ignores it entirely.
+- `COLD`/`DISABLED` are **not** deletion. Watch demotion (HOT→WARM→COLD) must **never** discard
+  pending `DirtyScopeWork` (§15 of the plan; §8 here).
 
 ### 2.3 `cadence_class` and `effective_interval`
 
@@ -95,8 +99,9 @@ Canonical write directly; it only produces triggers.
 ### 2.6 Time fields and due derivation
 
 - `next_due_at` is authoritative; `last_due_at` records the schedule instant that produced it.
-- A watch is **due** iff `watch_state ∈ {HOT,WARM,COLD}` **and** `next_due_at <= now` **and**
-  (`deferred_until IS NULL OR deferred_until <= now`).
+- A watch is **due** iff `watch_state ∈ {HOT,WARM}` **and** `next_due_at <= now` **and**
+  (`deferred_until IS NULL OR deferred_until <= now`). `COLD`/`DISABLED` are never due, regardless of
+  `next_due_at`.
 - Scheduling is derived from **persisted state**, never from an in-memory timer event.
 
 ### 2.7 Failure fields
@@ -125,8 +130,9 @@ Canonical write directly; it only produces triggers.
 ### 2.10 Watch invariants
 
 1. `watch_state = DISABLED` ⇒ `next_due_at IS NULL`.
-2. `watch_state ∈ {COLD}` ⇒ no schedule trigger even if `next_due_at` is set historically; selection
-   uses `watch_state`, not merely the timestamp.
+2. `watch_state ∈ {COLD,DISABLED}` ⇒ **no** schedule trigger and no periodic poll, even if
+   `next_due_at` is set historically; selection uses `watch_state`, not merely the timestamp. Only
+   `HOT`/`WARM` are periodically scheduled.
 3. `consecutive_failures` counts only provider-class failures; restart does not reset it, but a
    successful coverage resets it to `0`.
 4. Changing `watch_state`/`cadence_class`/`effective_interval` is CAS-guarded and must not touch any
@@ -171,14 +177,25 @@ exact scope, through the accepted P0 `scan.Service.ScanScope` path.
 ### 3.3 `signal_seq` and `claimed_signal_seq`
 
 - `signal_seq` increments on **every** merged trigger (poll due, hint, manual, recovery, backstop).
-- It is **durable and monotonic**; it must not be reset by state transitions other than a fresh
-  item creation after removal/compaction.
+- It is **durable and strictly monotonic for the lifetime of the row**: it is **never reset** — not by
+  completion, not across epochs, and not by `VERIFIED`. In v1 the row is never compacted/deleted
+  (§G schema decision), so `signal_seq` is a single ever-increasing counter per `(root_id, scope_key)`.
 - `claimed_signal_seq` is set atomically at claim time and is the basis of the completion CAS (§4).
+- `claimed_signal_seq IS NULL` whenever `work_state != IN_FLIGHT` (work invariant, §3.8).
 
-### 3.4 `reason_set` and `source_set`
+### 3.4 `reason_set` and `source_set` — scoped to the **current outstanding epoch**
 
-- Both are **sets**, union-merged on every trigger; existing members are never removed by a newer
-  trigger, and a newer trigger's provenance never replaces older provenance.
+- Both are **sets**, union-merged **within the current outstanding epoch** (the span from the last
+  successful clear / `VERIFIED`, or from row creation, up to the next successful clear). Within that
+  span, existing members are never removed by a newer trigger and newer provenance never replaces
+  older provenance.
+- **Epoch boundary resets provenance.** When a new signal arrives **after** the item reached
+  `VERIFIED`, it opens a **new epoch**: `reason_set`/`source_set` are **reset to the new trigger's
+  sets** — they do **not** inherit the previous epoch's members. This prevents a long-cleared
+  `POLL_SCHEDULE` (or an old hint) from permanently contaminating the provenance of a later, unrelated
+  epoch.
+- Invariant: the outstanding provenance must always describe the signals that are **still
+  outstanding**, not every signal ever seen. A set member's lifetime is exactly one outstanding epoch.
 - `reason_set` answers "why"; `source_set` answers "who asked". They evolve independently.
 
 ### 3.5 Attempt/verification fields
@@ -226,23 +243,27 @@ the item must remain/re-enter `PENDING` (never silently dropped).
 ### 4.1 Required CAS rule
 
 ```text
-# merge (any trigger, including during IN_FLIGHT):
+# merge (any trigger, arbitrary work_state):
 CAS(version=v -> v+1):
     signal_seq     = signal_seq + 1
     last_seen_at   = now
-    last_due_at?   (poll only)
-    reason_set     = reason_set ∪ new_reasons
-    source_set     = source_set ∪ new_sources
     not_before     = min(not_before, trigger.not_before)   # never push later
+    if work_state == VERIFIED:            # new epoch -> provenance resets
+        reason_set = new_reasons
+        source_set = new_sources
+        work_state = PENDING
+    else:                                  # same outstanding epoch
+        reason_set = reason_set ∪ new_reasons
+        source_set = source_set ∪ new_sources
 
 # claim:
 CAS(version=v -> v+1):  where work_state = PENDING and (not_before IS NULL or not_before <= now)
-    work_state         = IN_FLIGHT
-    claimed_signal_seq = signal_seq
+    work_state              = IN_FLIGHT
+    claimed_signal_seq      = signal_seq
     last_attempt_started_at = now
-    attempt_count      = attempt_count + 1
+    attempt_count           = attempt_count + 1
 
-# successful completion:
+# successful completion (CAS with re-read on conflict; see 4.3):
 CAS(version=v -> v+1):  where work_state = IN_FLIGHT and claimed_signal_seq = k
     if signal_seq == k:
         work_state               = VERIFIED
@@ -251,15 +272,60 @@ CAS(version=v -> v+1):  where work_state = IN_FLIGHT and claimed_signal_seq = k
         claimed_signal_seq       = NULL
         consecutive_failures     = 0
     else:
-        # newer signal arrived during the attempt -> do NOT clear it
-        work_state               = PENDING
-        claimed_signal_seq       = NULL
+        # a newer signal arrived during the attempt -> do NOT clear it
+        work_state         = PENDING
+        claimed_signal_seq = NULL
         # signal_seq unchanged (the newer signal is preserved)
+
+# failure / abort (leaving IN_FLIGHT for ANY non-IN_FLIGHT state):
+CAS(version=v -> v+1):  where work_state = IN_FLIGHT and claimed_signal_seq = k
+    work_state               = <RETRY_WAIT | BLOCKED | SUSPENDED | PENDING>
+    claimed_signal_seq       = NULL            # ALWAYS cleared when leaving IN_FLIGHT
+    last_attempt_finished_at = now
+    consecutive_failures     = consecutive_failures + 1   # provider classes only; NEVER budget defer
+    last_error_class         = <class>                    # provider classes only
+    not_before               = now + backoff(class)       # RETRY_WAIT only
 ```
 
 The completion branch is the exact rule that prevents clearing signal `8` after attempt `7`.
+**Every `IN_FLIGHT -> non-IN_FLIGHT` transition (success, failure, block, suspend, crash recovery)
+MUST set `claimed_signal_seq = NULL`** — this is part of work invariant 2 (§3.8).
 
-### 4.2 Worked example (the required race)
+### 4.2 Merge while in each `work_state`
+
+A trigger may arrive in **any** work state; the merge CAS above always increments `signal_seq`, and one
+transition is defined per state (no state silently ignores a merge):
+
+| current `work_state` | merge effect |
+| --- | --- |
+| `PENDING` | `signal_seq++`; same-epoch set union; `not_before` not pushed later. Stays `PENDING`. |
+| `IN_FLIGHT` | `signal_seq++`; same-epoch set union. The in-flight attempt continues; on completion the `signal_seq != claimed` branch returns the item to `PENDING` (newer signal preserved). |
+| `VERIFIED` | **opens a new epoch**: `signal_seq++`; `reason_set`/`source_set` **reset** to the new trigger; `work_state = PENDING`. |
+| `RETRY_WAIT` | `signal_seq++`; same-epoch set union; `not_before` not pushed later. Stays `RETRY_WAIT` — a new signal does **not** cancel the existing bounded backoff. |
+| `BLOCKED` | `signal_seq++`; same-epoch set union. Stays `BLOCKED` — a new signal does **not** auto-clear a block; only operator/repair (or `INVALID_SCOPE` policy) returns it to `PENDING`. |
+| `SUSPENDED` | `signal_seq++`; same-epoch set union. Stays `SUSPENDED` — no attempt runs while the root is non-ACTIVE; resumes to `PENDING` when the root becomes ACTIVE. |
+
+### 4.3 CAS-conflict completion rule (explicit)
+
+A merge during `IN_FLIGHT` bumps the row `version`, so attempt `k`'s completion CAS can fail **even
+though `signal_seq` is still `k`**. The required behavior on any CAS conflict is:
+
+1. **re-read** the row;
+2. if `work_state == IN_FLIGHT` **and** `claimed_signal_seq == k` → the claim is still valid; retry the
+   CAS (bounded, **no tight loop**);
+3. otherwise the claim is no longer valid → **stop and do NOT write success**; the newer merge/state
+   owns the item and it will be re-claimed later.
+
+Equivalently: success is recorded **only** by a CAS that succeeds with
+`signal_seq == claimed_signal_seq == k`.
+
+### 4.4 Epoch boundary
+
+An epoch is the outstanding span between successful clears. `VERIFIED` closes the current epoch; the
+next merge opens a new one and **resets** `reason_set`/`source_set` (§3.4). `signal_seq` **does not**
+reset across epochs (§3.3) — it remains the durable lost-wakeup guard.
+
+### 4.5 Worked example (the required race)
 
 ```text
 signal_seq = 7
@@ -272,7 +338,7 @@ attempt 7 succeeds          -> CAS sees signal_seq(8) != claimed(7)
 
 Signal 8 is **never** cleared by attempt 7.
 
-### 4.3 Prohibited shortcut
+### 4.6 Prohibited shortcut
 
 It is invalid to clear dirty work merely because *some* observation of the scope succeeded. Clearing
 requires: successful fresh coverage **and** admission/application **and** `signal_seq ==
@@ -310,9 +376,27 @@ sets (§3.4).
 ### 5.4 Merge semantics
 
 - Multiple triggers merge into the outstanding item; `signal_seq++`, `last_seen_at = now`,
-  `reason_set`/`source_set` grow, `not_before` is never pushed later.
-- If no item exists (e.g. previously `VERIFIED` and compacted, or never created), a **fresh** item is
-  created with `signal_seq = 1`.
+  **same-epoch** `reason_set`/`source_set` union, `not_before` never pushed later (§4.1/§4.2).
+- **Cross-epoch**: a trigger arriving after `VERIFIED` opens a new epoch and **resets**
+  `reason_set`/`source_set` (§3.4/§4.4); `signal_seq` continues monotonically (never reset).
+- In v1 the row is never compacted/deleted (`SCHEMA-SKETCH.md`), so the item always exists; a **fresh**
+  item with `signal_seq = 1` is created only when the row is first inserted for a new
+  `(root_id, scope_key)`.
+
+### 5.5 Transaction boundary for poll-due triggering (v1 decision)
+
+When a due `HOT`/`WARM` watch produces a `POLL_SCHEDULE` trigger, the due re-check **and** the schedule
+advance **and** the `DirtyScopeWork` merge MUST be committed in **one Store transaction per scope**
+(atomic). The transaction:
+
+1. re-checks the watch is still due (`watch_state ∈ {HOT,WARM}`, `next_due_at <= now`,
+   `deferred_until` not blocking) — CAS on the watch `version`;
+2. advances the schedule (`last_due_at = now`, `next_due_at = now + effective_interval`) — same CAS;
+3. merges the `DirtyScopeWork` for that scope (`signal_seq++`, or row insert) — CAS on the work `version`.
+
+If the transaction does not commit, **neither** the schedule advance **nor** the work merge is visible,
+so a crash cannot duplicate a poll signal and cannot silently skip a due watch. One poll cycle
+processes **each due scope in its own transaction** (not one giant per-cycle transaction).
 
 ## 6. Failure / defer matrix (§F)
 
@@ -340,6 +424,26 @@ Notes:
 - Budget defer records scheduling pressure (observability `budget_defer_count`); it is **not** a
   provider failure and must not advance failure counters or error class.
 - A failed attempt never mutates Canonical Inventory or removal evidence.
+
+### 6.1 Counter ownership when one attempt serves merged signals
+
+A single `ScanScope` attempt may serve a merged item whose `source_set` contains multiple sources
+(e.g. `POLL_SCHEDULE` + `MUTATION_HINT`). The **execution unit is the `DirtyScopeWork`**, so:
+
+| Counter / field | On provider failure | On success | On budget defer |
+| --- | --- | --- | --- |
+| Work `consecutive_failures` / `last_error_class` / `last_attempt_finished_at` | **Yes** (provider classes) | reset `consecutive_failures = 0`; set `last_verified_at` / `last_verified_signal_seq` | **No** |
+| Work `attempt_count` | Yes (already incremented at claim) | Yes | **No** (no claim) |
+| Watch `consecutive_failures` / `last_error_class` | **Only if `POLL_SCHEDULE ∈ source_set`** | reset `consecutive_failures = 0`; set `last_success_at` **only if `POLL_SCHEDULE ∈ source_set`** | **No** |
+| Watch `last_attempt_started_at` / `last_attempt_finished_at` | Same rule: **only if `POLL_SCHEDULE ∈ source_set`** | same | **No** |
+
+Rules:
+
+- A failure caused **only** by `MUTATION_HINT`/`MANUAL_OPERATOR`/`PROVIDER_EVENT` (no `POLL_SCHEDULE`)
+  updates the **Work** counters but leaves the **Watch** counters/attempt fields unchanged — that
+  watch's periodic schedule did not fail.
+- A **budget defer** is not an attempt: it updates **neither** Work nor Watch failure counters nor
+  error class (it may increment an observability-only `budget_defer_count`).
 
 ## 7. Crash / restart matrix (§H)
 
