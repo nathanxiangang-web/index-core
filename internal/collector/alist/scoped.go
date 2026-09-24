@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/nathanxiangang-web/index-core/internal/collector/adapter"
@@ -44,15 +46,22 @@ func (a Adapter) ScanScope(ctx context.Context, scope string, maxEntries int) (a
 		defer cancel()
 	}
 	if maxEntries < 0 || maxEntries > MaxScopedEntries {
-		return adapter.RawScan{}, fmt.Errorf(
+		return adapter.RawScan{}, scopedErrorf(ScopedConfigInvalid,
 			"alist scoped list: max_entries must be within [0, %d], got %d", MaxScopedEntries, maxEntries)
+	}
+	// A persisted base URL that cannot form a valid provider request is a
+	// permanent adapter configuration defect, never a retryable provider
+	// failure: fail before any provider I/O.
+	if err := validateScopedBaseURL(a.BaseURL); err != nil {
+		return adapter.RawScan{}, scopedErrorf(ScopedConfigInvalid,
+			"alist scoped refresh base URL is invalid: %v", err)
 	}
 	// maxEntries <= MaxScopedEntries, so maxEntries+1 cannot overflow.
 	perPage := maxEntries + 1
 
 	token := a.Token
 	if token == "" && a.Username != "" {
-		t, err := a.login(ctx)
+		t, err := a.loginScoped(ctx)
 		if err != nil {
 			return adapter.RawScan{}, err
 		}
@@ -70,11 +79,11 @@ func (a Adapter) ScanScope(ctx context.Context, scope string, maxEntries int) (a
 		return adapter.RawScan{}, err
 	}
 	if total > maxEntries {
-		return adapter.RawScan{}, fmt.Errorf(
+		return adapter.RawScan{}, scopedErrorf(ScopedTooLarge,
 			"alist scoped list %q exceeds max_entries: total=%d max_entries=%d", dir, total, maxEntries)
 	}
 	if total != len(items) {
-		return adapter.RawScan{}, fmt.Errorf(
+		return adapter.RawScan{}, scopedErrorf(ScopedTransientProvider,
 			"alist scoped list %q total/count mismatch: total=%d content=%d", dir, total, len(items))
 	}
 
@@ -121,16 +130,86 @@ func (a Adapter) listPageRefresh(ctx context.Context, token, dir string, perPage
 	})
 	var resp apiResp
 	if err := a.post(ctx, "/api/fs/list", token, body, &resp); err != nil {
-		return nil, 0, err
+		// Transport failure / provider-side timeout / malformed body.
+		return nil, 0, scopedWrap(ScopedTransientProvider, err)
 	}
 	if resp.Code != http.StatusOK {
 		// Surfaces refresh-permission failures (403 "Refresh without permission")
-		// and any other provider/list error.
-		return nil, 0, fmt.Errorf("alist scoped refresh %q failed: code=%d message=%s", dir, resp.Code, resp.Message)
+		// and any other provider/list error as a typed kind.
+		return nil, 0, scopedErrorf(scopedKindFromAPICode(resp.Code),
+			"alist scoped refresh %q failed: code=%d message=%s", dir, resp.Code, resp.Message)
 	}
-	var data listData
+	var data *scopedListData
 	if err := json.Unmarshal(resp.Data, &data); err != nil {
-		return nil, 0, err
+		return nil, 0, scopedWrap(ScopedTransientProvider, err)
 	}
-	return data.Content, data.Total, nil
+	// The provider must explicitly return both content and total. Missing/null
+	// fields must never be completed from Go zero values into a fabricated empty
+	// directory.
+	if data == nil || data.Content == nil || data.Total == nil {
+		return nil, 0, scopedErrorf(ScopedTransientProvider,
+			"alist scoped refresh %q returned an incomplete payload (content/total missing)", dir)
+	}
+	if *data.Total < 0 {
+		return nil, 0, scopedErrorf(ScopedTransientProvider,
+			"alist scoped refresh %q returned a negative total %d", dir, *data.Total)
+	}
+	// total == len(content) is intentionally enforced by ScanScope AFTER the
+	// overflow check: a legitimate total > per_page truncation is an overflow,
+	// not a malformed short page.
+	return *data.Content, *data.Total, nil
+}
+
+// scopedListData is the scoped decoder shape. Field presence is significant:
+// content and total must both be provider-declared (an empty array is a legal
+// empty directory, but a missing/null field is not).
+type scopedListData struct {
+	Content *[]item `json:"content"`
+	Total   *int    `json:"total"`
+}
+
+// validateScopedBaseURL rejects a persisted base URL that can never form a valid
+// provider request. Legitimate path-prefixed deployments (e.g.
+// "http://host/alist") remain valid.
+func validateScopedBaseURL(raw string) error {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return fmt.Errorf("base URL is empty")
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return fmt.Errorf("base URL is not a valid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("base URL scheme must be http or https, got %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("base URL must include a host")
+	}
+	return nil
+}
+
+// loginScoped obtains a login token for the scoped-refresh path with the same
+// typed provider classification as the list call. It deliberately does not use
+// the generic Adapter.login, whose errors are untyped.
+func (a Adapter) loginScoped(ctx context.Context) (string, error) {
+	body, _ := json.Marshal(map[string]string{"username": a.Username, "password": a.Password})
+	var resp apiResp
+	if err := a.post(ctx, "/api/auth/login", "", body, &resp); err != nil {
+		return "", scopedWrap(ScopedTransientProvider, err)
+	}
+	if resp.Code != http.StatusOK {
+		return "", scopedErrorf(scopedKindFromAPICode(resp.Code),
+			"alist scoped login failed: code=%d message=%s", resp.Code, resp.Message)
+	}
+	var data struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		return "", scopedWrap(ScopedTransientProvider, err)
+	}
+	if data.Token == "" {
+		return "", scopedErrorf(ScopedTransientProvider, "alist scoped login returned no token")
+	}
+	return data.Token, nil
 }
