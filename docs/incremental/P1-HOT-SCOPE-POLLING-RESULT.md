@@ -1,8 +1,8 @@
 # Incremental P1 — Adaptive Hot-Scope Polling Feasibility — Result
 
-> Status: **LIVE EXECUTED — EXTERNAL CHANGE DISCOVERED WITHOUT A MUTATION HINT, WITHIN ONE INTERVAL**
+> Status: **ARCHITECT_ACCEPTED — LIVE EXECUTED — EXTERNAL CHANGE DISCOVERED WITHOUT A MUTATION HINT, WITHIN ONE INTERVAL**
 >
-> **P1 overall PASS / merge decision: reserved for the Architect** (live evidence now available)
+> **P1 exit decision: `AUTHORIZE_DIRTY_SCOPE_STATE_DESIGN`** (Architect, 2026-09-24)
 >
 > Executing issue: #66 · Parent: #57 · Plan: `docs/architecture/INCREMENTAL-P1-HOT-SCOPE-POLLING-PROTOTYPE.md`
 >
@@ -211,15 +211,18 @@ INDEXCORE_TEST_DATABASE_URL=postgres://... \
 
 Deterministic selection/budget behavior, additive-safe reconcile through the polling harness, and
 **live execution on a real stale-cache external write** are all **verified**: the new file was
-discovered without a Mutation Hint, within one configured interval (`T6−T1 = 30.3 s ≤ 120 s`), with
+discovered without a Mutation Hint, within one configured interval (`T6−T1 = 59.1 s ≤ 120 s`), with
 budgets enforced (`due == polled == 4`, no budget exhaustion, exactly one canonical refresh per due
 scope), the changed scope mutated and the unchanged scopes did not, Q3/Q4/Q6 agreed on one id, and no
 removal evidence was produced.
 
-**P1 overall acceptance and the exit decision** (`STOP_POLLING` / `KEEP_P0_MANUAL_ONLY` /
-`AUTHORIZE_MUTATION_HINT_INTEGRATION` / `AUTHORIZE_HYBRID_HINT_PLUS_HOT_POLLING` /
-`AUTHORIZE_DIRTY_SCOPE_STATE_DESIGN` / `RESEARCH_FURTHER`) **remain with the Architect**.
-Production scheduler/polling remains unauthorized; PR #67 does not merge.
+**P1 is ARCHITECT_ACCEPTED.** The P1 exit decision is
+**`AUTHORIZE_DIRTY_SCOPE_STATE_DESIGN`** — the next stage designs a persistent dirty/hot-scope state
+model (scope reason/source, cadence, last_polled, next_due, failure state, budget/defer state,
+restart recovery) so Mutation Hint and Hot Polling can share one reliable state model.
+
+Still **not authorized**: production polling scheduler, DB migration / dirty table, production sync
+CLI, public hint API, Gate 5. PR #67 merge is authorized by the Architect.
 
 ## 8. Frozen-contract statement
 
