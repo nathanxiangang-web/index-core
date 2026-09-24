@@ -6,11 +6,11 @@
 
 Architecture / acceptance owner: **ChatGPT Architect**
 
-Execution owner: **Codex Executor / Worker only for the Architect-authorized P2 design issue**
+Execution owner: **Codex Executor / Worker only for the Architect-authorized P3 persistence-prototype issue**
 
 Status:
 
-**P0 TARGETED SCOPED REFRESH — ARCHITECT_ACCEPTED / P1 HOT-SCOPE POLLING FEASIBILITY — ARCHITECT_ACCEPTED / P2 DIRTY-SCOPE STATE DESIGN — AUTHORIZED / PRODUCTION IMPLEMENTATION NOT AUTHORIZED**
+**P0 TARGETED SCOPED REFRESH — ARCHITECT_ACCEPTED / P1 HOT-SCOPE POLLING FEASIBILITY — ARCHITECT_ACCEPTED / P2 DIRTY-SCOPE STATE DESIGN — ARCHITECT_ACCEPTED / P3 STATE PERSISTENCE PROTOTYPE — AUTHORIZED AFTER PLAN MERGE / PRODUCTION SCHEDULER NOT AUTHORIZED**
 
 Current architecture planning:
 
@@ -24,9 +24,11 @@ Current architecture planning:
 - Issue #66 — P1 Adaptive Hot-Scope Polling Feasibility (**COMPLETE / ARCHITECT_ACCEPTED**)
 - PR #67 — P1 implementation + real 115 Open cadence evidence (**MERGED** at `41c4a26de85532a1d43da073e4256b7befb39d36`)
 - P2 plan: `docs/architecture/INCREMENTAL-P2-DIRTY-SCOPE-STATE-DESIGN.md`
+- Issue #69 / PR #70 — P2 durable state design (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `e1f9c734e30502a133e5e7df8f54b2d1e3e1338a`)
+- P3 plan: `docs/architecture/INCREMENTAL-P3-STATE-PERSISTENCE-PROTOTYPE.md`
 - Accepted D0 report: `docs/research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md`
 
-Research, P0, and P1 are complete. The next bounded step is **P2 Dirty / Hot Scope Durable State Design only**. Production incremental implementation remains **NOT AUTHORIZED**.
+Research, P0, P1, and P2 are complete. The next bounded step is **P3 State Persistence Prototype**: additive migration + Store CAS/transaction/recovery primitives + real PostgreSQL proof only. Production scheduler/executor remains **NOT AUTHORIZED**.
 
 Accepted Gate-4 merge commits:
 
@@ -90,7 +92,7 @@ CloudSite 1.0 remains **Legacy / Frozen Product**.
 
 This is a separate IndexCore infrastructure extension and does **not** consume or authorize Gate 5.
 
-Capability discovery, P0 scoped-refresh validation, and P1 hot-scope polling feasibility are complete. The current task is **P2 durable dirty/hot-scope state design**.
+Capability discovery, P0 scoped-refresh validation, P1 hot-scope polling feasibility, and P2 durable state design are complete. The current task is **P3 state persistence prototype**.
 
 Compare:
 
@@ -111,9 +113,9 @@ Primary question:
 
 The accepted D0 report establishes the evidence baseline for 115/OpenList/AList/Xiaoya/rclone, request amplification, cache behavior, rate-limit/account risk, large-directory behavior, and remaining live-test UNKNOWNs.
 
-The Architect accepted P0 scoped refresh and P1 bounded hot-scope polling feasibility. P1 exit decision is **AUTHORIZE_DIRTY_SCOPE_STATE_DESIGN**.
+The Architect accepted P0 scoped refresh, P1 bounded hot-scope polling feasibility, and P2 durable state design. P2 exit decision is **AUTHORIZE_STATE_PERSISTENCE_PROTOTYPE**.
 
-P2 must design separate durable `ScopeWatchState` and `DirtyScopeWork` models, restart-safe due/work semantics, lost-wakeup-safe `signal_seq` coalescing, failure/defer states, and interaction with the existing P0 `ScanScope` path. Only design is authorized. A production polling scheduler, Store migration, persistent dirty-scope implementation, Mutation Hint API, native delta, provider cursor, production `sync`, and destructive behavior remain unauthorized.
+P3 may add the inert additive `0005_incremental_scope_state.sql` migration, provider-neutral operational state types, PostgreSQL Store CAS/transaction/recovery primitives, and real-PG deterministic/concurrency tests. It must not add a production scheduler, executor, Mutation Hint API, native delta/provider cursor, production `sync`, or destructive behavior.
 
 ## Next product blueprint phase
 
@@ -160,7 +162,8 @@ Do not begin:
 - Scanner Resume / multi-daemon HA unless separately planned.
 - native delta implementation unless a future provider capability review explicitly authorizes it;
 - production adaptive polling / scheduler;
-- persistent dirty/watch state implementation or SQL migration; P2 design only is authorized;
+- production adaptive polling / scheduler or long-running dirty executor;
+- persistence work outside the bounded P3 state prototype;
 - Mutation Hint production integration until separately authorized.
 
 ## Recovery rule
@@ -174,4 +177,4 @@ First read:
 - `docs/gate4/GATE4-REFERENCE-CONSUMER-REPORT.md`;
 - the blueprint Gate-5 section.
 
-Then follow the active Architect-authorized phase. For incremental work, P2 is design-only; for product work, Gate 5 still requires a separate architecture plan.
+Then follow the active Architect-authorized phase. For incremental work, P3 is the bounded persistence prototype; for product work, Gate 5 still requires a separate architecture plan.
