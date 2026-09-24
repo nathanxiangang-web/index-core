@@ -30,12 +30,18 @@ unchanged.
 
 ## 2. Contract implemented (Issue #62)
 
-Request — exactly one per scope attempt:
+**Canonical observation — exactly one per scope attempt:**
 
 ```json
 { "path": "<resolved scope>", "password": "", "page": 1,
   "per_page": "<maxEntries + 1>", "refresh": true }
 ```
+
+Precisely: the prototype issues **exactly one canonical `POST /api/fs/list`
+observation with `refresh=true` per scope attempt**. When the storage is
+configured with username/password instead of a token, an authentication
+`POST /api/auth/login` may precede that observation — it is a re-authentication
+call, not a canonical observation, and it never paginates. (Round 3 wording fix.)
 
 Fail closed (no Snapshot) unless:
 

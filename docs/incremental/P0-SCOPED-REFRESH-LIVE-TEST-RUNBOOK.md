@@ -32,7 +32,10 @@ stale OpenList cache. Only a live run can prove that.
 - a **dedicated service identity** whose credential is write-capable enough for
   `refresh=true`, and is **never** exposed to a browser or public API;
 - the Worker may call only `/api/fs/list` (list/refresh). It must not call upload,
-  delete, rename, move, copy, or any other provider mutation endpoint.
+  delete, rename, move, copy, or any other provider mutation endpoint. An
+  authentication `POST /api/auth/login` may precede the single canonical
+  `refresh=true` observation when username/password is used; that is not a
+  canonical observation and it never paginates (Round 3 wording fix).
 
 Record up front:
 
@@ -92,3 +95,26 @@ account / no non-production 115 Open driver configuration**. Therefore:
 
 P0 acceptance remains gated on this runbook being executed and the evidence
 recorded above.
+## 7. Environment probe — 2026-09-24 (Worker)
+
+The Architect supplied a candidate OpenList endpoint for live validation. The
+Worker performed a **read-only** probe (login + `fs/list` only — no mutation):
+
+- endpoint `https://pan.netioi.com` is an AList/OpenList instance;
+- login succeeded with a **restricted, non-admin** service identity;
+- the identity's visible root is `/` (base path restricted to the 115 mount);
+- the root listing reports **`provider: "115 Cloud"`** — i.e. the legacy/private
+  driver, **not** the official `115 Open` driver;
+- root directory has 5 direct children; this identity has `write=true`.
+
+**Result: this endpoint does NOT satisfy the P0 acceptance precondition.**
+Issue #62 and section 2 above require the **official `115 Open` driver**; using
+the legacy/private `115 Cloud` driver as the acceptance path is explicitly
+forbidden.
+
+Therefore live validation is **still NOT EXECUTED**, and **P0 remains NOT PASS**.
+A live environment whose OpenList storage uses the community `115 Open` driver
+(official 115 Open API) is required.
+
+The probe performed no create / modify / delete; it only logged in and listed a
+directory.
