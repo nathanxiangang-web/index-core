@@ -634,7 +634,9 @@ func (s *Store) CompleteFailure(ctx context.Context, rootID, scopeKey string, cl
 		// Never earlier than an existing post-claim barrier: keep the later one.
 		wk.PendingNotBefore = state.MaxTimePtr(wk.PendingNotBefore, retryNotBefore)
 	case state.WorkBlocked, state.WorkSuspended:
-		wk.PendingNotBefore = nil
+		// Preserve the post-claim pending barrier: a blocked/suspended item must
+		// not lose a future eligibility that arrived AFTER the claim. The claimed
+		// signal's own barrier is intentionally NOT restored (that attempt ran).
 	}
 	wk.WorkState = target
 	releaseClaim(&wk)

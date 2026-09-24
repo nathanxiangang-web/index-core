@@ -92,7 +92,7 @@ docs/incremental/P3-STATE-PERSISTENCE-RESULT.md                       (new)
 
 ## 4. Real-PostgreSQL evidence (PostgreSQL 18, `testutil.Pool`)
 
-P3 test files — **38 tests total, all PASS**:
+P3 test files — **40 tests total, all PASS**:
 
 | file | tests |
 | --- | --- |
@@ -100,6 +100,7 @@ P3 test files — **38 tests total, all PASS**:
 | `incremental_round1_test.go` | 5 |
 | `incremental_round2_test.go` | 9 |
 | `incremental_round3_test.go` | 3 |
+| `incremental_round4_test.go` | 2 |
 | `incremental_rollback_internal_test.go` | 1 |
 
 | Area | Evidence |
@@ -235,6 +236,24 @@ PR #73 Round 3 = CHANGES REQUIRED. Two contract fixes + evidence closeout:
    next-stage executor flow `select work → version → claim`.
    Tests: `TestP3ClaimStaleVersionCAS`, `TestP3ClaimStaleVersionLeavesWatchUntouched`.
 3. **Evidence counts.** P3 tests now total **38** (20 + 5 + 9 + 3 + 1), as recorded in §4.
+
+Full `go test -p 1 ./...` green; `go vet` / `gofmt` clean; real PostgreSQL 18.
+`FROZEN_CONTRACT_CHANGES: NONE`.
+## 12. Round 4 Architect review rework (2026-09-24)
+
+PR #73 Round 4 = CHANGES REQUIRED (one final eligibility bug). Fixed:
+
+- **`BLOCKED` / `SUSPENDED` preserve the post-claim pending barrier.** `CompleteFailure` no
+  longer nulls `pending_not_before` when mapping a failure to `BLOCKED` or `SUSPENDED`; a future
+  eligibility that arrived **after** the claim is kept (the claimed signal's own barrier is still
+  intentionally not restored, because that attempt already ran). Without this, a `RepairBlocked`
+  or `ResumeSuspended` would run a post-claim signal before its requested time.
+- New real-PG tests:
+  - `TestP3BlockedKeepsPostClaimBarrier` — AUTH → `BLOCKED` → `RepairBlocked` → future barrier still
+    present; an early claim fails.
+  - `TestP3SuspendedKeepsPostClaimBarrier` — ROOT_INACTIVE → `SUSPENDED` → `ResumeSuspended` →
+    future barrier still present; an early claim fails.
+- Test count is now **40** (`incremental_round4_test.go` adds 2).
 
 Full `go test -p 1 ./...` green; `go vet` / `gofmt` clean; real PostgreSQL 18.
 `FROZEN_CONTRACT_CHANGES: NONE`.
