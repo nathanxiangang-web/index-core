@@ -189,9 +189,24 @@ func (p *p1Proxy) refreshCallsByPath() map[string][]p1Call {
 	return out
 }
 
+// refreshTotal counts EVERY canonical refresh=true observation seen by the proxy,
+// across all paths — used to prove there is no extra refresh path beyond the
+// polled scopes.
+func (p *p1Proxy) refreshTotal() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, c := range p.calls {
+		if c.refresh {
+			n++
+		}
+	}
+	return n
+}
+
 // p1ReadOnlyList performs ONE read-only refresh=false observation (never mutating
 // the cache) and returns status, total, names, bytes.
-func p1ReadOnlyList(t *testing.T, base, user, pass, path string) (int, int, []string, int) {
+func p1ReadOnlyList(t *testing.T, base, user, pass, path string, perPage int) (int, int, int, []string, int) {
 	t.Helper()
 	loginBody, _ := json.Marshal(map[string]string{"username": user, "password": pass})
 	lr, err := http.Post(base+"/api/auth/login", "application/json", bytes.NewReader(loginBody))
@@ -209,7 +224,7 @@ func p1ReadOnlyList(t *testing.T, base, user, pass, path string) (int, int, []st
 		t.Fatalf("login failed: %s", string(lb))
 	}
 
-	body, _ := json.Marshal(map[string]any{"path": path, "password": "", "page": 1, "per_page": 200, "refresh": false})
+	body, _ := json.Marshal(map[string]any{"path": path, "password": "", "page": 1, "per_page": perPage, "refresh": false})
 	req, _ := http.NewRequest(http.MethodPost, base+"/api/fs/list", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", login.Data.Token)
@@ -232,7 +247,7 @@ func p1ReadOnlyList(t *testing.T, base, user, pass, path string) (int, int, []st
 	for _, c := range parsed.Data.Content {
 		names = append(names, c.Name)
 	}
-	return resp.StatusCode, parsed.Data.Total, names, len(rb)
+	return resp.StatusCode, parsed.Data.Total, len(parsed.Data.Content), names, len(rb)
 }
 
 // TestLiveP1HotScopesPhaseABaseline establishes the IndexCore baseline for all
@@ -279,10 +294,20 @@ func TestLiveP1HotScopesPhaseBCycle(t *testing.T) {
 	if pageSize <= 0 {
 		t.Fatal("INDEXCORE_P1_LIVE_PAGE_SIZE is required (the actual 115 Open page_size); do not guess")
 	}
+	// Input sanity (Round 2): the expected scope must be one of the HOT scopes,
+	// and the expected path must be a direct child of it.
+	if !contains(scopes, expectScope) {
+		t.Fatalf("INDEXCORE_P1_LIVE_EXPECT_SCOPE %q must be one of the HOT scopes %v", expectScope, scopes)
+	}
+	if got := parentOf(expectPath); got != expectScope {
+		t.Fatalf("parentOf(EXPECT_PATH)=%q must equal EXPECT_SCOPE %q", got, expectScope)
+	}
 	prevPoll := mustParseTS(t, "INDEXCORE_P1_LIVE_PREV_POLL_TS")
 	t1 := mustParseTS(t, "INDEXCORE_P1_LIVE_T1_TS")
 	interval := time.Duration(atoiOr(t, "INDEXCORE_P1_LIVE_HOT_INTERVAL", 120)) * time.Second
 	ctx := context.Background()
+	lim := defaultPollLimits()
+	lim.minimumScopeInterval = interval
 
 	st := liveStore(t, false)
 	if _, err := st.GetRoot(ctx, st.Pool(), liveRootID); err != nil {
@@ -290,15 +315,21 @@ func TestLiveP1HotScopesPhaseBCycle(t *testing.T) {
 	}
 
 	// BLOCKER 1 — read-only stale-cache gate: the expected file must still be
-	// absent via refresh=false BEFORE the P1 cycle. This must not refresh the cache.
+	// absent via refresh=false BEFORE the P1 cycle. This must not refresh the
+	// cache. It must fetch the WHOLE directory in one coherent response
+	// (per_page = maxEntries+1) and require total == len(content), so a page-2
+	// target cannot be mis-read as "not visible" (Round 2).
 	gateAt := time.Now().UTC()
-	status, total, names, bytesN := p1ReadOnlyList(t, base, user, pass, expectScope)
+	status, total, contentCount, names, bytesN := p1ReadOnlyList(t, base, user, pass, expectScope, lim.maxEntriesPerScope+1)
 	gateNames := make([]string, len(names))
 	copy(gateNames, names)
-	t.Logf("STALE GATE at %s: scope=%s status=%d total=%d bytes=%d names=%v",
-		gateAt.Format(time.RFC3339), expectScope, status, total, bytesN, gateNames)
+	t.Logf("STALE GATE at %s: scope=%s status=%d total=%d content=%d bytes=%d names=%v",
+		gateAt.Format(time.RFC3339), expectScope, status, total, contentCount, bytesN, gateNames)
 	if status != http.StatusOK {
 		t.Fatalf("stale-gate refresh=false must be 200, got %d", status)
+	}
+	if total != contentCount {
+		t.Fatalf("stale-gate must be a coherent single response: total=%d content=%d", total, contentCount)
 	}
 	if contains(names, baseName(expectPath)) {
 		t.Fatalf("STALE-GATE FAILED: %s already visible via refresh=false; experiment is NOT JUDICABLE", expectPath)
@@ -310,9 +341,6 @@ func TestLiveP1HotScopesPhaseBCycle(t *testing.T) {
 
 	qr := postgres.NewQueryReader(st.Pool())
 	before := livePresent(t, qr)
-
-	lim := defaultPollLimits()
-	lim.minimumScopeInterval = interval
 
 	// BLOCKER 2 — represent the NEXT DUE poll: seed lastPolled from the previous
 	// poll and require the interval to have actually elapsed (not time-zero due).
@@ -407,6 +435,22 @@ func TestLiveP1HotScopesPhaseBCycle(t *testing.T) {
 	}
 	t.Logf("METRIC cycle due=%d polled=%d wall_ms=%d budget_exhausted=%v", r.due, len(polled), r.wallTime.Milliseconds(), r.budgetExhausted)
 	t.Logf("PHASE B added=%v (before=%d after=%d)", added, len(before), len(after))
+
+	// Round 2 — the cycle must actually poll EVERY due HOT scope within budget.
+	if r.due != len(scopes) {
+		t.Fatalf("cycle due=%d must equal all %d HOT scopes", r.due, len(scopes))
+	}
+	if len(polled) != r.due || len(polled) != len(scopes) {
+		t.Fatalf("cycle must poll all due HOT scopes: due=%d polled=%d scopes=%d", r.due, len(polled), len(scopes))
+	}
+	if r.budgetExhausted {
+		t.Fatal("cycle wall-time budget must not be exhausted in this bounded live run")
+	}
+	// Round 2 — no extra refresh path anywhere: total refresh=true observations
+	// must equal exactly the number of polled scopes.
+	if got := proxy.refreshTotal(); got != len(polled) {
+		t.Fatalf("total canonical refresh=true observations=%d must equal polled scopes=%d", got, len(polled))
+	}
 
 	// BLOCKER 3 — change attribution: expected scope mutated; others did not.
 	mutated := r.mutatedByPath()

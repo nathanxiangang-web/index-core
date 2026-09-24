@@ -69,6 +69,22 @@ semantic fix are addressed **without any production change**:
   audit; per-scope canonical `refresh=true` count == 1 / status 200; `T6-T1 <= HOT interval`; and the
   actual `page_size` supplied via env (no hard-coded 200).
 
+### Round 2 Architect-review rework (2026-09-24, test-only)
+
+PR #67 Architect Round 2 = 3 residual acceptance gaps + 2 input guards, addressed test-only:
+
+1. **The stale-cache gate must read the whole directory in one coherent response.** The gate now uses
+   `per_page = maxEntries + 1` (not a fixed 200) and **requires `total == len(content)`**, so a target
+   sitting beyond page 1 cannot be mis-read as "still not visible".
+2. **The cycle must actually poll every due HOT scope within budget.** Phase B asserts
+   `due == polled == len(scopes)` and **`budgetExhausted == false`**.
+3. **No extra refresh path.** The proxy now also counts **all** `refresh=true` observations globally
+   (`refreshTotal`); Phase B asserts `refreshTotal() == len(polled)` — exactly one canonical refresh per
+   polled scope and none anywhere else.
+
+Input guards: `EXPECT_SCOPE` must be one of the HOT scopes, and `parentOf(EXPECT_PATH)` must equal
+`EXPECT_SCOPE`.
+
 Live 115 validation remains **NOT AUTHORIZED** until the Architect reviews this rework.
 
 ## 4. Reconcile safety evidence (real PostgreSQL)
