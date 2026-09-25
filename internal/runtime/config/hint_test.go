@@ -32,6 +32,8 @@ func TestP9HintAddrValidation(t *testing.T) {
 		"0.0.0.0:8081", "[::]:8081", "192.168.1.5:8081", "localhost:8081",
 		"127.0.0.1", "127.0.0.1:", "127.0.0.1:0", "127.0.0.1:notaport",
 		":8081", "127.0.0.1:70000", "127.0.0.1:8081extra",
+		// Only the exact literal loopback hosts are allowed.
+		"127.0.0.2:8081", "[::ffff:127.0.0.1]:8081", "[0:0:0:0:0:0:0:1]:8081",
 	}
 	for _, addr := range invalid {
 		if err := hintConfig(addr, p9Token).Validate(); err == nil {

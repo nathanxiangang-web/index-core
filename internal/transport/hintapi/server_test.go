@@ -341,3 +341,58 @@ func TestP9HintListenerHasNoQueryRoutes(t *testing.T) {
 		t.Fatalf("GET /v1/roots on hint listener = %d, want 404", resp.StatusCode)
 	}
 }
+
+// TestP9ShutdownWaitsForRequestStillReadingBody proves the lifecycle gate admits
+// a request BEFORE its body is read: even a request that is still uploading its
+// body is tracked, so the writer lock can never be released while such a handler
+// might still reach P8.
+func TestP9ShutdownWaitsForRequestStillReadingBody(t *testing.T) {
+	ing := &fakeIngester{}
+	s, err := hintapi.New(hintapi.Deps{Ingester: ing, Token: p9Token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = s.Serve(ln) }()
+
+	pr, pw := io.Pipe()
+	req, _ := http.NewRequest(http.MethodPost, "http://"+ln.Addr().String()+hintapi.HintPath, pr)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+p9Token)
+	go func() { _, _ = http.DefaultClient.Do(req) }()
+
+	// Send only a partial body and keep the stream open so the handler is blocked
+	// reading it.
+	if _, err := pw.Write([]byte(`{"root_id":"`)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	// Close admission and shut the listener down. The slow request is still being
+	// read, so Shutdown may time out, but the lifecycle gate must stay closed.
+	shCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	_ = s.Shutdown(shCtx)
+	cancel()
+
+	drained := make(chan struct{})
+	go func() { s.WaitHandlers(); close(drained) }()
+	select {
+	case <-drained:
+		t.Fatal("WaitHandlers must not return while a request is still being read")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// Completing the body lets the handler finish; only then may the gate drain.
+	if _, err := pw.Write([]byte(`"scope_key":"/a","reason":"POSSIBLE_CHANGE"}`)); err != nil {
+		t.Fatal(err)
+	}
+	_ = pw.Close()
+	select {
+	case <-drained:
+	case <-time.After(3 * time.Second):
+		t.Fatal("WaitHandlers must return after the handler completes")
+	}
+}

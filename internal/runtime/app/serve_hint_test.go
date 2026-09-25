@@ -323,3 +323,33 @@ func TestP9ShutdownHoldsWriterLockUntilHandlersFinish(t *testing.T) {
 	}
 	l.Release(ctx)
 }
+
+// TestP9QueryBindFailurePreventsHintExposure proves the startup order: the Query
+// listener binds first, so a Query bind failure can never leave a reachable Hint
+// listener.
+func TestP9QueryBindFailurePreventsHintExposure(t *testing.T) {
+	pool := p9Schema(t)
+	st := postgres.New(pool)
+
+	qLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer qLn.Close()
+	hintAddr := p9FreeAddr(t)
+
+	cfg := p9Cfg(hintAddr)
+	cfg.HTTPAddr = qLn.Addr().String()
+
+	err = runServe(context.Background(), cfg, p9Logger(), pool, st, p9BlockingWorker)
+	if err == nil {
+		t.Fatal("an occupied query port must fail serve")
+	}
+	if !strings.Contains(err.Error(), "bind http listener") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c, derr := net.DialTimeout("tcp", hintAddr, 200*time.Millisecond); derr == nil {
+		_ = c.Close()
+		t.Fatal("hint listener must not be exposed when the query bind fails")
+	}
+}

@@ -177,12 +177,13 @@ func validateHintAddr(addr string) error {
 	if err != nil || p < 1 || p > 65535 {
 		return fmt.Errorf("hint address %q must use a port in 1..65535", addr)
 	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return fmt.Errorf("hint address %q must use a literal IP host (no hostnames)", addr)
-	}
-	if !ip.IsLoopback() {
-		return fmt.Errorf("hint address %q must bind a loopback IP (127.0.0.1 or ::1)", addr)
+	// The P9 contract allows only the exact literal loopback hosts. This
+	// deliberately rejects the wider 127.0.0.0/8 range (e.g. 127.0.0.2),
+	// IPv4-mapped forms (::ffff:127.0.0.1), and hostnames.
+	switch host {
+	case "127.0.0.1", "::1":
+	default:
+		return fmt.Errorf("hint address %q must use the literal loopback host 127.0.0.1 or ::1", addr)
 	}
 	return nil
 }

@@ -147,34 +147,9 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 	}()
 	logger.Info("acquired single-writer ownership")
 
-	// P9: the optional trusted Hint listener is created only AFTER writer
-	// ownership. It is loopback-only, bearer-authenticated, and holds only the
-	// narrow P8 ingester (no Store/pool/executor capability).
-	var hintSrv hintTransport
-	var hintDone chan error
-	if cfg.HintEnabled() {
-		ingester, ierr := newHintIngester(st)
-		if ierr != nil {
-			return fmt.Errorf("construct hint ingester: %w", ierr)
-		}
-		hintSrv, ierr = newHintTransport(hintapi.Deps{Ingester: ingester, Token: cfg.HintToken, Logger: logger})
-		if ierr != nil {
-			return fmt.Errorf("construct hint transport: %w", ierr)
-		}
-		ln, lerr := net.Listen("tcp", cfg.HintAddr)
-		if lerr != nil {
-			return fmt.Errorf("bind hint listener %s: %w", cfg.HintAddr, lerr)
-		}
-		hintDone = make(chan error, 1)
-		go func() {
-			logger.Info("hint transport listening", "addr", cfg.HintAddr)
-			if serr := hintSrv.Serve(ln); serr != nil && !errors.Is(serr, http.ErrServerClosed) {
-				hintDone <- serr
-			}
-			close(hintDone)
-		}()
-	}
-
+	// P9 startup order: writer lock -> worker -> Query listener -> optional Hint
+	// listener. The Query address binds BEFORE the Hint listener is created, so a
+	// Query bind failure can never leave a reachable Hint listener.
 	workerCtx, cancelWorker := context.WithCancel(ctx)
 	defer cancelWorker()
 
@@ -193,11 +168,46 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 		Ready:     ready.Load,
 	})
 	srv.Addr = cfg.HTTPAddr
+	queryLn, err := net.Listen("tcp", cfg.HTTPAddr)
+	if err != nil {
+		return fmt.Errorf("bind http listener %s: %w", cfg.HTTPAddr, err)
+	}
+
+	// The optional trusted Hint listener is created only AFTER writer ownership
+	// and AFTER the Query listener bound. It is loopback-only,
+	// bearer-authenticated, and holds only the narrow P8 ingester.
+	var hintSrv hintTransport
+	var hintDone chan error
+	if cfg.HintEnabled() {
+		ingester, ierr := newHintIngester(st)
+		if ierr != nil {
+			_ = queryLn.Close()
+			return fmt.Errorf("construct hint ingester: %w", ierr)
+		}
+		hintSrv, ierr = newHintTransport(hintapi.Deps{Ingester: ingester, Token: cfg.HintToken, Logger: logger})
+		if ierr != nil {
+			_ = queryLn.Close()
+			return fmt.Errorf("construct hint transport: %w", ierr)
+		}
+		hintLn, lerr := net.Listen("tcp", cfg.HintAddr)
+		if lerr != nil {
+			_ = queryLn.Close()
+			return fmt.Errorf("bind hint listener %s: %w", cfg.HintAddr, lerr)
+		}
+		hintDone = make(chan error, 1)
+		go func() {
+			logger.Info("hint transport listening", "addr", cfg.HintAddr)
+			if serr := hintSrv.Serve(hintLn); serr != nil && !errors.Is(serr, http.ErrServerClosed) {
+				hintDone <- serr
+			}
+			close(hintDone)
+		}()
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("http transport listening", "addr", cfg.HTTPAddr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := srv.Serve(queryLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 		close(errCh)

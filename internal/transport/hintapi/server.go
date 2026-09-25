@@ -8,6 +8,7 @@ package hintapi
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -55,9 +56,16 @@ type Deps struct {
 // Server is the dedicated Hint HTTP transport.
 type Server struct {
 	deps Deps
+	mux  *http.ServeMux
 	http *http.Server
 	sem  chan struct{}
-	wg   sync.WaitGroup
+
+	// Lifecycle gate: every inbound request registers before any work (including
+	// body read) and Shutdown closes the gate before waiting, so the writer lock
+	// is never released while a handler could still call P8.
+	mu     sync.Mutex
+	closed bool
+	wg     sync.WaitGroup
 }
 
 // New builds the Hint transport. It fails closed on missing dependencies or a
@@ -72,24 +80,54 @@ func New(deps Deps) (*Server, error) {
 	s := &Server{deps: deps, sem: make(chan struct{}, MaxInFlight)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+HintPath, s.handleIngest)
-	s.http = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	s.mux = mux
+	s.http = &http.Server{Handler: s, ReadHeaderTimeout: 10 * time.Second}
 	return s, nil
 }
+
+// ServeHTTP admits every request into the shutdown lifecycle before any handler
+// work happens. Once Shutdown has closed admission, later requests fail closed.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !s.begin() {
+		writeErr(w, http.StatusServiceUnavailable, "ingest_unavailable")
+		return
+	}
+	defer s.finish()
+	s.mux.ServeHTTP(w, r)
+}
+
+// begin registers an in-flight handler unless admission is already closed. It is
+// atomic with Shutdown closing admission, so WaitHandlers can never observe a
+// false zero while a request may still call P8.
+func (s *Server) begin() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false
+	}
+	s.wg.Add(1)
+	return true
+}
+
+func (s *Server) finish() { s.wg.Done() }
 
 // Serve serves the transport on an already-bound listener.
 func (s *Server) Serve(l net.Listener) error {
 	return s.http.Serve(l)
 }
 
-// Shutdown stops accepting new requests and waits for in-flight requests until
-// ctx is done (standard http.Server.Shutdown semantics).
+// Shutdown closes request admission first (race-safe with begin), then stops the
+// listener and waits for in-flight requests until ctx is done.
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
 	return s.http.Shutdown(ctx)
 }
 
-// WaitHandlers blocks until every in-flight ingestion handler has returned. It is
-// the writer-lock safety gate: the caller must not release the writer advisory
-// lock while a handler may still call P8.
+// WaitHandlers blocks until every admitted handler has returned. It is the
+// writer-lock safety gate: the caller must not release the writer advisory lock
+// while a handler may still call P8. Call it after Shutdown has closed admission.
 func (s *Server) WaitHandlers() { s.wg.Wait() }
 
 type hintRequest struct {
@@ -182,8 +220,12 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) bool {
 	const prefix = "Bearer "
 	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, prefix) ||
-		subtle.ConstantTimeCompare([]byte(auth[len(prefix):]), []byte(s.deps.Token)) != 1 {
+	// Hash both sides to a fixed 32 bytes so any input length goes through a
+	// constant-length comparison (ConstantTimeCompare returns early on length
+	// mismatch, which would leak the token length).
+	supplied := sha256.Sum256([]byte(strings.TrimPrefix(auth, prefix)))
+	expected := sha256.Sum256([]byte(s.deps.Token))
+	if !strings.HasPrefix(auth, prefix) || subtle.ConstantTimeCompare(supplied[:], expected[:]) != 1 {
 		w.Header().Set("WWW-Authenticate", "Bearer")
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return false
