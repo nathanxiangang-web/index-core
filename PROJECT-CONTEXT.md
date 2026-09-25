@@ -16,6 +16,7 @@ Core development for accepted Alpha scope: COMPLETE
 Gate 1–4: CLOSED / ARCHITECT_ACCEPTED
 Post-MVP Incremental P0–P10: ARCHITECT_ACCEPTED
 P11 Production Hybrid Runtime Hardening: ARCHITECT_ACCEPTED
+P12 Deployment Soak with Reference Consumer: ARCHITECT PLAN ACTIVE
 Operating mode: Stable Alpha Foundation / Incremental Hardening
 Gate 5: NOT AUTHORIZED
 ```
@@ -133,8 +134,9 @@ P11 Production Hybrid Runtime Hardening is complete and Architect-accepted
 
 P11 exit decision: `AUTHORIZE_DEPLOYMENT_SOAK`.
 
-Deployment soak is the next bounded step, but no execution task is active until the
-Architect defines its scope.
+Deployment soak is now the P12 architecture-planning phase. The accepted Reference Web
+(`nathanxiangang-web/indexcore-reference-web`) is the external read-only consumer baseline.
+Implementation remains unauthorized until the P12 plan merges and bounded paired Issues are opened.
 
 When work is authorized:
 

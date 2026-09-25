@@ -59,7 +59,9 @@ P10 exit decision: **AUTHORIZE_PRODUCTION_HYBRID_RUNTIME_HARDENING**.
 **P11 Production Hybrid Runtime Hardening — COMPLETE / ARCHITECT_ACCEPTED** (PR #100 merged at `ec980a5e00aa562cc3bd6d74c5e6f03aa46f280c`).
 P11 exit decision: **AUTHORIZE_DEPLOYMENT_SOAK**.
 
-Deployment soak is the next bounded step and has not started. Incremental runtime
+P12 **Deployment Soak with Reference Consumer** is the active architecture-planning step.
+The external consumer baseline is `nathanxiangang-web/indexcore-reference-web@3fea8a83a8c3faa78e713de71a110b9757c07bc1`.
+Implementation has not started. Incremental runtime
 remains default disabled. Native delta, network Hint, second writer, destructive
 removal, migration, and Gate 5 remain unauthorized.
 
@@ -97,7 +99,7 @@ There is no active Gate-5 execution issue.
 
 Separately, IndexCore Issue #57 tracks the incremental architecture umbrella. Issue #59 completed D0 research. Issue #62 / PR #64 completed P0 scoped refresh. Issue #66 / PR #67 completed P1 bounded hot-scope polling feasibility. Issue #69 / PR #70 completed P2 durable state design. Issue #72 / PR #73 completed P3 durable PostgreSQL state persistence. Issue #75 / PR #76 completed P4 one-shot durable execution. Issue #79 / PR #80 completed P5 bounded executor draining. Issue #82 / PR #83 completed P6 bounded scheduler orchestration. Issue #85 / PR #86 completed P7 one-shot manual incremental operation. Issue #88 / PR #89 completed P8 trusted in-process Mutation Hint ingestion.
 
-The current bounded IndexCore next step is **Deployment Soak** following accepted P11 hardening.
+The current bounded IndexCore step is **P12 Deployment Soak with Reference Consumer** following accepted P11 hardening.
 It does not add a new indexing capability. It hardens the accepted P10 same-process,
 same-writer runtime and establishes independent PostgreSQL 18 CI evidence.
 Gate 5 remains separate and unauthorized.
@@ -371,8 +373,8 @@ Post-MVP Incremental P10: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P11: COMPLETE / ARCHITECT_ACCEPTED
 Incremental runtime default-on: NOT AUTHORIZED
 Gate 5: NOT AUTHORIZED
-Active Worker task: none; deployment soak is authorized for Architect scoping only
+Active Worker task: none; P12 architecture planning only until plan merge
 ```
 
-Next action is Architect scoping for the authorized deployment-soak phase.
+Next action is Architect acceptance of the P12 cross-repository soak plan, then paired execution Issues.
 Gate 5 remains unauthorized; no successor-product implementation is authorized.
