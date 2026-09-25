@@ -14,7 +14,9 @@ Current status:
 ```text
 Core development for accepted Alpha scope: COMPLETE
 Gate 1–4: CLOSED / ARCHITECT_ACCEPTED
-Operating mode: Stable Alpha Foundation / Maintenance
+Post-MVP Incremental P0–P10: ARCHITECT_ACCEPTED
+P11 Production Hybrid Runtime Hardening: ARCHITECT PLANNING ACTIVE
+Operating mode: Stable Alpha Foundation / Incremental Hardening
 Gate 5: NOT AUTHORIZED
 ```
 
@@ -126,9 +128,11 @@ New providers belong behind the Collector boundary unless canonical truth/safety
 
 ## 8. Execution model for future changes
 
-There is currently no active implementation gate.
+P11 Production Hybrid Runtime Hardening is the current architecture-planning phase.
+Implementation is not authorized until its planning PR is Architect-accepted and a
+bounded execution Issue is opened.
 
-When future work is authorized:
+When work is authorized:
 
 ```text
 ChatGPT Architect
