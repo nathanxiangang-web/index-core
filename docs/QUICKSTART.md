@@ -222,7 +222,7 @@ Example:
 curl -i \
   -H "Authorization: Bearer $INDEXCORE_HINT_TOKEN" \
   -H 'Content-Type: application/json' \
-  --data '{"root_id":"'"$ROOT_ID"'","scope_key":"/downloads","reason":"POSSIBLE_CHANGE"}' \
+  --data '{"root_id":"'"$ROOT_ID"'","scope_key":"/","reason":"POSSIBLE_CHANGE"}' \
   http://127.0.0.1:8090/internal/v1/mutation-hints
 ```
 
