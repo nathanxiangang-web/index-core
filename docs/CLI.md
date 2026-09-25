@@ -239,8 +239,11 @@ cancellation, materialization/executor error, writer-lock conflict, invalid
 config/schema, unexpected positional argument, or stdout delivery failure). No
 new exit-code classes are introduced.
 
-No automatic recovery/repair/retry promotion, scheduler, ticker, background or
-daemon mode is involved.
+The `incremental run` command itself performs no background scheduler/ticker or
+daemon behavior and does not attach to a running `serve`. The separate accepted
+P10 hybrid runtime may run inside `serve` when explicitly enabled; because both
+use the same writer advisory lock, the manual command fails closed while `serve`
+is active.
 
 ## Build identity
 
