@@ -26,6 +26,7 @@ P8 mutation hint ingestion               ARCHITECT_ACCEPTED
 P9 trusted hint transport                ARCHITECT_ACCEPTED
 P10 hybrid runtime                       ARCHITECT_ACCEPTED
 P11 production hybrid runtime hardening  ARCHITECT_ACCEPTED
+P12 deployment soak + reference consumer  ARCHITECT PLAN ACTIVE
 ```
 
 P10 implementation PR #96 merged at `f655f04`; closeout PR #97 merged at
@@ -41,7 +42,15 @@ The governing P11 plan is:
 
 P11 hardening is complete and ARCHITECT_ACCEPTED.
 
-The next bounded step is deployment soak planning/validation of the current accepted runtime.
+The current bounded step is **P12 Deployment Soak with Reference Consumer**.
+
+Canonical plan:
+
+`docs/architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md`
+
+Reference consumer baseline:
+
+`nathanxiangang-web/indexcore-reference-web@3fea8a83a8c3faa78e713de71a110b9757c07bc1`
 
 The incremental runtime remains **default disabled**.
 
@@ -70,7 +79,7 @@ P11 implementation PR #100 is Architect-accepted and merged as `ec980a5`; Issue 
 
 P11 exit decision: `AUTHORIZE_DEPLOYMENT_SOAK`.
 
-No deployment-soak implementation has started yet. The Architect must define its bounded scope before any new execution work begins.
+P12 architecture is being defined. Implementation remains unauthorized until the P12 planning PR is Architect-accepted and the paired IndexCore / Reference Web execution Issues are opened.
 
 After plan merge, the Architect opens one bounded execution Issue. Worker must:
 
@@ -101,6 +110,6 @@ A future Architect session should verify remote `main`, then read:
 3. `ARCHITECTURE-INVARIANTS.md`;
 4. this file;
 5. the current authorized Issue/PR;
-6. the P11 result/closeout while deployment soak is the next authorized step.
+6. the P12 deployment-soak plan while P12 is active.
 
 Chat history is cache; Git is project memory.
