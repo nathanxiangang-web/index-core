@@ -175,10 +175,13 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 	workerCtx, cancelWorker := context.WithCancel(ctx)
 	defer cancelWorker()
 
+	// H3: service readiness represents the whole serve process, not merely that
+	// the worker goroutine was launched. It is set true only after every startup
+	// step below succeeds, and flipped false at the start of every shutdown/fatal
+	// path before long actor joins.
 	var ready atomic.Bool
 	workerDone := make(chan error, 1)
 	go func() {
-		ready.Store(true)
 		workerDone <- runWorker(workerCtx)
 	}()
 
@@ -205,6 +208,7 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 	// deferred writer-lock release can run (G3-R2.4). Any bound Query listener is
 	// closed first so the Query-before-Hint guarantee is preserved.
 	failStartup := func(queryLn net.Listener, err error) error {
+		ready.Store(false)
 		if queryLn != nil {
 			_ = queryLn.Close()
 		}
@@ -270,6 +274,14 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 		close(errCh)
 	}()
 
+	// Startup is fully initialized: writer ownership, recovery, worker/runtime
+	// actors, and both listeners are up. Only now is the process advertised ready.
+	ready.Store(true)
+	logger.Info("serve_ready",
+		"http_addr", cfg.HTTPAddr,
+		"incremental_runtime", cfg.IncrementalRuntimeEnabled,
+		"hint", cfg.HintEnabled())
+
 	// stopHint drains the Hint transport before the writer lock can be released.
 	// This is the hard P9 writer-safety gate: even if the graceful timeout
 	// expires, keep waiting for in-flight hint handlers.
@@ -285,6 +297,8 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 
 	select {
 	case err := <-errCh:
+		// H3: stop advertising readiness before waiting on long actor joins.
+		ready.Store(false)
 		stopHint()
 		stopIncremental()
 		cancelWorker()
@@ -296,6 +310,7 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 	case herr := <-hintDone:
 		// An enabled Hint server exiting unexpectedly is fatal: never degrade
 		// silently to a serve without hint ingestion.
+		ready.Store(false)
 		stopHint()
 		stopIncremental()
 		cancelWorker()
@@ -312,6 +327,7 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 		// joined again here (its result channel was just consumed). If the parent
 		// context is shutting down this is a normal stop; otherwise the enabled
 		// runtime died and serve must fail closed with no silent degraded mode.
+		ready.Store(false)
 		stopHint()
 		cancelRuntime()
 		cancelWorker()
@@ -331,6 +347,7 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 		// P10 shutdown order: drain Hint handlers, then the P10 runtime, then the
 		// existing worker, then the read-only Query server. The deferred
 		// writer-lock release runs only after all of this has returned.
+		ready.Store(false)
 		stopHint()
 		stopIncremental()
 		cancelWorker()

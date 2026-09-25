@@ -50,16 +50,18 @@ func (f *fakeRuntime) Run(ctx context.Context) error {
 		default:
 		}
 	}
-	if f.runErr != nil {
-		return f.runErr
-	}
 	if f.block != nil {
 		select {
 		case <-f.block:
 		case <-ctx.Done():
+			return nil
 		}
-	} else {
+	} else if f.runErr == nil {
+		// No injected failure: run until cancellation.
 		<-ctx.Done()
+	}
+	if f.runErr != nil {
+		return f.runErr
 	}
 	if f.exitDelay > 0 {
 		time.Sleep(f.exitDelay)

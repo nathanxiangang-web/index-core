@@ -368,11 +368,11 @@ Post-MVP Incremental P7: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P8: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P9: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P10: COMPLETE / ARCHITECT_ACCEPTED
-Post-MVP Incremental P11: ARCHITECT PLAN ACTIVE
+Post-MVP Incremental P11: PRODUCTION HYBRID RUNTIME HARDENING — ACTIVE / IN IMPLEMENTATION
 Incremental runtime default-on: NOT AUTHORIZED
 Gate 5: NOT AUTHORIZED
-Active Worker task: none until P11 plan merges and Architect opens the execution Issue
+Active Worker task: P11 hardening implementation (Issue #99; branch hardening/incremental-p11-production-runtime)
 ```
 
-Next action is the separately authorized P11 incremental-runtime hardening plan.
+Next action is the Architect's review of the P11 hardening PR; the Worker does not merge it.
 Gate 5 remains unauthorized; no successor-product implementation is authorized.
