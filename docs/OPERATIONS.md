@@ -1,6 +1,6 @@
 # IndexCore Operations
 
-Current mode: **Stable Alpha Foundation / Maintenance**.
+Current mode: **Stable Alpha Foundation / Incremental Hardening**.
 
 IndexCore is a single Go runtime backed by PostgreSQL 18. The public application-facing surface is read-only HTTP.
 
