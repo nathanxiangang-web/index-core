@@ -2,190 +2,109 @@
 
 ## Current state
 
-**Gate 4 — Reference Consumer Integration — CLOSED**
-
 Architecture / acceptance owner: **ChatGPT Architect**
 
-Execution owner: **Codex Executor / Worker only for the Architect-authorized P9 trusted-hint-transport issue**
+Execution owner: **Codex Executor / Worker only for the current Architect-authorized Issue**
 
-Status:
+Current main baseline before this planning branch:
 
-**P0 TARGETED SCOPED REFRESH — ARCHITECT_ACCEPTED / P1 HOT-SCOPE POLLING FEASIBILITY — ARCHITECT_ACCEPTED / P2 DIRTY-SCOPE STATE DESIGN — ARCHITECT_ACCEPTED / P3 STATE PERSISTENCE — ARCHITECT_ACCEPTED / P4 ONE-SHOT DIRTY EXECUTOR — ARCHITECT_ACCEPTED / P5 BOUNDED EXECUTOR LOOP — ARCHITECT_ACCEPTED / P6 SCHEDULER ORCHESTRATION — ARCHITECT_ACCEPTED / P7 MANUAL INCREMENTAL COMMAND — ARCHITECT_ACCEPTED / P8 MUTATION HINT INGESTION — ARCHITECT_ACCEPTED / P9 TRUSTED HINT TRANSPORT — AUTHORIZED AFTER PLAN MERGE / PRODUCTION SCHEDULER NOT AUTHORIZED**
+`eddf95d232b261bac24f019621d1e3285ffb3c8b`
 
-Current architecture planning:
-
-- Issue #57 — incremental architecture umbrella (OPEN)
-- Issue #59 — Change Discovery capability research (COMPLETE)
-- Issue #62 — P0 Targeted Scoped Refresh Prototype (**COMPLETE / ARCHITECT_ACCEPTED**)
-- PR #64 — P0 implementation + real 115 Open evidence (**MERGED** at `a4b6ec83e637c25f26585f56c3fb906410fa4b9a`)
-- Blueprint: `docs/architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md`
-- P0 plan: `docs/architecture/INCREMENTAL-P0-SCOPED-REFRESH-PROTOTYPE.md`
-- P1 plan: `docs/architecture/INCREMENTAL-P1-HOT-SCOPE-POLLING-PROTOTYPE.md`
-- Issue #66 — P1 Adaptive Hot-Scope Polling Feasibility (**COMPLETE / ARCHITECT_ACCEPTED**)
-- PR #67 — P1 implementation + real 115 Open cadence evidence (**MERGED** at `41c4a26de85532a1d43da073e4256b7befb39d36`)
-- P2 plan: `docs/architecture/INCREMENTAL-P2-DIRTY-SCOPE-STATE-DESIGN.md`
-- Issue #69 / PR #70 — P2 durable state design (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `e1f9c734e30502a133e5e7df8f54b2d1e3e1338a`)
-- P3 plan: `docs/architecture/INCREMENTAL-P3-STATE-PERSISTENCE-PROTOTYPE.md`
-- Issue #72 / PR #73 — P3 state persistence (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `c7c7091412a92c66e35d4d70f65a326ddc82a132`)
-- P4 plan: `docs/architecture/INCREMENTAL-P4-ONE-SHOT-DIRTY-EXECUTOR-PROTOTYPE.md`
-- Issue #75 / PR #76 — P4 one-shot dirty executor (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `10668d6203ad86cad3eee074df19a1ee62dea7f7`)
-- P5 plan: `docs/architecture/INCREMENTAL-P5-BOUNDED-EXECUTOR-LOOP-PROTOTYPE.md`
-- Issue #79 / PR #80 — P5 bounded executor loop (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `88e3e8ffa9c791f0ae6b04529cf82a65a6431d1e`)
-- P6 plan: `docs/architecture/INCREMENTAL-P6-SCHEDULER-ORCHESTRATION-PROTOTYPE.md`
-- Issue #82 / PR #83 — P6 scheduler orchestration (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `3aa02bb9f6cf9c6de52ac5fb88310d17c735af12`)
-- P7 plan: `docs/architecture/INCREMENTAL-P7-MANUAL-INCREMENTAL-COMMAND-PROTOTYPE.md`
-- Issue #85 / PR #86 — P7 manual incremental command (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `8ae9b01c6a8d2c4b8797077b280e795f71dc712b`)
-- P8 plan: `docs/architecture/INCREMENTAL-P8-MUTATION-HINT-PROTOTYPE.md`
-- Issue #88 / PR #89 — P8 Mutation Hint ingestion (**COMPLETE / ARCHITECT_ACCEPTED**, merged at `ef93ed94072314213d1ef0f64005ba7c0d3c4859`)
-- P9 plan: `docs/architecture/INCREMENTAL-P9-TRUSTED-HINT-TRANSPORT-PROTOTYPE.md`
-- Accepted D0 report: `docs/research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md`
-
-Research and P0–P8 are complete. The next bounded step is **P9 Trusted Hint Transport Prototype**: add a separate, default-disabled, loopback-only authenticated Hint HTTP listener inside the existing `indexcore serve` process and writer-lock boundary. It may call the accepted P8 ingress only; the existing Query `/v1` listener remains read-only and unchanged. Production scheduling/cadence/continuous execution remains **NOT AUTHORIZED**.
-
-Accepted Gate-4 merge commits:
-
-- IndexCore verification fixture PR #53:
-  `9bc98fb7759f16d5c6b772cf4442dea133e2012b`
-- Reference Web PR #2:
-  `8f7062216dc9924f64d9ae0367e504c279704857`
-- IndexCore authoritative findings PR #52:
-  `9d23b24f0ed715fce6128c031da99f6e111257ed`
-
-Authoritative Gate-4 report:
-
-`docs/gate4/GATE4-REFERENCE-CONSUMER-REPORT.md`
-
-Final executable evidence:
-
-`PASS=52 FAIL=0`
-
-`INDEXCORE_FROZEN_CONTRACT_CHANGES: NONE`
-
-## Current usage documentation
-
-For running or integrating the accepted IndexCore Alpha, use:
-
-- `README.md`
-- `docs/README.md`
-- `docs/QUICKSTART.md`
-- `docs/CLI.md`
-- `docs/HTTP-API.md`
-- `docs/COLLECTORS.md`
-- `docs/INTEGRATION.md`
-- `docs/OPERATIONS.md`
-
-Core development for the accepted Alpha scope is complete. Operational maintenance,
-bug fixes, security hardening, and separately Architect-approved IndexCore changes
-may continue without turning deferred product features into Kernel responsibilities.
-
-## Gate 4 conclusion
-
-The public read-only `/v1` Query Contract is sufficient for a clean new
-server-side Consumer.
-
-The accepted Reference Web proves:
-
-- Q1–Q9 consumption without direct Store access;
-- hierarchy and generation-bound pagination;
-- explicit path ambiguity;
-- active and removed views;
-- per-root Journal semantics;
-- stale-cursor handling;
-- retained DEPRECATED/DELETED audit navigation;
-- IndexCore unavailable/restart behavior;
-- zero PostgreSQL / IndexCore-internal / provider / CloudSite coupling.
-
-The Reference Web remains a disposable validation artifact. It is not the formal
-successor product.
-
-CloudSite 1.0 remains **Legacy / Frozen Product**.
-
-## IndexCore Post-MVP Incremental planning
-
-This is a separate IndexCore infrastructure extension and does **not** consume or authorize Gate 5.
-
-Capability discovery and P0–P8 are complete. The current task is **P9 trusted hint transport prototype**.
-
-Compare:
+Current incremental state:
 
 ```text
-Mutation Hint
-Native Delta / Provider Cursor
-Scoped Refresh through OpenList/AList
-Adaptive Polling
-Hybrid
-Full Scan fallback
+D0 change-discovery research             ARCHITECT_ACCEPTED
+P0 scoped refresh                        ARCHITECT_ACCEPTED
+P1 hot-scope polling feasibility         ARCHITECT_ACCEPTED
+P2 durable scope-state design            ARCHITECT_ACCEPTED
+P3 state persistence                     ARCHITECT_ACCEPTED
+P4 one-shot dirty executor               ARCHITECT_ACCEPTED
+P5 bounded executor loop                 ARCHITECT_ACCEPTED
+P6 scheduler orchestration               ARCHITECT_ACCEPTED
+P7 manual incremental command            ARCHITECT_ACCEPTED
+P8 mutation hint ingestion               ARCHITECT_ACCEPTED
+P9 trusted hint transport                ARCHITECT_ACCEPTED
+P10 hybrid runtime                       ARCHITECT_ACCEPTED
+P11 production hybrid runtime hardening  ARCHITECT PLAN ACTIVE
 ```
 
-Primary question:
+P10 implementation PR #96 merged at `f655f04`; closeout PR #97 merged at
+`eddf95d`. P10 exit decision is:
 
-> Can IndexCore discover real cloud-drive changes materially earlier than normal
-> AList/OpenList cache refresh, with small controlled provider requests, without
-> rebuilding mature provider drivers?
+`AUTHORIZE_PRODUCTION_HYBRID_RUNTIME_HARDENING`.
 
-The accepted D0 report establishes the evidence baseline for 115/OpenList/AList/Xiaoya/rclone, request amplification, cache behavior, rate-limit/account risk, large-directory behavior, and remaining live-test UNKNOWNs.
+The governing P11 plan is:
 
-The Architect accepted P0 scoped refresh, P1 bounded hot-scope polling feasibility, P2 durable state design, P3 persistence, P4 one-shot execution, P5 bounded draining, P6 finite scheduler orchestration, P7 the one-shot manual command, and P8 trusted in-process Mutation Hint ingestion. P8 exit decision is **AUTHORIZE_TRUSTED_HINT_TRANSPORT_DESIGN**.
+`docs/architecture/INCREMENTAL-P11-PRODUCTION-HYBRID-RUNTIME-HARDENING.md`
 
-P9 may add only a separate loopback-only authenticated Hint listener inside the existing `serve` process after writer-lock acquisition. It may hold only the narrow P8 Ingester dependency. It must not add write capability to the existing Query `httpapi`, must not create a second writer process, and must not execute dirty work automatically.
+## Current bounded objective
 
-## Next product blueprint phase
+P11 is a **hardening phase, not a feature phase**.
 
-**Gate 5 — Future Product Architecture**
+It may only:
 
-Current status:
+- correct P10 burst/idle cooldown semantics without weakening the four-cycle cap;
+- fail closed if startup stale-IN_FLIGHT recovery makes no progress;
+- make existing `/readyz` reflect startup/shutdown/fatal draining correctly;
+- improve structured `slog` observability without adding a metrics/public API;
+- add GitHub Actions PostgreSQL 18 CI and targeted race evidence;
+- synchronize current operator/project-memory docs.
 
-**NOT AUTHORIZED**
+P11 keeps the incremental runtime **default disabled**.
 
-The next action belongs to the Architect, not the Worker.
-
-Before any new repository/product implementation begins, Gate 5 planning must
-define at least:
-
-- formal successor-product responsibility boundary;
-- Web/UI scope;
-- auth / user / admin ownership;
-- search / catalog responsibility;
-- share / favorite / history / playback responsibility;
-- preview / download / 302 behavior;
-- IndexCore client boundary and deployment topology;
-- data ownership outside IndexCore;
-- migration/cutover policy, if any;
-- explicit relationship to CloudSite Legacy/Frozen.
-
-## Not authorized yet
+## Still not authorized
 
 Do not begin:
 
-- a formal CloudSite successor;
-- CloudSite migration;
-- auth/user/admin;
-- search/catalog;
-- favorites/history/playback;
-- share subsystem;
-- preview/player/Office;
-- download gateway / 302 product behavior;
-- 115 downloader;
-- AI;
-- CMS;
-- direct IndexCore write APIs;
-- direct browser-to-IndexCore public exposure;
-- changes to frozen Gate 1B/1C semantics;
-- Scanner Resume / multi-daemon HA unless separately planned.
-- native delta implementation unless a future provider capability review explicitly authorizes it;
-- production adaptive polling / scheduler or continuous dirty executor;
-- trusted Hint transport behavior outside the bounded P9 loopback-only prototype;
-- any network-reachable/public Mutation Hint transport until separately authorized.
+- incremental runtime default-on;
+- native delta/provider cursor;
+- network-reachable/public Mutation Hint transport;
+- second writer / multi-daemon HA;
+- parallel P6 cycles;
+- automatic INTERNAL retry;
+- automatic BLOCKED/SUSPENDED repair;
+- destructive delta/removal;
+- migration/schema expansion;
+- direct 115 integration;
+- formal successor product / Gate 5;
+- auth/user/admin/search/catalog/preview/download/AI product work.
+
+`FROZEN_CONTRACT_CHANGES: NONE`
+
+## Execution protocol
+
+Until the P11 planning PR is Architect-accepted and merged, no P11 implementation
+is authorized.
+
+After plan merge, the Architect opens one bounded execution Issue. Worker must:
+
+1. branch from current `main`;
+2. implement only the Issue/plan scope;
+3. add required tests and result report;
+4. submit one PR;
+5. **do not merge**;
+6. wait for Architect review.
+
+## Current project boundary
+
+Gate 1–4 remain CLOSED / ARCHITECT_ACCEPTED.
+
+Gate 5 remains **NOT AUTHORIZED**.
+
+CloudSite 1.0 remains Legacy / Frozen and is not the active IndexCore validation
+target.
+
+The public IndexCore Query contract remains read-only Q1–Q9.
 
 ## Recovery rule
 
-If a future session asks to “continue”, do **not** start implementation from chat history alone.
+A future Architect session should verify remote `main`, then read:
 
-First read:
+1. `PROJECT-CONTEXT.md`;
+2. `PROJECT-STATE.md`;
+3. `ARCHITECTURE-INVARIANTS.md`;
+4. this file;
+5. the current authorized Issue/PR;
+6. the P11 plan while P11 is active.
 
-- `PROJECT-STATE.md`;
-- this file;
-- `docs/gate4/GATE4-REFERENCE-CONSUMER-REPORT.md`;
-- the blueprint Gate-5 section.
-
-Then follow the active Architect-authorized phase. For incremental work, P9 is the separate loopback-only trusted Hint transport prototype; for product work, Gate 5 still requires a separate architecture plan.
+Chat history is cache; Git is project memory.

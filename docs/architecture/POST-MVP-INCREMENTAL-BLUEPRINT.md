@@ -1,6 +1,6 @@
 # Post-MVP Incremental Ingestion Blueprint
 
-> Status: **D0 COMPLETE / P0 ACCEPTED / P1 ACCEPTED / P2 ACCEPTED / P3 ACCEPTED / P4 ACCEPTED / P5 ACCEPTED / P6 ACCEPTED / P7 ACCEPTED / P8 ACCEPTED / P9 TRUSTED HINT TRANSPORT AUTHORIZED / PRODUCTION SCHEDULER NOT AUTHORIZED**
+> Status: **D0 COMPLETE / P0–P10 ARCHITECT_ACCEPTED / P11 PRODUCTION HYBRID RUNTIME HARDENING PLAN ACTIVE / GATE 5 NOT AUTHORIZED**
 >
 > Architecture tracking: #57
 >
@@ -1207,5 +1207,35 @@ P10 integrates the already accepted P6 finite orchestration into the existing
 - automatic retry promotion only for TRANSIENT_PROVIDER / THROTTLED;
 - bounded backlog continuation and anti-spin cooldown;
 - no second writer, no Query write expansion, no native delta, and no Gate 5.
+
+`FROZEN_CONTRACT_CHANGES: NONE`.
+
+
+## 34. P11 production hybrid runtime hardening
+
+P10 Hybrid Runtime is ARCHITECT_ACCEPTED (PR #96 merge `f655f04`; closeout
+PR #97 merge `eddf95d`).
+
+P10 exit decision:
+
+`AUTHORIZE_PRODUCTION_HYBRID_RUNTIME_HARDENING`.
+
+P11 is governed by:
+
+`docs/architecture/INCREMENTAL-P11-PRODUCTION-HYBRID-RUNTIME-HARDENING.md`
+
+P11 is not a new discovery/execution feature. It hardens the accepted P10
+same-process/same-writer runtime by:
+
+- making burst/cooldown semantics exact across real idle periods;
+- failing closed on startup recovery non-progress;
+- aligning existing `/readyz` with startup/shutdown/fatal drain lifecycle;
+- strengthening structured operational logs;
+- establishing PostgreSQL 18 GitHub CI and targeted race evidence;
+- synchronizing current repository memory and operator docs.
+
+The runtime remains default disabled. P11 does not authorize native delta/provider
+cursor, network-reachable Hint transport, second writer, destructive removal,
+migration, default-on behavior, or Gate 5.
 
 `FROZEN_CONTRACT_CHANGES: NONE`.

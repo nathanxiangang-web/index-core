@@ -4,7 +4,7 @@
 
 IndexCore collects resource observations from external sources, evaluates identity/completeness/safety, maintains one trustworthy Canonical Inventory, appends a canonical Change Journal, and exposes the result through a small read-only HTTP Query API.
 
-> **Status:** Core development is complete for the accepted Alpha scope. Gate 1–4 are closed. The project is now a **Stable Alpha Foundation / Maintenance** component. Gate 5 (future product architecture) is not authorized.
+> **Status:** Core development is complete for the accepted Alpha scope. Gate 1–4 are closed. P0–P10 incremental work is Architect-accepted; P11 production hybrid-runtime hardening is the active bounded phase. The project is a **Stable Alpha Foundation / Incremental Hardening** component. Gate 5 (future product architecture) is not authorized.
 
 IndexCore is **not CloudSite 2**, not a search engine, not a user system, and not a downloader. Product concerns belong in consumers.
 
@@ -47,7 +47,9 @@ Key rule: **one canonical resource truth**. Collectors acquire facts; consumers 
 - single-writer runtime ownership;
 - read-only Q1–Q9 HTTP API;
 - 20k real-PostgreSQL scale validation;
-- independent Reference Web integration validation.
+- independent Reference Web integration validation;
+- trusted loopback Mutation Hint ingestion;
+- optional same-process/same-writer hybrid incremental runtime (default disabled).
 
 ## Quick start
 
@@ -101,11 +103,16 @@ Collector documentation: [docs/COLLECTORS.md](docs/COLLECTORS.md)
 ./bin/indexcore incremental run
 ```
 
-One-shot/manual only: it calls the accepted P6 orchestration exactly once under
-the same single-writer advisory lock as `serve` (an active `serve` writer makes
-it fail closed) and prints one JSON result to stdout. Bounds are 5 due-watch
-attempts / 5 execute items / 60s wall time; there is no scheduler, ticker,
-daemon, or background mode. See [docs/CLI.md](docs/CLI.md).
+`incremental run` itself is a one-shot/manual diagnostic path: it calls the
+accepted P6 orchestration exactly once under the same single-writer advisory lock
+as `serve` (an active `serve` writer makes it fail closed) and prints one JSON
+result to stdout.
+
+Separately, `serve` can host the accepted P10 hybrid incremental runtime when
+`INDEXCORE_INCREMENTAL_RUNTIME_ENABLED=true`. That runtime is default disabled,
+serialized, bounded, and uses the same writer lock; it does not create a second
+daemon/writer. See [docs/CLI.md](docs/CLI.md) and
+[docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## Read the API
 

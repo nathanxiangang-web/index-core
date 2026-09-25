@@ -1,6 +1,6 @@
 # IndexCore Operations
 
-Current mode: **Stable Alpha Foundation / Maintenance**.
+Current mode: **Stable Alpha Foundation / Incremental Hardening**.
 
 IndexCore is a single Go runtime backed by PostgreSQL 18. The public application-facing surface is read-only HTTP.
 
@@ -40,7 +40,7 @@ IndexCore
 
 See [.env.example](../.env.example).
 
-## Hybrid incremental runtime (P10 prototype)
+## Hybrid incremental runtime (P10 accepted, opt-in)
 
 Disabled by default. When `INDEXCORE_INCREMENTAL_RUNTIME_ENABLED=true`, `serve`
 hosts one serialized in-process runtime that repeatedly invokes the accepted P6
@@ -114,10 +114,15 @@ Content-Type: application/json
 - Bounded ingress: max 4 in-flight calls, 5s ingestion timeout, 4096-byte body;
   `429 busy` (with `Retry-After: 1`) when full, `503 ingest_unavailable` on
   failure. There is no internal queue, retry, or idempotency table.
-- Prototype limitation: the hint listener does **not** execute dirty work. With
-  `serve` holding the writer lock, `indexcore incremental run` cannot run
-  concurrently; stop `serve` first to execute hints manually. Continuous
-  in-process execution needs a future separately authorized scheduler phase.
+- With the P10 runtime **disabled** (the default), a 202 hint remains durable
+  pending work and can later be processed by the manual `incremental run` path
+  after `serve` releases the writer lock.
+- With `INDEXCORE_INCREMENTAL_RUNTIME_ENABLED=true`, a successful P8 merge also
+  sends a non-blocking coalesced wake to the same-process P10 runtime, which may
+  execute the durable work through P6/P5/P4/P0. The HTTP 202 still means only
+  durable Hint acceptance and never waits for provider execution.
+- Manual `indexcore incremental run` remains writer-lock-exclusive and therefore
+  cannot run concurrently with an active `serve`.
 
 ## Health
 
@@ -147,12 +152,16 @@ Read-only Query traffic remains conceptually separate from Store mutation capabi
 
 ## Shutdown / restart
 
-On SIGINT/SIGTERM:
+On SIGINT/SIGTERM with the accepted P10 runtime:
 
-1. HTTP shutdown begins;
-2. worker stops accepting new work;
-3. IndexCore waits for in-flight orchestration;
-4. the writer lock is not released while a worker is still running.
+1. the service transitions out of readiness;
+2. trusted Hint admission is closed/drained;
+3. the P10 incremental runtime is cancelled and joined;
+4. the existing Gate-3 worker is cancelled and joined;
+5. the read-only Query server is shut down;
+6. the writer lock is released only after write-capable actors are fully stopped.
+
+P11 hardening makes the readiness transition explicit during long drain windows.
 
 Durable PENDING admissions survive process restart and preserve their admission sequence.
 
