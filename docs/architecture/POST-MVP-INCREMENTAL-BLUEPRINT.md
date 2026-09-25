@@ -1180,3 +1180,32 @@ Still not authorized:
 4. exact provider/tool selected;
 5. exact safety/fallback contract;
 6. only then: Store/interface/migration/test plan.
+
+
+## 33. P10 hybrid runtime authorization
+
+P9 trusted Hint transport is ARCHITECT_ACCEPTED.
+
+Its accepted limitation is now the next architecture problem: `serve` owns the
+single-writer lock and can durably ingest Mutation Hints, while P7 manual
+incremental execution is mutually exclusive with that running writer.
+
+The Architect therefore authorizes **P10 Hybrid Runtime Prototype design and,
+after its planning PR merges, bounded implementation**.
+
+Governing plan:
+
+`docs/architecture/INCREMENTAL-P10-HYBRID-RUNTIME-PROTOTYPE.md`
+
+P10 integrates the already accepted P6 finite orchestration into the existing
+`serve` writer process with:
+
+- one serialized wake-driven runtime loop;
+- durable-state-first Hint wakeups;
+- bounded scheduler checks;
+- startup stale-IN_FLIGHT recovery under exclusive writer ownership;
+- automatic retry promotion only for TRANSIENT_PROVIDER / THROTTLED;
+- bounded backlog continuation and anti-spin cooldown;
+- no second writer, no Query write expansion, no native delta, and no Gate 5.
+
+`FROZEN_CONTRACT_CHANGES: NONE`.
