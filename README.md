@@ -4,7 +4,7 @@
 
 IndexCore collects resource observations from external sources, evaluates identity/completeness/safety, maintains one trustworthy Canonical Inventory, appends a canonical Change Journal, and exposes the result through a small read-only HTTP Query API.
 
-> **Status:** Core development is complete for the accepted Alpha scope. Gate 1–4 are closed. The project is now a **Stable Alpha Foundation / Maintenance** component. Gate 5 (future product architecture) is not authorized.
+> **Status:** Core development is complete for the accepted Alpha scope. Gate 1–4 are closed. P0–P10 incremental work is Architect-accepted; P11 production hybrid-runtime hardening is the active bounded phase. The project is a **Stable Alpha Foundation / Incremental Hardening** component. Gate 5 (future product architecture) is not authorized.
 
 IndexCore is **not CloudSite 2**, not a search engine, not a user system, and not a downloader. Product concerns belong in consumers.
 
