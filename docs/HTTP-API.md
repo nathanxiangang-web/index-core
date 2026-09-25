@@ -4,11 +4,12 @@ IndexCore exposes a deliberately small **read-only** HTTP surface.
 
 There are no canonical mutation endpoints. Root administration and scans are CLI/runtime responsibilities.
 
-> P9 prototype note: the trusted hint transport is a **separate, loopback-only,
+> The trusted Hint transport is a **separate, loopback-only,
 > bearer-authenticated listener** (`POST /internal/v1/mutation-hints`), not part
-> of this public read-only `/v1` API. It is disabled by default and never exposes
-> Query Q1–Q9. See [OPERATIONS.md](OPERATIONS.md) and
-> [incremental/P9-TRUSTED-HINT-TRANSPORT-RESULT.md](incremental/P9-TRUSTED-HINT-TRANSPORT-RESULT.md).
+> of the application-facing read-only `/v1` API. It is disabled by default.
+> Normal applications and Reference Web consumers must not call it. See
+> [ARCHITECTURE.md](ARCHITECTURE.md), [INTEGRATION.md](INTEGRATION.md), and
+> [OPERATIONS.md](OPERATIONS.md).
 
 Default address:
 
@@ -17,6 +18,39 @@ http://127.0.0.1:8080
 ```
 
 Current Alpha has no built-in authentication. Keep this interface private/server-side.
+
+## Interface separation
+
+IndexCore deliberately separates three interfaces:
+
+| Plane | Interface | Caller |
+| --- | --- | --- |
+| Query | `GET /v1/**`, `/healthz`, `/readyz` | application server / BFF / Reference Web |
+| Administration | `indexcore root/scan/migrate/doctor/incremental` CLI | operator/runtime |
+| Trusted Hint | `POST /internal/v1/mutation-hints` on a separate loopback listener | trusted same-host integration only |
+
+Do not turn the Query API into a write API and do not give a browser access to
+the Hint listener.
+
+## Endpoint summary
+
+| Query | Method/path | Purpose |
+| --- | --- | --- |
+| Health | `GET /healthz` | process liveness |
+| Readiness | `GET /readyz` | DB/schema/runtime readiness |
+| Q1 | `GET /v1/roots/{root_id}` | one root |
+| Q2 | `GET /v1/roots` | list roots |
+| Q3 | `GET /v1/resources/{resource_id}` | one canonical resource |
+| Q4 | `GET /v1/roots/{root_id}/resources` | hierarchy children |
+| Q5 | `GET /v1/roots/{root_id}/resolve` | resolve canonical path |
+| Q6 | `GET /v1/roots/{root_id}/active` | whole-root PRESENT listing |
+| Q7 | `GET /v1/roots/{root_id}/removed` | removed/tombstone listing |
+| Q8 | `GET /v1/roots/{root_id}/journal` | per-root canonical Journal |
+| Q9 | `GET /v1/roots/{root_id}/status` | root generation/status |
+
+For application integration, call these from the application server side, not
+directly from public browser JavaScript.
+
 
 ## Health
 
@@ -350,3 +384,100 @@ It demonstrates:
 - unavailable/restart behavior.
 
 For integration rules, also read [INTEGRATION.md](INTEGRATION.md).
+
+
+# Trusted internal Hint transport
+
+This transport is operationally separate from the Query API.
+
+Enable it only on an exact loopback literal:
+
+```bash
+export INDEXCORE_HINT_ADDR='127.0.0.1:8090'
+export INDEXCORE_HINT_TOKEN='replace-with-at-least-32-random-bytes'
+```
+
+Request:
+
+```http
+POST /internal/v1/mutation-hints
+Authorization: Bearer <INDEXCORE_HINT_TOKEN>
+Content-Type: application/json
+```
+
+Body:
+
+```json
+{
+  "root_id": "11111111-1111-4111-8111-111111111111",
+  "scope_key": "/",
+  "reason": "POSSIBLE_CHANGE"
+}
+```
+
+Scope-key rules:
+
+- `/` is the root scope;
+- non-root scopes are root-absolute, for example `/downloads`;
+- no trailing slash on non-root scopes;
+- no empty, `.`, or `..` components;
+- no backslash separators.
+
+The Hint transport validates scope syntax. During P0 execution, a non-root scoped
+refresh must also resolve to exactly one PRESENT canonical directory; otherwise
+the work fails closed as an invalid scope.
+
+Allowed `reason` values are:
+
+- empty string;
+- `POSSIBLE_CHANGE`;
+- `DELETE_HINT`;
+- `MOVE_UNCERTAIN`;
+- `METADATA_UNCERTAIN`.
+
+Example with curl from the same host/process namespace:
+
+```bash
+curl -i \
+  -H "Authorization: Bearer $INDEXCORE_HINT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"root_id":"'"$ROOT_ID"'","scope_key":"/","reason":"POSSIBLE_CHANGE"}' \
+  "http://127.0.0.1:8090/internal/v1/mutation-hints"
+```
+
+Successful response:
+
+```json
+{
+  "status": "accepted",
+  "root_id": "11111111-1111-4111-8111-111111111111",
+  "scope_key": "/",
+  "work_state": "PENDING",
+  "signal_seq": 7
+}
+```
+
+The exact `work_state` depends on the durable work row after the P8 merge.
+
+`202 Accepted` means only that the Hint was durably accepted. It does not wait
+for P6/P4/provider execution and does not guarantee the new Canonical state is
+already visible.
+
+The transport is bounded:
+
+- request body: max 4096 bytes;
+- authenticated ingestion concurrency: max 4;
+- ingestion timeout: 5 seconds;
+- no internal unbounded queue;
+- `429 busy` includes `Retry-After: 1`;
+- `503 ingest_unavailable` hides internal Store/provider details;
+- invalid auth returns `401 unauthorized`;
+- unsupported media type returns `415 unsupported_media_type`.
+
+When the accepted hybrid runtime is enabled, a successful durable Hint merge
+also issues a non-blocking coalesced runtime wake. The HTTP response still keeps
+its durable-acceptance-only meaning.
+
+Ordinary products, browsers, and `indexcore-reference-web` must not call this
+transport.
+

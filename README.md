@@ -4,11 +4,13 @@
 
 IndexCore collects resource observations from external sources, evaluates identity/completeness/safety, maintains one trustworthy Canonical Inventory, appends a canonical Change Journal, and exposes the result through a small read-only HTTP Query API.
 
-> **Status:** Core development is complete for the accepted Alpha scope. Gate 1–4 are closed. P0–P10 incremental work is Architect-accepted; P11 production hybrid-runtime hardening is the active bounded phase. The project is a **Stable Alpha Foundation / Incremental Hardening** component. Gate 5 (future product architecture) is not authorized.
+> **Status:** Core development is complete for the accepted Alpha scope. Gate 1–4 and incremental P0–P11 are Architect-accepted. P12 **Deployment Soak with Reference Consumer** is the current validation phase. The project is a **Stable Alpha Foundation / Incremental Hardening** component. The hybrid incremental runtime remains default disabled. Gate 5 (future product architecture) is not authorized.
 
 IndexCore is **not CloudSite 2**, not a search engine, not a user system, and not a downloader. Product concerns belong in consumers.
 
 ## Architecture at a glance
+
+Current architecture guide: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ```text
 rclone / AList / OpenList / future Collector
@@ -108,7 +110,7 @@ accepted P6 orchestration exactly once under the same single-writer advisory loc
 as `serve` (an active `serve` writer makes it fail closed) and prints one JSON
 result to stdout.
 
-Separately, `serve` can host the accepted P10 hybrid incremental runtime when
+Separately, `serve` can host the accepted P10/P11 hybrid incremental runtime when
 `INDEXCORE_INCREMENTAL_RUNTIME_ENABLED=true`. That runtime is default disabled,
 serialized, bounded, and uses the same writer lock; it does not create a second
 daemon/writer. See [docs/CLI.md](docs/CLI.md) and
@@ -126,6 +128,16 @@ curl -s "http://127.0.0.1:8080/v1/roots/$ROOT_ID/journal?after_seq=0&limit=100"
 The HTTP surface is read-only. Root administration and scans are CLI/runtime operations.
 
 API reference: [docs/HTTP-API.md](docs/HTTP-API.md)
+
+Interface separation:
+
+```text
+Query /v1        -> application server / BFF / Reference Web (read-only)
+CLI              -> operator / administration
+internal Hint    -> trusted same-host integration only
+```
+
+The Hint listener is not an application API.
 
 ## Supported Collectors
 
@@ -155,7 +167,11 @@ Integration guide: [docs/INTEGRATION.md](docs/INTEGRATION.md)
 
 Reference consumer: `nathanxiangang-web/indexcore-reference-web`
 
-Gate 4 proved that a brand-new Web can consume Q1–Q9 through server-side HTTP with zero direct PostgreSQL, IndexCore Go, provider, or CloudSite coupling.
+Gate 4 proved that a brand-new Web can consume Q1–Q9 through server-side HTTP with
+zero direct PostgreSQL, IndexCore Go, provider, or CloudSite coupling. P12 now
+reuses the same repository as a continuous read-only consumer during deployment
+soak validation; it does not gain Hint, DB, provider-control, or canonical-write
+capabilities.
 
 ## Documentation
 
@@ -163,6 +179,7 @@ Start at [docs/README.md](docs/README.md).
 
 Current usage docs:
 
+- [Current Architecture](docs/ARCHITECTURE.md)
 - [Quick Start](docs/QUICKSTART.md)
 - [CLI Reference](docs/CLI.md)
 - [HTTP API](docs/HTTP-API.md)
