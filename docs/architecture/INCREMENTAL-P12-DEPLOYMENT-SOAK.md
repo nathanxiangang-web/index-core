@@ -167,7 +167,7 @@ Initial accepted baselines:
 IndexCore:
 90567935e47716980da5b810883c533ac196bbd8
 
-Reference Web:
+Reference Test Web:
 3fea8a83a8c3faa78e713de71a110b9757c07bc1
 ```
 
@@ -391,7 +391,7 @@ At least once:
 6. allow P11 startup stale-IN_FLIGHT recovery to run before listener exposure;
 7. verify the durable work becomes executable again;
 8. send/retain the necessary durable signal and prove eventual visibility through
-   Reference Web.
+   Reference Test Web.
 
 Prove:
 
@@ -472,7 +472,7 @@ Required:
 - all roots remain ACTIVE unless a scenario explicitly says otherwise;
 - writer lock released after final shutdown.
 
-Direct Store inspection remains in IndexCore verification code. The Reference Web
+Direct Store inspection remains in IndexCore verification code. The Reference Test Web
 must not do it.
 
 ## 17. Logs and evidence
@@ -480,7 +480,7 @@ must not do it.
 Capture:
 
 - exact IndexCore commit;
-- exact Reference Web commit;
+- exact Reference Test Web commit;
 - exact PostgreSQL version;
 - runtime/hint/wake configuration without secrets;
 - soak start/end/duration;
@@ -507,7 +507,7 @@ P12 passes only if:
 1. mandatory soak runs >=30 minutes;
 2. >=100 normal durable mutation->Reference Test Web visibility confirmations pass;
 3. both roots and multiple scopes are exercised;
-4. Reference Web remains read-only and zero-internal-coupling;
+4. Reference Test Web remains read-only and zero-internal-coupling;
 5. Hint remains exact-loopback-only;
 6. one timer/hint runtime remains one serialized P6 executor;
 7. Hint burst does not bypass runtime safety bounds;
@@ -643,7 +643,7 @@ A P12 pass does not itself make the runtime default-on.
 
 ```text
 P0–P11 incremental phases                      ARCHITECT_ACCEPTED
-P12 deployment soak with reference consumer   AUTHORIZED AFTER PLAN MERGE
+P12 deployment soak with Reference Test Web   AUTHORIZED AFTER PLAN MERGE
 
 incremental runtime default-on                 NOT AUTHORIZED
 native delta/provider cursor                   NOT AUTHORIZED
