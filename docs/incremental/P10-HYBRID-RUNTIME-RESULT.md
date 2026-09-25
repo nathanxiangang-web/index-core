@@ -110,20 +110,34 @@ retries the item inline.
 
 ## 7. Backlog burst bound
 
-Self-continuation is triggered by more due retries than the promotion budget,
-`MoreDueWatches`, executor `MAX_ITEMS`, or a Hint wake during a cycle. A hard cap
-allows at most 4 consecutive cycles / 20 selected P4 attempts per burst, then a
-mandatory 1s cooldown. Hint floods cannot bypass the cooldown and wakes coalesce
-while it is active.
+The burst counter applies to **every immediately-contiguous cycle regardless of
+wake source** (timer / Hint / self-backlog); it is reset only by the mandatory
+cooldown, so no wake source can start the fifth consecutive cycle. A hard cap
+allows at most 4 consecutive cycles / 20 selected P4 attempts per burst, then a 1s
+cooldown. Hint floods cannot bypass the cooldown and wakes coalesce while it is
+active. Self-continuation is additionally triggered by more due retries than the
+promotion budget, `MoreDueWatches`, or executor `MAX_ITEMS`.
 
 ## 8. Error policy
 
 Normal bounded stops (`NO_ELIGIBLE_WORK`, `MAX_ITEMS`, `MAX_WALL_TIME`, durable
-item-local failures, stale CAS) are not fatal. P10 returns a fatal error to
-`serve` on P6 materialization/systemic executor error, retry-maintenance Store
-error, startup recovery error, interrupted-root recovery error, or unexpected
-event-loop termination. There is no top-level retry loop and no silent degraded
-mode.
+item-local failures, stale retry-promotion CAS) are not fatal.
+
+**`STALE_SELECTION` is bounded non-fatal contention, not a system failure.** Under
+the hybrid runtime a trusted Hint (or due-watch mutation) can legitimately change
+a DirtyScopeWork version between P4 selection and claim, so P5 reports
+`STALE_SELECTION` and P6 returns a non-nil executor error. P10 detects
+`Executor.StopReason == STALE_SELECTION` (or `errors.Is(err,
+incrementalexec.ErrStaleSelection)`), never reselects inside the same P6 cycle, and
+schedules a later wake — still subject to the burst/cooldown cap. This carve-out
+deliberately does **not** cover `INTERNAL_ITEM_FAILURE`, `SYSTEMIC_ERROR`,
+`MATERIALIZATION_ERROR`, or unexpected executor/store failures, which remain fatal
+and bring `serve` down.
+
+P10 returns a fatal error to `serve` on P6 materialization/systemic executor
+error, retry-maintenance Store error, startup recovery error, interrupted-root
+recovery error, or unexpected event-loop termination. There is no top-level retry
+loop and no silent degraded mode.
 
 ## 9. Lifecycle / writer lock
 
@@ -135,26 +149,35 @@ through one helper that stops both the runtime and the worker before returning.
 
 ## 10. Tests and evidence
 
-P10 tests = **26** (real PostgreSQL where noted):
+P10 tests = **33** (real PostgreSQL where noted):
 
 - **Store selectors** (2, real PG): `TestP10ListDueRetryWorkAllowlist` (only
   TRANSIENT/THROTTLED, ACTIVE root, due, bounded, empty before barrier);
   `TestP10ListInflightRoots` (deterministic sorted, bounded).
 - **Config** (4): disabled default; wake-interval bounds `1s..60s` (ignored while
   disabled); flags; env load + invalid env failure.
-- **Runtime** (11): config validation; startup recovery drains bounded batches and
+- **Runtime** (15): config validation; startup recovery drains bounded batches and
   surfaces errors; retry promotion bounded to 5 with `limit = promotions+1`; stale
   CAS skipped without blocking later candidates; maintenance Store error fatal;
   systemic cycle error fatal; interrupted-claim exact-root recovery once; recovery
-  error fatal; never-overlapping cycles; burst cap/cooldown.
-- **App lifecycle** (9, real PG): disabled regression (no runtime constructed);
-  startup recovery requeues `IN_FLIGHT` before Hint exposure; startup recovery
-  error fails closed with no Hint exposure; runtime fatal is fatal to serve;
-  startup failure joins runtime + worker before the lock is acquirable; shutdown
-  with an in-flight (non-cancellable) P10 execution holds the writer lock until it
-  stops; Hint wake drives a cycle before a 60s timer; timer wakes make zero
-  provider requests for a not-yet-due watch; manual P7 `incremental run` fails with
-  `ErrWriterLockHeld` under a P10-enabled serve.
+  error fatal; never-overlapping cycles; burst cap/cooldown; `STALE_SELECTION`
+  non-fatal while INTERNAL/systemic stays fatal; external-wake burst cap; cooldown
+  resume.
+- **App lifecycle + integration** (12, real PG + httptest): disabled regression
+  (no runtime constructed); startup recovery requeues `IN_FLIGHT` before Hint
+  exposure; startup recovery error fails closed with no Hint exposure; runtime
+  fatal is fatal to serve; startup failure joins runtime + worker before the lock
+  is acquirable; shutdown with an in-flight (non-cancellable) P10 execution holds
+  the writer lock until it stops; Hint wake drives a cycle before a 60s timer;
+  timer wakes make zero provider requests for a not-yet-due watch; manual P7
+  `incremental run` fails with `ErrWriterLockHeld`;
+  **`TestP10IntegrationDueWatchExecutes`** (due watch -> P10 wake -> real
+  P6/P5/P4/P0 -> provider refresh + Canonical + VERIFIED);
+  **`TestP10IntegrationHintPostExecutesBeforeLongTimer`** (HTTP 202 returns while
+  the provider refresh is still blocked, then the Hint wake drives real execution
+  before the 60s timer); **`TestP10IntegrationRetryPromotionExecutes`** (due
+  TRANSIENT_PROVIDER RETRY_WAIT -> RetryReady -> same-pass real execution ->
+  VERIFIED, while INTERNAL stays RETRY_WAIT).
 
 Test provenance: there is no GitHub Actions / check run attached, so the
 full-suite result below is submitter-provided local evidence on real PostgreSQL 18,
@@ -202,5 +225,38 @@ capability in `hintapi.Deps`, no automatic `INTERNAL` retry, no automatic
 `RepairBlocked`/`ResumeSuspended`, no non-loopback/network Hint transport, no
 native delta/provider cursor, no direct 115 integration, no destructive removal,
 no migration, and no Gate 5. Provider I/O still occurs only through P4 -> P0.
+
+`FROZEN_CONTRACT_CHANGES: NONE`
+## 14. Round 1 rework (Issue #95 review)
+
+Two production blockers + one mandatory-evidence blocker from the P10 Round 1
+review were fixed inside the authorized P10 surface
+(`internal/runtime/incrementalruntime`, P10 tests, and this report); the accepted
+topology/config/lifecycle boundary is unchanged.
+
+1. **`STALE_SELECTION` is bounded non-fatal contention, not fatal.** The runtime
+   now inspects the returned P6 result before treating an executor error as fatal:
+   `Executor.StopReason == STALE_SELECTION` (or
+   `errors.Is(err, incrementalexec.ErrStaleSelection)`) is handled as expected
+   hybrid Hint/P4 optimistic-CAS contention — non-fatal, no same-P6-cycle
+   reselect, and a later bounded wake. `INTERNAL_ITEM_FAILURE`, `SYSTEMIC_ERROR`,
+   `MATERIALIZATION_ERROR`, and unexpected executor/store failures remain fatal.
+   Proved by `TestP10StaleSelectionIsNonFatal` and
+   `TestP10SystemicErrorStillFatal`.
+2. **Burst accounting covers every wake source.** The cycle counter is no longer
+   reset when a cycle reports `backlog=false`; it is reset only by the mandatory
+   cooldown. Timer, Hint, and self-backlog wakes therefore cannot start the fifth
+   consecutive cycle before the 1s cooldown. Proved by
+   `TestP10BurstCapAppliesToExternalWakes` (a cycle that both outlives the 1s timer
+   and injects an external wake) and `TestP10BurstCooldownThenContinue`.
+3. **Mandatory P10 end-to-end evidence added** (real PostgreSQL + httptest
+   provider): `TestP10IntegrationDueWatchExecutes`,
+   `TestP10IntegrationHintPostExecutesBeforeLongTimer`, and
+   `TestP10IntegrationRetryPromotionExecutes` (all in
+   `internal/runtime/app/serve_runtime_integration_test.go`), proving the new
+   daemon wiring really reaches the accepted P6/P5/P4/P0 path.
+
+P10 tests = 33 (selector 2 / config 4 / runtime 15 / app lifecycle + integration
+12).
 
 `FROZEN_CONTRACT_CHANGES: NONE`

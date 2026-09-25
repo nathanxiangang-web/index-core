@@ -3,7 +3,9 @@ package incrementalruntime_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -421,6 +423,95 @@ func TestP10NeverOverlapsCycles(t *testing.T) {
 
 	if got := cycle.maxConcurrent(); got > 1 {
 		t.Fatalf("max concurrent P6 cycles = %d, want <= 1", got)
+	}
+}
+
+// TestP10StaleSelectionIsNonFatal proves the hybrid Hint/P4 optimistic-CAS race
+// never terminates the runtime/serve.
+func TestP10StaleSelectionIsNonFatal(t *testing.T) {
+	store := &fakeStore{}
+	cycle := &fakeCycle{
+		results: []incrementalorch.Result{{
+			StopReason: incrementalorch.StopExecutorError,
+			Executor:   incrementalexec.CycleResult{StopReason: incrementalexec.StopStaleSelection},
+		}},
+		errs: []error{fmt.Errorf("executor cycle: %w", incrementalexec.ErrStaleSelection)},
+	}
+	rt := p10New(t, store, cycle, p10Cfg())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
+	defer cancel()
+	if err := rt.Run(ctx); err != nil {
+		t.Fatalf("STALE_SELECTION must be bounded non-fatal contention, got %v", err)
+	}
+	if cycle.callCount() == 0 {
+		t.Fatal("cycle must have run")
+	}
+}
+
+// TestP10SystemicErrorStillFatal proves the stale-selection carve-out does not
+// loosen INTERNAL/systemic handling.
+func TestP10SystemicErrorStillFatal(t *testing.T) {
+	store := &fakeStore{}
+	cycle := &fakeCycle{
+		results: []incrementalorch.Result{{
+			StopReason: incrementalorch.StopExecutorError,
+			Executor:   incrementalexec.CycleResult{StopReason: incrementalexec.StopInternalItemFailure},
+		}},
+		errs: []error{fmt.Errorf("executor cycle: %w", incrementalexec.ErrScannerFailed)},
+	}
+	rt := p10New(t, store, cycle, p10Cfg())
+	if err := rt.Run(context.Background()); err == nil {
+		t.Fatal("INTERNAL/systemic P6 error must remain fatal")
+	}
+}
+
+// TestP10BurstCapAppliesToExternalWakes proves a continuous external wake stream
+// (Hint/timer) cannot start more than MaxConsecutiveCyclesPerBurst immediately
+// contiguous cycles, even though every cycle reports backlog=false.
+func TestP10BurstCapAppliesToExternalWakes(t *testing.T) {
+	store := &fakeStore{}
+	var calls int32
+	var rt *incrementalruntime.Runtime
+	cycle := &fakeCycle{fn: func(int, context.Context) (incrementalorch.Result, error) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			// Outlive the 1s timer so a timer tick becomes ready during the cycle.
+			time.Sleep(1100 * time.Millisecond)
+		}
+		// Simulate a Hint arriving while the cycle runs.
+		rt.Wake()
+		return incrementalorch.Result{StopReason: incrementalorch.StopCompleted}, nil
+	}}
+	rt = p10New(t, store, cycle, p10Cfg())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	_ = rt.Run(ctx)
+
+	if got := int(atomic.LoadInt32(&calls)); got > incrementalruntime.MaxConsecutiveCyclesPerBurst {
+		t.Fatalf("external wakes bypassed the burst cap: %d contiguous cycles before cooldown", got)
+	}
+}
+
+// TestP10BurstCooldownThenContinue proves cycles resume after the burst cooldown.
+func TestP10BurstCooldownThenContinue(t *testing.T) {
+	store := &fakeStore{}
+	var calls int32
+	var rt *incrementalruntime.Runtime
+	cycle := &fakeCycle{fn: func(int, context.Context) (incrementalorch.Result, error) {
+		atomic.AddInt32(&calls, 1)
+		rt.Wake()
+		return incrementalorch.Result{StopReason: incrementalorch.StopCompleted}, nil
+	}}
+	rt = p10New(t, store, cycle, p10Cfg())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3500*time.Millisecond)
+	defer cancel()
+	_ = rt.Run(ctx)
+
+	if got := int(atomic.LoadInt32(&calls)); got <= incrementalruntime.MaxConsecutiveCyclesPerBurst {
+		t.Fatalf("cycles must resume after the burst cooldown, got %d", got)
 	}
 }
 

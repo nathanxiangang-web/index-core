@@ -138,12 +138,14 @@ func (r *Runtime) Run(ctx context.Context) error {
 			r.logger.Error("incremental_runtime_fatal", "error_class", "runtime")
 			return err
 		}
+		// Burst accounting applies to EVERY immediately-contiguous cycle regardless
+		// of wake source (timer / Hint / self-backlog). It is reset only by the
+		// mandatory cooldown above, so no wake source can start the fifth
+		// consecutive cycle before the cooldown.
 		consecutive++
 		if backlog {
 			r.logger.Info("incremental_backlog_continue")
 			r.Wake()
-		} else {
-			consecutive = 0
 		}
 	}
 }
@@ -165,6 +167,16 @@ func (r *Runtime) runOnce(ctx context.Context) (bool, error) {
 	if err != nil {
 		if ctx.Err() != nil {
 			return false, nil // parent shutdown, not a runtime failure
+		}
+		if isBoundedContention(res, err) {
+			// Normal optimistic-CAS contention: a concurrent Hint or due-watch
+			// mutation changed the selected Work version between P4 selection and
+			// claim. This is expected under the hybrid runtime, not a system
+			// failure. Never reselect inside the same P6 cycle; schedule a later
+			// wake (still bounded by the burst cap) instead of terminating serve.
+			r.logger.Info("incremental_cycle_finished",
+				"stop_reason", string(res.Executor.StopReason), "contention", true)
+			return true, nil
 		}
 		return false, err // systemic/fatal: the runtime must fail closed
 	}
@@ -213,6 +225,18 @@ func (r *Runtime) promoteDueRetries(ctx context.Context, now time.Time) (int, bo
 		promoted++
 	}
 	return promoted, more, nil
+}
+
+// isBoundedContention reports whether a returned P6 error is the expected
+// optimistic-CAS contention of hybrid Hint/P4 racing (STALE_SELECTION), which is
+// non-fatal and handled by a later bounded wake. INTERNAL_ITEM_FAILURE,
+// SYSTEMIC_ERROR, MATERIALIZATION_ERROR and unexpected executor/store failures
+// are deliberately NOT treated as bounded contention here.
+func isBoundedContention(res incrementalorch.Result, err error) bool {
+	if res.Executor.StopReason == incrementalexec.StopStaleSelection {
+		return true
+	}
+	return errors.Is(err, incrementalexec.ErrStaleSelection)
 }
 
 // resetTimer re-arms a single-source timer without letting ticks accumulate.
