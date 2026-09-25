@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os/signal"
 	"sync/atomic"
@@ -19,10 +20,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nathanxiangang-web/index-core/internal/runtime/config"
+	"github.com/nathanxiangang-web/index-core/internal/runtime/incrementalhint"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/scan"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/version"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/worker"
 	"github.com/nathanxiangang-web/index-core/internal/store/postgres"
+	"github.com/nathanxiangang-web/index-core/internal/transport/hintapi"
 	"github.com/nathanxiangang-web/index-core/internal/transport/httpapi"
 )
 
@@ -106,6 +109,22 @@ func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	})
 }
 
+// hintTransport is the app-layer seam for the P9 Hint server. *hintapi.Server
+// satisfies it; tests may inject a controlled transport.
+type hintTransport interface {
+	Serve(net.Listener) error
+	Shutdown(context.Context) error
+	WaitHandlers()
+}
+
+var newHintTransport = func(deps hintapi.Deps) (hintTransport, error) {
+	return hintapi.New(deps)
+}
+
+var newHintIngester = func(st *postgres.Store) (hintapi.Ingester, error) {
+	return incrementalhint.New(st, nil)
+}
+
 // runServe owns the single-writer lock, the worker, and the HTTP transport. On
 // shutdown it joins the worker goroutine BEFORE the writer lock is released, so
 // the lock is never released while worker orchestration is still running
@@ -128,6 +147,9 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 	}()
 	logger.Info("acquired single-writer ownership")
 
+	// P9 startup order: writer lock -> worker -> Query listener -> optional Hint
+	// listener. The Query address binds BEFORE the Hint listener is created, so a
+	// Query bind failure can never leave a reachable Hint listener.
 	workerCtx, cancelWorker := context.WithCancel(ctx)
 	defer cancelWorker()
 
@@ -138,6 +160,19 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 		workerDone <- runWorker(workerCtx)
 	}()
 
+	// failStartup funnels every post-worker-start startup error through one
+	// cleanup: cancel the worker and WAIT for it to actually stop before the
+	// deferred writer-lock release can run (G3-R2.4). Any bound Query listener is
+	// closed first so the Query-before-Hint guarantee is preserved.
+	failStartup := func(queryLn net.Listener, err error) error {
+		if queryLn != nil {
+			_ = queryLn.Close()
+		}
+		cancelWorker()
+		joinWorker(workerDone, cfg.ShutdownTimeout, logger)
+		return err
+	}
+
 	srv := httpapi.New(httpapi.Deps{
 		Query:     postgres.NewQueryReader(pool),
 		Readiness: postgres.NewReadiness(pool),
@@ -146,26 +181,89 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 		Ready:     ready.Load,
 	})
 	srv.Addr = cfg.HTTPAddr
+	queryLn, err := net.Listen("tcp", cfg.HTTPAddr)
+	if err != nil {
+		return failStartup(nil, fmt.Errorf("bind http listener %s: %w", cfg.HTTPAddr, err))
+	}
+
+	// The optional trusted Hint listener is created only AFTER writer ownership
+	// and AFTER the Query listener bound. It is loopback-only,
+	// bearer-authenticated, and holds only the narrow P8 ingester.
+	var hintSrv hintTransport
+	var hintDone chan error
+	if cfg.HintEnabled() {
+		ingester, ierr := newHintIngester(st)
+		if ierr != nil {
+			return failStartup(queryLn, fmt.Errorf("construct hint ingester: %w", ierr))
+		}
+		hintSrv, ierr = newHintTransport(hintapi.Deps{Ingester: ingester, Token: cfg.HintToken, Logger: logger})
+		if ierr != nil {
+			return failStartup(queryLn, fmt.Errorf("construct hint transport: %w", ierr))
+		}
+		hintLn, lerr := net.Listen("tcp", cfg.HintAddr)
+		if lerr != nil {
+			return failStartup(queryLn, fmt.Errorf("bind hint listener %s: %w", cfg.HintAddr, lerr))
+		}
+		hintDone = make(chan error, 1)
+		go func() {
+			logger.Info("hint transport listening", "addr", cfg.HintAddr)
+			if serr := hintSrv.Serve(hintLn); serr != nil && !errors.Is(serr, http.ErrServerClosed) {
+				hintDone <- serr
+			}
+			close(hintDone)
+		}()
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("http transport listening", "addr", cfg.HTTPAddr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := srv.Serve(queryLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 		close(errCh)
 	}()
 
+	// stopHint drains the Hint transport before the writer lock can be released.
+	// This is the hard P9 writer-safety gate: even if the graceful timeout
+	// expires, keep waiting for in-flight hint handlers.
+	stopHint := func() {
+		if hintSrv == nil {
+			return
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		_ = hintSrv.Shutdown(shutdownCtx)
+		cancel()
+		hintSrv.WaitHandlers()
+	}
+
 	select {
 	case err := <-errCh:
+		stopHint()
 		cancelWorker()
 		joinWorker(workerDone, cfg.ShutdownTimeout, logger)
 		if err != nil {
 			return fmt.Errorf("http server: %w", err)
 		}
 		return nil
+	case herr := <-hintDone:
+		// An enabled Hint server exiting unexpectedly is fatal: never degrade
+		// silently to a serve without hint ingestion.
+		stopHint()
+		cancelWorker()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		_ = srv.Shutdown(shutdownCtx)
+		cancel()
+		joinWorker(workerDone, cfg.ShutdownTimeout, logger)
+		if herr != nil {
+			return fmt.Errorf("hint transport: %w", herr)
+		}
+		return errors.New("hint transport stopped unexpectedly")
 	case <-ctx.Done():
 		logger.Info("shutting down", "timeout", cfg.ShutdownTimeout.String())
+		// P9 shutdown order: stop/drain Hint handlers, then the worker, then the
+		// read-only Query server. The deferred writer-lock release runs only
+		// after all of this has returned.
+		stopHint()
 		cancelWorker()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancel()

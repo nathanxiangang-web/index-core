@@ -33,6 +33,8 @@ IndexCore
 | `INDEXCORE_SHUTDOWN_TIMEOUT` | `15s` | graceful HTTP shutdown window |
 | `INDEXCORE_LOG_LEVEL` | `info` | debug/info/warn/error |
 | `INDEXCORE_LOG_FORMAT` | `text` | text/json |
+| `INDEXCORE_HINT_ADDR` | empty (disabled) | P9 hint listener, literal loopback `127.0.0.1:<port>` / `[::1]:<port>` |
+| `INDEXCORE_HINT_TOKEN` | empty | P9 hint bearer token, env-only, `>= 32` bytes when enabled |
 
 See [.env.example](../.env.example).
 
@@ -47,6 +49,37 @@ indexcore serve
 ```
 
 `serve` never auto-migrates and rejects incompatible/missing/future schema state.
+
+## Trusted hint transport (P9 prototype)
+
+The P9 hint transport lets a trusted same-host process deliver a Mutation Hint
+into the already-running `indexcore serve` writer **without** turning the public
+read-only `/v1` API into a write API and without a second writer process.
+
+```text
+POST /internal/v1/mutation-hints
+Authorization: Bearer <INDEXCORE_HINT_TOKEN>
+Content-Type: application/json
+
+{"root_id":"...","scope_key":"/downloads","reason":"POSSIBLE_CHANGE"}
+```
+
+- Disabled unless `INDEXCORE_HINT_ADDR` is set; the address must be a literal
+  loopback `127.0.0.1:<port>` or `[::1]:<port>`.
+- `INDEXCORE_HINT_TOKEN` is mandatory when enabled, env-only (there is no
+  `--hint-token` flag), and must be at least 32 bytes.
+- The listener starts only after `serve` owns the single-writer advisory lock and
+  binds a separate loopback listener; the public Query listener is unchanged.
+- `202 Accepted` means the hint was durably merged into `DirtyScopeWork` only: it
+  does **not** mean verification or Canonical mutation happened.
+- `DELETE_HINT` is provenance only and is never destructive.
+- Bounded ingress: max 4 in-flight calls, 5s ingestion timeout, 4096-byte body;
+  `429 busy` (with `Retry-After: 1`) when full, `503 ingest_unavailable` on
+  failure. There is no internal queue, retry, or idempotency table.
+- Prototype limitation: the hint listener does **not** execute dirty work. With
+  `serve` holding the writer lock, `indexcore incremental run` cannot run
+  concurrently; stop `serve` first to execute hints manually. Continuous
+  in-process execution needs a future separately authorized scheduler phase.
 
 ## Health
 
