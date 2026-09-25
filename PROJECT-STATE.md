@@ -48,7 +48,20 @@ The experimental subagent topology is retired.
 
 Operating mode: **Stable Alpha Foundation / Maintenance**
 
-**Post-MVP Incremental D0 Change Discovery — COMPLETE / ARCHITECT_ACCEPTED.** **P0 Targeted Scoped Refresh — COMPLETE / ARCHITECT_ACCEPTED** (Issue #62 / PR #64). **P1 Adaptive Hot-Scope Polling Feasibility — COMPLETE / ARCHITECT_ACCEPTED** (Issue #66 / PR #67). **P2 Dirty / Hot Scope Durable State Design — COMPLETE / ARCHITECT_ACCEPTED** (Issue #69 / PR #70). **P3 State Persistence Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #72 / PR #73). **P4 One-shot Dirty Executor Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #75 / PR #76). **P5 Bounded Executor Loop Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #79 / PR #80). **P6 Scheduler Orchestration Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #82 / PR #83). **P7 Manual Incremental Command Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #85 / PR #86). **P8 Mutation Hint Ingestion Prototype — COMPLETE / ARCHITECT_ACCEPTED** (Issue #88 / PR #89 merged at `ef93ed94072314213d1ef0f64005ba7c0d3c4859`). P8 exit decision: **AUTHORIZE_TRUSTED_HINT_TRANSPORT_DESIGN**. P9 trusted Hint transport is the next bounded step; production scheduler/cadence/continuous executor remains **NOT AUTHORIZED**.
+**Post-MVP Incremental D0 and P0–P10 are COMPLETE / ARCHITECT_ACCEPTED.**
+
+P10 Hybrid Runtime implementation was accepted in PR #96 and merged at
+`f655f0447dbc7b5be575557e28a4c2d0f705f31c`; P10 closeout PR #97 merged at
+`eddf95d232b261bac24f019621d1e3285ffb3c8b`.
+
+P10 exit decision: **AUTHORIZE_PRODUCTION_HYBRID_RUNTIME_HARDENING**.
+
+Current active architecture phase: **P11 Production Hybrid Runtime Hardening**.
+P11 is hardening only: burst/idle semantics, startup-recovery progress, readiness
+lifecycle, structured logs, PostgreSQL 18 CI/race evidence, and documentation
+synchronization. Incremental runtime remains default disabled. Native delta,
+network Hint, second writer, destructive removal, migration, and Gate 5 remain
+unauthorized.
 
 **Gate 4 — Reference Consumer Integration — CLOSED**
 
@@ -84,7 +97,10 @@ There is no active Gate-5 execution issue.
 
 Separately, IndexCore Issue #57 tracks the incremental architecture umbrella. Issue #59 completed D0 research. Issue #62 / PR #64 completed P0 scoped refresh. Issue #66 / PR #67 completed P1 bounded hot-scope polling feasibility. Issue #69 / PR #70 completed P2 durable state design. Issue #72 / PR #73 completed P3 durable PostgreSQL state persistence. Issue #75 / PR #76 completed P4 one-shot durable execution. Issue #79 / PR #80 completed P5 bounded executor draining. Issue #82 / PR #83 completed P6 bounded scheduler orchestration. Issue #85 / PR #86 completed P7 one-shot manual incremental operation. Issue #88 / PR #89 completed P8 trusted in-process Mutation Hint ingestion.
 
-The next bounded IndexCore step is P9 **Trusted Hint Transport Prototype**. P9 may add only a separate default-disabled loopback-only bearer-authenticated Hint listener inside the existing `serve` process after writer-lock acquisition, delegating one valid request to the accepted P8 ingress. The existing Query `/v1` listener remains read-only. P9 does not authorize automatic execution, a second writer process, network-reachable Hint transport, destructive behavior, or Gate 5.
+The current bounded IndexCore step is P11 **Production Hybrid Runtime Hardening**.
+It does not add a new indexing capability. It hardens the accepted P10 same-process,
+same-writer runtime and establishes independent PostgreSQL 18 CI evidence.
+Gate 5 remains separate and unauthorized.
 Post-MVP Incremental P0: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P1: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P2: COMPLETE / ARCHITECT_ACCEPTED
@@ -94,8 +110,10 @@ Post-MVP Incremental P5: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P6: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P7: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P8: COMPLETE / ARCHITECT_ACCEPTED
-Post-MVP Incremental P9: TRUSTED HINT TRANSPORT AUTHORIZED AFTER PLAN MERGE
-Production scheduler/cadence/continuous executor: NOT AUTHORIZED
+Post-MVP Incremental P9: COMPLETE / ARCHITECT_ACCEPTED
+Post-MVP Incremental P10: COMPLETE / ARCHITECT_ACCEPTED
+Post-MVP Incremental P11: PRODUCTION HYBRID RUNTIME HARDENING — ARCHITECT PLAN ACTIVE
+Incremental runtime default-on: NOT AUTHORIZED
 
 Do not start a formal successor product, auth/user system, search/catalog,
 preview/download product path, 115 integration, AI, or other deferred product
@@ -348,11 +366,13 @@ Post-MVP Incremental P5: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P6: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P7: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P8: COMPLETE / ARCHITECT_ACCEPTED
-Post-MVP Incremental P9: TRUSTED HINT TRANSPORT AUTHORIZED AFTER PLAN MERGE
-Post-MVP Incremental production scheduler/cadence/continuous executor: NOT AUTHORIZED
+Post-MVP Incremental P9: COMPLETE / ARCHITECT_ACCEPTED
+Post-MVP Incremental P10: COMPLETE / ARCHITECT_ACCEPTED
+Post-MVP Incremental P11: ARCHITECT PLAN ACTIVE
+Incremental runtime default-on: NOT AUTHORIZED
 Gate 5: NOT AUTHORIZED
-Active Worker task: none until P9 plan merges
+Active Worker task: none until P11 plan merges and Architect opens the execution Issue
 ```
 
-Next action is Architect planning for Gate 5 only. No successor-product
-implementation is authorized by this closeout.
+Next action is the separately authorized P11 incremental-runtime hardening plan.
+Gate 5 remains unauthorized; no successor-product implementation is authorized.
