@@ -56,12 +56,12 @@ P10 Hybrid Runtime implementation was accepted in PR #96 and merged at
 
 P10 exit decision: **AUTHORIZE_PRODUCTION_HYBRID_RUNTIME_HARDENING**.
 
-Current active architecture phase: **P11 Production Hybrid Runtime Hardening**.
-P11 is hardening only: burst/idle semantics, startup-recovery progress, readiness
-lifecycle, structured logs, PostgreSQL 18 CI/race evidence, and documentation
-synchronization. Incremental runtime remains default disabled. Native delta,
-network Hint, second writer, destructive removal, migration, and Gate 5 remain
-unauthorized.
+**P11 Production Hybrid Runtime Hardening — COMPLETE / ARCHITECT_ACCEPTED** (PR #100 merged at `ec980a5e00aa562cc3bd6d74c5e6f03aa46f280c`).
+P11 exit decision: **AUTHORIZE_DEPLOYMENT_SOAK**.
+
+Deployment soak is the next bounded step and has not started. Incremental runtime
+remains default disabled. Native delta, network Hint, second writer, destructive
+removal, migration, and Gate 5 remain unauthorized.
 
 **Gate 4 — Reference Consumer Integration — CLOSED**
 
@@ -97,7 +97,7 @@ There is no active Gate-5 execution issue.
 
 Separately, IndexCore Issue #57 tracks the incremental architecture umbrella. Issue #59 completed D0 research. Issue #62 / PR #64 completed P0 scoped refresh. Issue #66 / PR #67 completed P1 bounded hot-scope polling feasibility. Issue #69 / PR #70 completed P2 durable state design. Issue #72 / PR #73 completed P3 durable PostgreSQL state persistence. Issue #75 / PR #76 completed P4 one-shot durable execution. Issue #79 / PR #80 completed P5 bounded executor draining. Issue #82 / PR #83 completed P6 bounded scheduler orchestration. Issue #85 / PR #86 completed P7 one-shot manual incremental operation. Issue #88 / PR #89 completed P8 trusted in-process Mutation Hint ingestion.
 
-The current bounded IndexCore step is P11 **Production Hybrid Runtime Hardening**.
+The current bounded IndexCore next step is **Deployment Soak** following accepted P11 hardening.
 It does not add a new indexing capability. It hardens the accepted P10 same-process,
 same-writer runtime and establishes independent PostgreSQL 18 CI evidence.
 Gate 5 remains separate and unauthorized.
@@ -112,7 +112,7 @@ Post-MVP Incremental P7: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P8: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P9: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P10: COMPLETE / ARCHITECT_ACCEPTED
-Post-MVP Incremental P11: PRODUCTION HYBRID RUNTIME HARDENING — ARCHITECT PLAN ACTIVE
+Post-MVP Incremental P11: COMPLETE / ARCHITECT_ACCEPTED
 Incremental runtime default-on: NOT AUTHORIZED
 
 Do not start a formal successor product, auth/user system, search/catalog,
@@ -368,11 +368,11 @@ Post-MVP Incremental P7: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P8: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P9: COMPLETE / ARCHITECT_ACCEPTED
 Post-MVP Incremental P10: COMPLETE / ARCHITECT_ACCEPTED
-Post-MVP Incremental P11: PRODUCTION HYBRID RUNTIME HARDENING — ACTIVE / IN IMPLEMENTATION
+Post-MVP Incremental P11: COMPLETE / ARCHITECT_ACCEPTED
 Incremental runtime default-on: NOT AUTHORIZED
 Gate 5: NOT AUTHORIZED
-Active Worker task: P11 hardening implementation (Issue #99; branch hardening/incremental-p11-production-runtime)
+Active Worker task: none; deployment soak is authorized for Architect scoping only
 ```
 
-Next action is the Architect's review of the P11 hardening PR; the Worker does not merge it.
+Next action is Architect scoping for the authorized deployment-soak phase.
 Gate 5 remains unauthorized; no successor-product implementation is authorized.

@@ -1,6 +1,6 @@
 # Incremental P11 — Production Hybrid Runtime Hardening — Result
 
-> Status: **IMPLEMENTED — REAL-POSTGRESQL + RACE VERIFIED — ARCHITECT REVIEW PENDING**
+> Status: **ARCHITECT_ACCEPTED — MERGED TO MAIN `ec980a5`**
 >
 > Executing issue: #99 · Parent: #57 · Plan: `docs/architecture/INCREMENTAL-P11-PRODUCTION-HYBRID-RUNTIME-HARDENING.md`
 >
@@ -257,3 +257,46 @@ surface; the accepted H1/H2/H3 direction and the frozen boundaries are unchanged
    blocks H5.
 
 `FROZEN_CONTRACT_CHANGES: NONE`
+
+## 12. Architect closeout
+
+P11 was accepted after two Architect review rounds and merged to `main` as
+`ec980a5e00aa562cc3bd6d74c5e6f03aa46f280c`.
+
+Final independent GitHub Actions evidence on the accepted head:
+
+```text
+gofmt                                             PASS
+go vet ./...                                      PASS
+go build ./...                                    PASS
+Full PostgreSQL 18 test suite                     PASS
+Targeted race suite (incrementalruntime + app)    PASS
+```
+
+Final acceptance:
+
+```text
+true post-cycle burst semantics                    PASS
+startup recovery progress guard                    PASS
+readiness lifecycle                                PASS
+structured operational observability               PASS
+PostgreSQL 18 GitHub CI                            PASS
+targeted race evidence                             PASS
+repository/operator documentation                  PASS
+frozen contract expansion                          NONE
+
+P11 Production Hybrid Runtime Hardening            ARCHITECT_ACCEPTED
+FROZEN_CONTRACT_CHANGES                            NONE
+```
+
+P11 exit decision:
+
+```text
+AUTHORIZE_DEPLOYMENT_SOAK
+```
+
+Deployment soak is the next bounded step. It validates the current opt-in,
+default-disabled runtime under real deployment duration and operational conditions.
+This exit does **not** authorize runtime default-on, native delta/provider cursor,
+network/public Hint, second writer/multi-daemon HA, migration/schema expansion,
+destructive removal, direct 115 integration, or Gate 5.

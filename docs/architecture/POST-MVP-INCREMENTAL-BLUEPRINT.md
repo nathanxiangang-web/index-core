@@ -1,6 +1,6 @@
 # Post-MVP Incremental Ingestion Blueprint
 
-> Status: **D0 COMPLETE / P0–P10 ARCHITECT_ACCEPTED / P11 PRODUCTION HYBRID RUNTIME HARDENING PLAN ACTIVE / GATE 5 NOT AUTHORIZED**
+> Status: **D0 COMPLETE / P0–P11 ARCHITECT_ACCEPTED / DEPLOYMENT SOAK AUTHORIZED FOR NEXT SCOPING / GATE 5 NOT AUTHORIZED**
 >
 > Architecture tracking: #57
 >
@@ -1237,5 +1237,35 @@ same-process/same-writer runtime by:
 The runtime remains default disabled. P11 does not authorize native delta/provider
 cursor, network-reachable Hint transport, second writer, destructive removal,
 migration, default-on behavior, or Gate 5.
+
+`FROZEN_CONTRACT_CHANGES: NONE`.
+
+
+## 35. P11 closeout and deployment-soak exit
+
+P11 Production Hybrid Runtime Hardening is ARCHITECT_ACCEPTED.
+
+Implementation PR #100 merged as:
+
+`ec980a5e00aa562cc3bd6d74c5e6f03aa46f280c`
+
+P11 established:
+
+- exact post-cycle idle burst semantics;
+- startup stale-IN_FLIGHT progress fail-closed protection;
+- readiness that drops before long shutdown/fatal drain;
+- bounded structured runtime/retry/recovery fatal observability;
+- active PostgreSQL 18 GitHub Actions CI;
+- passing targeted race evidence;
+- synchronized current operator/project documentation.
+
+P11 exit decision:
+
+`AUTHORIZE_DEPLOYMENT_SOAK`
+
+Deployment soak is authorized as the next bounded validation phase only. Runtime
+default-on, native delta/provider cursor, network/public Hint, second writer,
+migration/schema expansion, destructive removal, direct 115 integration, and
+Gate 5 remain unauthorized.
 
 `FROZEN_CONTRACT_CHANGES: NONE`.
