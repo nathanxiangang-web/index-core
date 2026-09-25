@@ -34,18 +34,22 @@ Your application owns product behavior. IndexCore owns canonical resource truth.
 
 ---
 
-## 2. Reference implementation
+## 2. Reference test implementation
 
-The accepted external consumer is:
+The accepted validation consumer is:
 
 `nathanxiangang-web/indexcore-reference-web`
+
+It is a **test/reference Web used to validate IndexCore integration and contracts**.
+It is not a production Web, not a product frontend, and not the automatic starter
+for a future production application.
 
 Its runtime boundary is:
 
 ```text
 Browser
    ↓
-Reference Web (Next.js server)
+Reference Test Web (Next.js server)
    ↓
 server-only typed IndexCore client
    ↓
@@ -56,7 +60,7 @@ IndexCore /v1
 
 The browser never receives the private IndexCore origin.
 
-Reference Web configuration:
+Reference Test Web configuration:
 
 ```bash
 INDEXCORE_BASE_URL=http://127.0.0.1:8080
@@ -86,7 +90,7 @@ Consumers should use only the Query Plane.
 
 A normal application should **not** call the trusted Hint endpoint.
 
-The current Reference Web never calls it.
+The current Reference Test Web never calls it.
 
 ---
 
@@ -310,7 +314,7 @@ At minimum distinguish:
 | timeout/unreachable | transport failure |
 | malformed response | contract/runtime validation failure |
 
-The Reference Web intentionally keeps these distinct.
+The Reference Test Web intentionally keeps these distinct.
 
 A production product may map them to different UX, retries, or fallback behavior.
 
@@ -400,12 +404,12 @@ IndexCore unreachable
 IndexCore response malformed
 ```
 
-The accepted Reference Web remains HTTP-serving when IndexCore is temporarily
+The accepted Reference Test Web remains HTTP-serving when IndexCore is temporarily
 down and renders an explicit degraded state.
 
 It does not invent fake resource data.
 
-After IndexCore restarts, the Reference Web recovers without needing its own
+After IndexCore restarts, the Reference Test Web recovers without needing its own
 restart.
 
 This behavior is part of the current P12 deployment-soak validation.
@@ -417,7 +421,7 @@ This behavior is part of the current P12 deployment-soak validation.
 Query flow:
 
 ```text
-Reference Web / product
+Reference Test Web / product
   -> GET /v1/**
   -> read Canonical truth
 ```
@@ -441,7 +445,7 @@ For the exact Hint contract, see
 
 ---
 
-## 13. Current Reference Web verification
+## 13. Current Reference Test Web verification
 
 Gate 4 verified the separate consumer with:
 
@@ -478,6 +482,6 @@ hybrid runtime is exercised over a deployment soak.
 - [OPERATIONS.md](OPERATIONS.md) — deployment/runtime operations;
 - [QUICKSTART.md](QUICKSTART.md) — local startup.
 
-Reference implementation:
+Reference test implementation:
 
 `nathanxiangang-web/indexcore-reference-web`
