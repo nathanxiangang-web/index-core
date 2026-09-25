@@ -25,7 +25,7 @@ P7 manual incremental command            ARCHITECT_ACCEPTED
 P8 mutation hint ingestion               ARCHITECT_ACCEPTED
 P9 trusted hint transport                ARCHITECT_ACCEPTED
 P10 hybrid runtime                       ARCHITECT_ACCEPTED
-P11 production hybrid runtime hardening  ACTIVE / IN IMPLEMENTATION
+P11 production hybrid runtime hardening  ARCHITECT_ACCEPTED
 ```
 
 P10 implementation PR #96 merged at `f655f04`; closeout PR #97 merged at
@@ -39,18 +39,11 @@ The governing P11 plan is:
 
 ## Current bounded objective
 
-P11 is a **hardening phase, not a feature phase**.
+P11 hardening is complete and ARCHITECT_ACCEPTED.
 
-It may only:
+The next bounded step is deployment soak planning/validation of the current accepted runtime.
 
-- correct P10 burst/idle cooldown semantics without weakening the four-cycle cap;
-- fail closed if startup stale-IN_FLIGHT recovery makes no progress;
-- make existing `/readyz` reflect startup/shutdown/fatal draining correctly;
-- improve structured `slog` observability without adding a metrics/public API;
-- add GitHub Actions PostgreSQL 18 CI and targeted race evidence;
-- synchronize current operator/project-memory docs.
-
-P11 keeps the incremental runtime **default disabled**.
+The incremental runtime remains **default disabled**.
 
 ## Still not authorized
 
@@ -73,9 +66,11 @@ Do not begin:
 
 ## Execution protocol
 
-The P11 planning PR #98 is Architect-accepted and merged (`329210c`), and the
-bounded P11 hardening execution Issue #99 is open. Implementation proceeds only
-within that Issue/plan scope.
+P11 implementation PR #100 is Architect-accepted and merged as `ec980a5`; Issue #99 is complete.
+
+P11 exit decision: `AUTHORIZE_DEPLOYMENT_SOAK`.
+
+No deployment-soak implementation has started yet. The Architect must define its bounded scope before any new execution work begins.
 
 After plan merge, the Architect opens one bounded execution Issue. Worker must:
 
@@ -106,6 +101,6 @@ A future Architect session should verify remote `main`, then read:
 3. `ARCHITECTURE-INVARIANTS.md`;
 4. this file;
 5. the current authorized Issue/PR;
-6. the P11 plan while P11 is active.
+6. the P11 result/closeout while deployment soak is the next authorized step.
 
 Chat history is cache; Git is project memory.
