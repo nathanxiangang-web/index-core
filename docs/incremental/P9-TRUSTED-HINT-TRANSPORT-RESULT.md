@@ -1,6 +1,6 @@
 # Incremental P9 — Trusted Hint Transport Prototype — Result
 
-> Status: **IMPLEMENTED — REAL-POSTGRESQL VERIFIED — ARCHITECT REVIEW PENDING**
+> Status: **ARCHITECT_ACCEPTED — MERGED TO MAIN `a561f25`**
 >
 > Executing issue: #91 · Parent: #57 · Plan: `docs/architecture/INCREMENTAL-P9-TRUSTED-HINT-TRANSPORT-PROTOTYPE.md`
 >
@@ -262,3 +262,43 @@ worker stops, and that the lock becomes acquirable only afterwards.
 P9 tests = 26 (config 5 / hintapi 9 + boundary 1 + timeout 1 / app 9 / httpapi 1).
 
 `FROZEN_CONTRACT_CHANGES: NONE`
+
+## 14. Architect closeout
+
+P9 was accepted after three review rounds and merged to `main` as
+`a561f259e703ade75c08aa2c13cabdbfc64176ab`.
+
+Final acceptance:
+
+```text
+handler lifetime / shutdown admission                 PASS
+Query-before-Hint startup boundary                    PASS
+exact literal loopback                                PASS
+constant-time arbitrary-length auth                   PASS
+startup-error worker join before writer-lock release  PASS
+Query / Hint capability separation                    PASS
+no automatic execution / no second writer             PASS
+frozen contract expansion                             NONE
+
+P9 trusted hint transport                             ARCHITECT_ACCEPTED
+FROZEN_CONTRACT_CHANGES                               NONE
+```
+
+Evidence provenance remains explicit: the reported full-suite `gofmt`,
+`go vet ./...`, and `go test -p 1 -count=1 ./...` results were submitter-provided
+local evidence against real PostgreSQL 18; no GitHub Actions/check run was attached
+to the P9 branch.
+
+P9 exit decision:
+
+```text
+AUTHORIZE_HYBRID_RUNTIME_DESIGN
+```
+
+This authorizes design/planning for a single coherent same-writer-process runtime
+that can consume `DirtyScopeWork` continuously while preserving the accepted
+single-writer, Query-read-only, and trusted-Hint boundaries.
+
+It does **not** authorize implementation, production cadence, a second writer,
+network-reachable Hint transport, native delta/provider cursor, destructive
+removal, or Gate 5.
