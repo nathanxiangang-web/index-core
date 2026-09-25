@@ -21,11 +21,11 @@ This directory contains two kinds of documentation:
 | Review current P12 deployment-soak plan | [architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md](architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md) |
 | Read accepted incremental capability research | [research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md](research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md) |
 
-A complete consumer example is available in the separate repository:
+A complete **test/reference consumer** is available in the separate repository:
 
 `nathanxiangang-web/indexcore-reference-web`
 
-It was used for the Gate 4 end-to-end validation and consumes IndexCore only through server-side HTTP `/v1`.
+It is a validation Web, not a production frontend. It was used for Gate 4 end-to-end validation and consumes IndexCore only through server-side HTTP `/v1`.
 
 ## Project status
 
@@ -39,9 +39,9 @@ Gate 4  Independent consumer validation       CLOSED
 
 Current mode: Stable Alpha Foundation / Incremental Hardening
 IndexCore extension: D0 + P0–P11 ARCHITECT_ACCEPTED
-Active validation phase: P12 Deployment Soak with Reference Consumer
+Active validation phase: P12 Deployment Soak with Reference Test Web
 Incremental runtime: accepted opt-in same-process/same-writer runtime, default disabled
-Reference consumer: nathanxiangang-web/indexcore-reference-web
+Reference test consumer: nathanxiangang-web/indexcore-reference-web
 Next product blueprint phase: Gate 5 (NOT AUTHORIZED)
 ```
 

@@ -6,7 +6,7 @@
 >
 > Incremental P0–P11: **ARCHITECT_ACCEPTED**
 >
-> P12 Deployment Soak with Reference Consumer: **PLAN ACCEPTED / EXECUTION AUTHORIZED**
+> P12 Deployment Soak with Reference Test Web: **PLAN ACCEPTED / EXECUTION AUTHORIZED**
 >
 > Incremental runtime repository default: **disabled**
 >
@@ -407,19 +407,21 @@ Do not:
 - decode opaque cursors as product state;
 - flatten all IndexCore errors into a generic failure.
 
-The reference implementation is:
+The reference validation implementation is:
 
 `nathanxiangang-web/indexcore-reference-web`
 
+This repository is a **test/reference Web for IndexCore validation**. It is not a
+production Web, not a product frontend, and not a future production UI template.
 It is intentionally separate from IndexCore and demonstrates the boundary above.
 
 See [INTEGRATION.md](INTEGRATION.md).
 
 ---
 
-## 10. Reference Web call flow
+## 10. Reference Test Web call flow
 
-The accepted Reference Web shape is:
+The accepted Reference Test Web shape is:
 
 ```text
 Browser
@@ -546,7 +548,7 @@ It combines:
 - provider transient/retry validation;
 - graceful restart;
 - controlled crash/startup recovery;
-- continuous read-only observations through `indexcore-reference-web`.
+- continuous read-only observations through the `indexcore-reference-web` test Web.
 
 P12 does not change the production architecture.
 
@@ -584,7 +586,7 @@ For current usage:
 - [QUICKSTART.md](QUICKSTART.md) — start and run IndexCore;
 - [CLI.md](CLI.md) — administration/runtime commands;
 - [HTTP-API.md](HTTP-API.md) — exact Query + internal Hint HTTP contracts;
-- [INTEGRATION.md](INTEGRATION.md) — application/Reference Web integration;
+- [INTEGRATION.md](INTEGRATION.md) — application integration and Reference Test Web example;
 - [COLLECTORS.md](COLLECTORS.md) — provider configuration;
 - [OPERATIONS.md](OPERATIONS.md) — deployment/recovery/runtime operations.
 
