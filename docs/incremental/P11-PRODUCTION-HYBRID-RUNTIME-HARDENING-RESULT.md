@@ -147,18 +147,21 @@ workflow `.github/workflows/ci.yml` without `workflow` scope)
 ```
 
 Per the plan's rule to stop rather than drop evidence, the exact YAML is committed
-at `docs/ci/ci.yml` (with a header explaining the intended location) so it is
-reviewable in Git. To activate CI, an actor with a `workflow`-scoped credential
-must copy/move it to `.github/workflows/ci.yml`. No path outside the authorized
-surface was modified.
+at `docs/ci/ci.yml` (with a header explaining the intended location and the
+instruction to delete it once active) so it is reviewable in Git. **The Architect
+has stated they will move it to `.github/workflows/ci.yml` with a `workflow`-scoped
+credential to activate CI.** Once the workflow is active there, `docs/ci/ci.yml`
+must be deleted so there is only one authoritative copy. No path outside the
+authorized surface was modified.
 
 Race result locally (same commands the workflow would run): the targeted race
 suite passed on real PostgreSQL 18 for both `internal/runtime/incrementalruntime`
 and `internal/runtime/app` (no race reported).
 
-**Provenance note:** until a GitHub Actions run exists for this head (which
-requires the `workflow`-scoped push above), the local
-`gofmt`/`vet`/`test`/`build`/`race` results remain submitter-provided evidence.
+**Provenance note:** until the Architect activates `.github/workflows/ci.yml` and
+GitHub Actions runs on a PR head, the local `gofmt`/`vet`/`test`/`build`/`race`
+results remain submitter-provided evidence. H5 is therefore pending the Architect's
+workflow activation, not silently dropped.
 
 ## 7. H6 — documentation synchronization
 
@@ -210,7 +213,7 @@ go test -p 1 -count=1 ./...          all packages ok (real PostgreSQL 18)
 go test -race -count=1 ./internal/runtime/incrementalruntime ./internal/runtime/app   ok
 ```
 
-P11 tests = 13 (burst 6 deterministic + runtime hardening 4 + app readiness 3).
+P11 tests = 20 (burst 6 deterministic + runtime hardening 11 + app readiness 3).
 Existing Gate 1–4 and P0–P10 tests remain green.
 
 ## 10. Boundary statement
@@ -221,5 +224,36 @@ writer/multi-daemon HA, no parallel P6 cycles, no automatic INTERNAL retry or
 BLOCKED/SUSPENDED repair, no network Hint transport, no native delta/provider
 cursor, no direct 115, no destructive removal, no migration/schema expansion, no
 default-on runtime, and no Gate 5.
+
+`FROZEN_CONTRACT_CHANGES: NONE`
+## 11. Round 1 rework (Issue #99 review)
+
+Three blockers from the P11 Round 1 review were fixed inside the authorized P11
+surface; the accepted H1/H2/H3 direction and the frozen boundaries are unchanged.
+
+1. **Timer wake no longer schedules a phantom cycle.** `wakeWith` was split into
+   `recordWake` (merge a wake reason into the bounded bitmask only) and `wakeWith`
+   (record **and** enqueue one coalesced token). The timer branch now calls
+   `recordWake(wakeTimer)` because the timer event itself is the wake; previously
+   it enqueued a second token that produced an immediate extra cycle (one timer
+   expiry → two cycles). Invariant restored: **one timer expiry → at most one cycle
+   start**. Hint/backlog lost-wakeup protection is unchanged. Proved by
+   `TestP11TimerExpiryIsOneCycle` (startup + one 1s timer expiry = exactly 2 cycles)
+   and `TestP11RepeatedTimersRemainOneCycleEach` (startup + two expiries = exactly 3
+   cycles, `wake_reason=timer` recorded).
+2. **Startup/fatal structured observability.** `RecoverStartupInflight` now emits
+   `incremental_runtime_fatal` with `phase=startup_recovery` and a bounded
+   `error_class` (`store` / `no_progress`) before returning. Runtime fatals carry a
+   bounded phase via `runtimeFatalError`: `retry_maintenance`, `cycle`,
+   `interrupted_recovery`. The error type's `Error()` never includes the raw cause
+   (which may carry DB/provider/secret material); the cause is retained only for
+   `Unwrap`. Proved by `TestP11StartupRecoveryNonProgressFatalLog`,
+   `TestP11StartupRecoveryStoreErrorFatalLog`, `TestP11SystemicCycleFatalLogPhase`,
+   `TestP11RetryMaintenanceFatalLogPhase`,
+   `TestP11InterruptedRecoveryFatalLogPhase`, each also asserting that injected
+   `postgres://…supersecret…` material never appears in the captured logs.
+3. **H5 CI evidence** is pending the Architect's workflow activation (see §6); the
+   Worker cannot push `.github/workflows/**` with the current credential. The exact
+   YAML remains reviewable at `docs/ci/ci.yml`.
 
 `FROZEN_CONTRACT_CHANGES: NONE`

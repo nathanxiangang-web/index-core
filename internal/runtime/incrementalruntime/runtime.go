@@ -96,8 +96,17 @@ func New(store MaintenanceStore, cycle CycleRunner, cfg Config, logger *slog.Log
 // and the periodic timer is the fallback.
 func (r *Runtime) Wake() { r.wakeWith(wakeHint) }
 
-func (r *Runtime) wakeWith(reason wakeReason) {
+// recordWake merges a wake reason into the bounded coalesced bitmask WITHOUT
+// enqueuing a wake token. Use it when the wake event has already been observed
+// (e.g. a timer event consumed by the event loop) so it does not schedule a
+// phantom immediate cycle.
+func (r *Runtime) recordWake(reason wakeReason) {
 	r.wakeBits.Or(uint32(reason))
+}
+
+// wakeWith records a wake reason AND enqueues one coalesced wake token.
+func (r *Runtime) wakeWith(reason wakeReason) {
+	r.recordWake(reason)
 	select {
 	case r.wake <- struct{}{}:
 	default:
@@ -141,6 +150,7 @@ func (r *Runtime) RecoverStartupInflight(ctx context.Context) (int, error) {
 	for {
 		roots, err := r.store.ListInflightRoots(ctx, InflightRecoveryBatch)
 		if err != nil {
+			r.logFatal("startup_recovery", "store")
 			return total, err
 		}
 		if len(roots) == 0 {
@@ -154,6 +164,7 @@ func (r *Runtime) RecoverStartupInflight(ctx context.Context) (int, error) {
 		for _, rootID := range roots {
 			n, err := r.store.RecoverStaleInflight(ctx, rootID, r.now())
 			if err != nil {
+				r.logFatal("startup_recovery", "store")
 				return total, err
 			}
 			if n > 0 {
@@ -163,6 +174,7 @@ func (r *Runtime) RecoverStartupInflight(ctx context.Context) (int, error) {
 		}
 		total += batchRecovered
 		if !progressed {
+			r.logFatal("startup_recovery", "no_progress")
 			return total, fmt.Errorf(
 				"incrementalruntime: startup recovery made no progress for %d inflight root(s)", len(roots))
 		}
@@ -193,7 +205,10 @@ func (r *Runtime) Run(ctx context.Context) error {
 			return nil
 		case <-r.wake:
 		case <-timer.C:
-			r.wakeWith(wakeTimer)
+			// The timer event itself is this wake. Record the reason only; sending
+			// another channel token here would schedule an extra phantom cycle
+			// (one timer expiry must produce at most one cycle start).
+			r.recordWake(wakeTimer)
 		}
 		resetTimer(timer, r.cfg.WakeInterval)
 
@@ -217,7 +232,12 @@ func (r *Runtime) Run(ctx context.Context) error {
 
 		backlog, contention, err := r.runOnce(ctx)
 		if err != nil {
-			r.logger.Error("incremental_runtime_fatal", "error_class", "runtime", "phase", "cycle")
+			var fe *runtimeFatalError
+			if errors.As(err, &fe) {
+				r.logFatal(string(fe.phase), fe.errorClass)
+			} else {
+				r.logFatal("runtime", "runtime")
+			}
 			return err
 		}
 		r.markCycleFinished(r.now())
@@ -264,7 +284,7 @@ func (r *Runtime) runOnce(ctx context.Context) (backlog bool, contention bool, e
 	now := r.now()
 	promo, err := r.promoteDueRetries(ctx, now)
 	if err != nil {
-		return false, false, err
+		return false, false, &runtimeFatalError{phase: phaseRetryMaintenance, errorClass: "store", cause: err}
 	}
 	if promo.attempted > 0 || promo.more {
 		r.logger.Info("incremental_retry_promotion",
@@ -296,7 +316,8 @@ func (r *Runtime) runOnce(ctx context.Context) (backlog bool, contention bool, e
 				"selected_items", res.Executor.SelectedItems)
 			return true, true, nil
 		}
-		return false, false, cerr // systemic/fatal: the runtime must fail closed
+		// systemic/fatal: the runtime must fail closed.
+		return false, false, &runtimeFatalError{phase: phaseCycle, errorClass: "executor", cause: cerr}
 	}
 
 	if res.Executor.InterruptedInFlight &&
@@ -304,7 +325,7 @@ func (r *Runtime) runOnce(ctx context.Context) (backlog bool, contention bool, e
 		res.Executor.Last.RootID != "" {
 		n, rerr := r.store.RecoverStaleInflight(ctx, res.Executor.Last.RootID, r.now())
 		if rerr != nil {
-			return false, false, rerr
+			return false, false, &runtimeFatalError{phase: phaseInterruptedRecovery, errorClass: "store", cause: rerr}
 		}
 		if n > 0 {
 			r.logger.Info("incremental_inflight_recovered",
@@ -364,6 +385,36 @@ func (r *Runtime) promoteDueRetries(ctx context.Context, now time.Time) (retryPr
 		out.promoted++
 	}
 	return out, nil
+}
+
+// fatalPhase is the bounded, stable runtime phase that failed, used for fatal
+// observability.
+type fatalPhase string
+
+const (
+	phaseRetryMaintenance    fatalPhase = "retry_maintenance"
+	phaseCycle               fatalPhase = "cycle"
+	phaseInterruptedRecovery fatalPhase = "interrupted_recovery"
+)
+
+// runtimeFatalError carries a bounded phase/error-class pair for structured fatal
+// logging while retaining the underlying cause for Unwrap. Its Error() never
+// includes the raw cause, which may contain provider/DB/secret material.
+type runtimeFatalError struct {
+	phase      fatalPhase
+	errorClass string
+	cause      error
+}
+
+func (e *runtimeFatalError) Error() string {
+	return "incrementalruntime: fatal phase=" + string(e.phase) + " error_class=" + e.errorClass
+}
+
+func (e *runtimeFatalError) Unwrap() error { return e.cause }
+
+// logFatal emits a bounded structured fatal event. It never logs raw error strings.
+func (r *Runtime) logFatal(phase, errorClass string) {
+	r.logger.Error("incremental_runtime_fatal", "phase", phase, "error_class", errorClass)
 }
 
 // isBoundedContention reports whether a returned P6 error is the expected
