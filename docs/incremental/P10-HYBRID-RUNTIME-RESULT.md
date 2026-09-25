@@ -1,6 +1,6 @@
 # Incremental P10 — Hybrid Runtime Prototype — Result
 
-> Status: **IMPLEMENTED — REAL-POSTGRESQL VERIFIED — ARCHITECT REVIEW PENDING**
+> Status: **ARCHITECT_ACCEPTED — MERGED TO MAIN `f655f04`**
 >
 > Executing issue: #95 · Parent: #57 · Plan: `docs/architecture/INCREMENTAL-P10-HYBRID-RUNTIME-PROTOTYPE.md`
 >
@@ -260,3 +260,48 @@ P10 tests = 33 (selector 2 / config 4 / runtime 15 / app lifecycle + integration
 12).
 
 `FROZEN_CONTRACT_CHANGES: NONE`
+
+## 15. Architect closeout
+
+P10 was accepted after two Architect review rounds and merged to `main` as
+`f655f0447dbc7b5be575557e28a4c2d0f705f31c`.
+
+Final acceptance:
+
+```text
+same-process / same-writer topology                    PASS
+single serialized P6 runtime                          PASS
+durable-state-first Hint wake                         PASS
+STALE_SELECTION bounded contention                    PASS
+retry allowlist                                       PASS
+startup / interrupted-claim recovery                  PASS
+wake-source-independent burst cap                     PASS
+systemic failure fail-closed                          PASS
+writer-lock lifecycle / joins                         PASS
+real end-to-end P10 evidence                          PASS
+frozen contract expansion                             NONE
+
+P10 Hybrid Runtime                                    ARCHITECT_ACCEPTED
+FROZEN_CONTRACT_CHANGES                               NONE
+```
+
+Evidence provenance remains explicit: the reported full-suite `gofmt`,
+`go vet ./...`, and `go test -p 1 -count=1 ./...` results were submitter-provided
+local evidence on PostgreSQL 18; no GitHub Actions/check run was attached to the
+P10 branch.
+
+Non-blocking hardening note: the prototype burst counter is intentionally
+conservative and is reset only after the mandatory cooldown, so a widely
+separated idle cycle can occasionally incur an unnecessary one-second cooldown.
+This reduces throughput/latency only; it does not weaken the P10 safety bound.
+
+P10 exit decision:
+
+```text
+AUTHORIZE_PRODUCTION_HYBRID_RUNTIME_HARDENING
+```
+
+This authorizes the next design/hardening phase around operability, lifecycle,
+observability, cadence behavior, test/CI evidence, and production defaults. It
+does **not** authorize native delta/provider cursor, network-reachable Hint
+transport, a second writer, destructive removal, migration, or Gate 5.
