@@ -1,4 +1,4 @@
-# Incremental P12 — Deployment Soak with Reference Consumer
+# Incremental P12 — Deployment Soak with Reference Test Web
 
 > Status: **ARCHITECT PLAN — IMPLEMENTATION AFTER PLAN MERGE**
 >
@@ -12,10 +12,10 @@
 >
 > P11 exit decision: **AUTHORIZE_DEPLOYMENT_SOAK**
 >
-> Reference consumer repository:
+> Reference test consumer repository:
 > `nathanxiangang-web/indexcore-reference-web`
 >
-> Reference consumer baseline:
+> Reference test consumer baseline:
 > `3fea8a83a8c3faa78e713de71a110b9757c07bc1`
 >
 > `FROZEN_CONTRACT_CHANGES: NONE`
@@ -29,8 +29,8 @@ PostgreSQL 18 CI.
 P12 asks the next question:
 
 > Can the accepted P11 runtime stay operationally correct over a sustained
-> deployment interval while a real, separately-owned consumer continuously reads
-> the frozen Q1–Q9 contract?
+> deployment interval while an independently-owned **test/reference consumer**
+> continuously reads the frozen Q1–Q9 contract?
 
 P12 is a **validation/soak phase**, not a feature phase.
 
@@ -64,9 +64,11 @@ rendered consumer state
 
 A normal full `indexcore scan` does **not** count as P12 incremental evidence.
 
-## 2. Why the Reference Web is the soak consumer
+## 2. Why the Reference Test Web is the soak consumer
 
-`indexcore-reference-web` is the accepted Gate-4 external consumer baseline.
+`indexcore-reference-web` is the accepted Gate-4 **test/reference consumer** baseline.
+It is deliberately a validation Web, not a production Web, product frontend, or
+future production UI template.
 
 It already proves:
 
@@ -85,7 +87,7 @@ It already proves:
 
 P12 reuses that boundary instead of building another fake client.
 
-The Reference Web is an **observer only**.
+The Reference Test Web is an **observer only**.
 
 It must not:
 
@@ -114,7 +116,7 @@ It must not:
 - a Docker Compose soak overlay/profile if useful;
 - result documentation.
 
-### Authorized in Reference Web
+### Authorized in Reference Test Web
 
 Only validation-support changes are expected:
 
@@ -123,10 +125,10 @@ Only validation-support changes are expected:
 - optional `package.json` script entry for the observer;
 - tests for the observer helper itself where practical.
 
-No `src/app/**` or `src/lib/indexcore/**` production behavior change is
-expected.
+No `src/app/**` or `src/lib/indexcore/**` **test-Web application/client behavior**
+change is expected.
 
-If a production consumer change appears necessary, stop for Architect review and
+If a test-Web application/client change appears necessary, stop for Architect review and
 classify whether it is:
 
 ```text
@@ -178,7 +180,7 @@ Preferred topology:
 
 ```text
                      ┌─────────────────────────┐
-                     │ Reference Web          │
+                     │ Reference Test Web     │
 Browser/observer --->│ Next.js server         │
                      │ INDEXCORE_BASE_URL     │
                      └───────────┬─────────────┘
@@ -206,7 +208,7 @@ controlled AList/OpenList-compatible fixture
 (test/verification only)
 ```
 
-Reference Web never sees the Hint endpoint or provider-control endpoint.
+Reference Test Web never sees the Hint endpoint or provider-control endpoint.
 
 ## 6. Soak runtime configuration
 
@@ -252,7 +254,7 @@ Minimum behavior:
 - no fake successful truncation.
 
 The fixture control surface is test-only and must not be reachable through
-IndexCore or Reference Web production APIs.
+IndexCore or Reference Test Web application routes.
 
 ## 8. Soak roots and scopes
 
@@ -296,9 +298,9 @@ Each normal iteration:
 2. record mutation timestamp;
 3. send authenticated Hint to the exact scope;
 4. require HTTP `202` without waiting for provider execution;
-5. poll Reference Web rendered output until the new resource/state is visible;
+5. poll Reference Test Web rendered output until the new resource/state is visible;
 6. record visibility timestamp and latency;
-7. confirm Reference Web stays operational.
+7. confirm Reference Test Web stays operational.
 
 Prefer unique additive filenames for deterministic identity.
 
@@ -329,7 +331,7 @@ Prove:
 - one P6 cycle at a time;
 - burst/cooldown semantics remain active;
 - all durable positive mutations eventually become visible;
-- Reference Web does not observe malformed contract responses.
+- Reference Test Web does not observe malformed contract responses.
 
 HTTP 429 during an intentionally saturated Hint ingress is acceptable only if
 recorded and retried by the **soak driver** after the server's Retry-After. It
@@ -350,7 +352,7 @@ Hint durable accepted
   -> later P6/P4 attempt
   -> provider recovered
   -> Canonical/Journal visibility
-  -> Reference Web sees result
+  -> Reference Test Web sees result
 ```
 
 Requirements:
@@ -363,7 +365,7 @@ Requirements:
 
 ## 12. Graceful restart scenario
 
-Keep Reference Web running.
+Keep Reference Test Web running.
 
 Trigger a normal IndexCore shutdown/restart while soak data exists.
 
@@ -371,11 +373,11 @@ Prove:
 
 - `/readyz` becomes 503 before long drain completes;
 - writer lock remains held until write-capable actors stop;
-- Reference Web remains HTTP-serving and shows its accepted degraded state while
+- Reference Test Web remains HTTP-serving and shows its accepted degraded state while
   IndexCore is unavailable;
 - no private IndexCore address leaks into rendered HTML;
-- after IndexCore returns ready, Reference Web recovers without restart;
-- subsequent Hint->incremental->Reference Web visibility still works.
+- after IndexCore returns ready, Reference Test Web recovers without restart;
+- subsequent Hint->incremental->Reference Test Web visibility still works.
 
 ## 13. Controlled crash / startup recovery scenario
 
@@ -397,14 +399,14 @@ Prove:
 - startup recovery makes progress;
 - no permanent IN_FLIGHT residue remains;
 - no inline duplicate execution before recovery boundary;
-- Reference Web degrades then recovers.
+- Reference Test Web degrades then recovers.
 
 The soak harness must make this deterministic; do not rely on killing at a random
 moment.
 
 ## 14. Continuous consumer observations
 
-The Reference Web soak observer must remain read-only.
+The Reference Test Web soak observer must remain read-only.
 
 During steady state it should sample rendered routes such as:
 
@@ -426,7 +428,7 @@ At selected mutation checkpoints also exercise:
 The observer fails on:
 
 - rendered contract-malformed state;
-- unexpected 5xx from the Reference Web;
+- unexpected 5xx from the Reference Test Web;
 - lost root/resource that should be visible;
 - leaked private IndexCore address;
 - unexpected Q1–Q9 semantic drift.
@@ -484,7 +486,7 @@ Capture:
 - soak start/end/duration;
 - successful mutation count;
 - Hint 202 / 429 / unexpected response counts;
-- mutation->Reference Web visibility latencies;
+- mutation->Reference Test Web visibility latencies;
 - retry scenario timeline;
 - graceful restart timeline;
 - crash/recovery timeline;
@@ -493,7 +495,7 @@ Capture:
 - `incremental_retry_promotion` counts;
 - `incremental_inflight_recovered` events;
 - `incremental_runtime_fatal` count;
-- Reference Web observer failures;
+- Reference Test Web observer failures;
 - Gate-4 E2E PASS/FAIL summary.
 
 Secret values must not be recorded.
@@ -503,7 +505,7 @@ Secret values must not be recorded.
 P12 passes only if:
 
 1. mandatory soak runs >=30 minutes;
-2. >=100 normal durable mutation->Reference Web visibility confirmations pass;
+2. >=100 normal durable mutation->Reference Test Web visibility confirmations pass;
 3. both roots and multiple scopes are exercised;
 4. Reference Web remains read-only and zero-internal-coupling;
 5. Hint remains exact-loopback-only;
@@ -515,7 +517,7 @@ P12 passes only if:
 11. no unexpected runtime fatal occurs;
 12. no secret/private origin leaks into consumer output/logs;
 13. final durable incremental state is drained/healthy;
-14. Gate-4 Reference Web regression remains green;
+14. Gate-4 Reference Test Web regression remains green;
 15. IndexCore PostgreSQL 18 CI remains green;
 16. no production contract or migration change is introduced.
 
@@ -553,7 +555,7 @@ migrations/**
 Test/verification imports of existing internals remain allowed inside
 `internal/runtime/e2e/**`.
 
-## 20. Expected Reference Web implementation surface
+## 20. Expected Reference Test Web implementation surface
 
 Preferred:
 
@@ -573,8 +575,8 @@ next.config.ts
 new database/ORM/provider dependency
 ```
 
-If the existing Reference Web cannot observe the required P12 state without a
-production-code change, stop and classify the gap.
+If the existing Reference Test Web cannot observe the required P12 state without a
+test-Web application/client code change, stop and classify the gap.
 
 ## 21. Cross-repository delivery model
 
@@ -590,7 +592,7 @@ Owns:
 - durable-state verification;
 - consolidated P12 result report.
 
-### Reference Web PR
+### Reference Test Web PR
 
 Owns only:
 
@@ -599,7 +601,7 @@ Owns only:
 Both PRs must remain unmerged until Architect review.
 
 The P12 result report in IndexCore is authoritative and records the exact
-Reference Web PR/head used.
+Reference Test Web PR/head used.
 
 ## 22. Result report
 
