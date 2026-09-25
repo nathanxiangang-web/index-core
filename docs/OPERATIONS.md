@@ -33,10 +33,10 @@ IndexCore
 | `INDEXCORE_SHUTDOWN_TIMEOUT` | `15s` | graceful HTTP shutdown window |
 | `INDEXCORE_LOG_LEVEL` | `info` | debug/info/warn/error |
 | `INDEXCORE_LOG_FORMAT` | `text` | text/json |
-| `INDEXCORE_HINT_ADDR` | empty (disabled) | P9 hint listener, literal loopback `127.0.0.1:<port>` / `[::1]:<port>` |
-| `INDEXCORE_HINT_TOKEN` | empty | P9 hint bearer token, env-only, `>= 32` bytes when enabled |
-| `INDEXCORE_INCREMENTAL_RUNTIME_ENABLED` | `false` | P10 in-process hybrid incremental runtime |
-| `INDEXCORE_INCREMENTAL_WAKE_INTERVAL` | `5s` | P10 scheduler wake interval, `1s..60s` when enabled |
+| `INDEXCORE_HINT_ADDR` | empty (disabled) | trusted Hint listener, literal loopback `127.0.0.1:<port>` / `[::1]:<port>` |
+| `INDEXCORE_HINT_TOKEN` | empty | trusted Hint bearer token, env-only, `>= 32` bytes when enabled |
+| `INDEXCORE_INCREMENTAL_RUNTIME_ENABLED` | `false` | accepted in-process hybrid incremental runtime |
+| `INDEXCORE_INCREMENTAL_WAKE_INTERVAL` | `5s` | hybrid runtime scheduler wake interval, `1s..60s` when enabled |
 
 See [.env.example](../.env.example).
 
@@ -93,7 +93,7 @@ indexcore serve
 
 ## Trusted Hint transport (P9 accepted)
 
-The P9 hint transport lets a trusted same-host process deliver a Mutation Hint
+The accepted Hint transport lets a trusted same-host process deliver a Mutation Hint
 into the already-running `indexcore serve` writer **without** turning the public
 read-only `/v1` API into a write API and without a second writer process.
 
