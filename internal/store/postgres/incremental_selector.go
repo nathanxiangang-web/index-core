@@ -58,3 +58,76 @@ func (s *Store) NextEligiblePendingWork(ctx context.Context, now time.Time) (sta
 	}
 	return wk, true, nil
 }
+
+// DueRetryClasses are the only error classes the P10 hybrid runtime is
+// authorized to auto-promote from RETRY_WAIT back to PENDING.
+var DueRetryClasses = []state.ErrorClass{state.ErrorTransientProvider, state.ErrorThrottled}
+
+// ListDueRetryWork selects up to limit ACTIVE-root RETRY_WAIT rows that are due
+// (pending_not_before <= now) and whose last_error_class is one of the
+// P10-approved transient provider classes. It is strictly read-only and returns
+// the current row version, so the caller must win RetryReady's CAS. CAS conflict
+// is stale operational state and must not be retried in the same pass.
+//
+// Deterministic order: pending_not_before ASC, root_id ASC, scope_key ASC.
+func (s *Store) ListDueRetryWork(ctx context.Context, now time.Time, limit int) ([]state.DirtyScopeWork, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+workColumns+`
+		  FROM index_dirty_scope_work
+		 WHERE (root_id, scope_key) IN (
+		       SELECT w.root_id, w.scope_key
+		         FROM index_dirty_scope_work w
+		         JOIN index_root r ON r.root_id = w.root_id
+		        WHERE r.lifecycle_state = 'ACTIVE'
+		          AND w.work_state = 'RETRY_WAIT'
+		          AND w.pending_not_before IS NOT NULL
+		          AND w.pending_not_before <= $1
+		          AND w.last_error_class IN ('TRANSIENT_PROVIDER','THROTTLED')
+		        ORDER BY w.pending_not_before ASC, w.root_id ASC, w.scope_key ASC
+		        LIMIT $2)
+		 ORDER BY pending_not_before ASC, root_id ASC, scope_key ASC`, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []state.DirtyScopeWork
+	for rows.Next() {
+		wk, err := scanWork(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, wk)
+	}
+	return out, rows.Err()
+}
+
+// ListInflightRoots returns up to limit deterministic root IDs that still have
+// IN_FLIGHT DirtyScopeWork rows. It is used only for writer-owned startup
+// recovery and is strictly read-only.
+func (s *Store) ListInflightRoots(ctx context.Context, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT root_id
+		  FROM index_dirty_scope_work
+		 WHERE work_state = 'IN_FLIGHT'
+		 ORDER BY root_id ASC
+		 LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}

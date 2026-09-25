@@ -21,6 +21,7 @@ import (
 
 	"github.com/nathanxiangang-web/index-core/internal/runtime/config"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/incrementalhint"
+
 	"github.com/nathanxiangang-web/index-core/internal/runtime/scan"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/version"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/worker"
@@ -147,9 +148,30 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 	}()
 	logger.Info("acquired single-writer ownership")
 
-	// P9 startup order: writer lock -> worker -> Query listener -> optional Hint
-	// listener. The Query address binds BEFORE the Hint listener is created, so a
-	// Query bind failure can never leave a reachable Hint listener.
+	// P10: construct the hybrid runtime and drain stale IN_FLIGHT roots BEFORE any
+	// listener is exposed and before the event loop starts. Recovery runs only
+	// after exclusive writer-lock ownership and performs no provider I/O.
+	var incRt incrementalRuntime
+	if cfg.IncrementalRuntimeEnabled {
+		cycle, cerr := buildIncrementalCycle(st, cfg, logger)
+		if cerr != nil {
+			return fmt.Errorf("construct incremental cycle: %w", cerr)
+		}
+		incRt, err = newIncrementalRuntime(st, cycle, runtimeConfig(cfg), logger)
+		if err != nil {
+			return fmt.Errorf("construct incremental runtime: %w", err)
+		}
+		recovered, rerr := incRt.RecoverStartupInflight(ctx)
+		if rerr != nil {
+			return fmt.Errorf("startup incremental recovery: %w", rerr)
+		}
+		if recovered > 0 {
+			logger.Info("incremental_inflight_recovered", "recovered", recovered)
+		}
+	}
+
+	// Startup order: writer lock -> startup recovery -> existing worker -> P10
+	// runtime -> Query listener -> optional P9 Hint listener (LAST).
 	workerCtx, cancelWorker := context.WithCancel(ctx)
 	defer cancelWorker()
 
@@ -160,14 +182,33 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 		workerDone <- runWorker(workerCtx)
 	}()
 
-	// failStartup funnels every post-worker-start startup error through one
-	// cleanup: cancel the worker and WAIT for it to actually stop before the
+	runtimeCtx, cancelRuntime := context.WithCancel(ctx)
+	defer cancelRuntime()
+	var runtimeDone chan error
+	if incRt != nil {
+		runtimeDone = make(chan error, 1)
+		go func() { runtimeDone <- incRt.Run(runtimeCtx) }()
+	}
+
+	// stopIncremental cancels and joins the P10 runtime; the writer lock may be
+	// released only after this returns.
+	stopIncremental := func() {
+		if incRt == nil {
+			return
+		}
+		cancelRuntime()
+		joinIncremental(runtimeDone, cfg.ShutdownTimeout, logger)
+	}
+
+	// failStartup funnels every post-start startup error through one cleanup: stop
+	// the P10 runtime and the worker and WAIT for both to actually stop before the
 	// deferred writer-lock release can run (G3-R2.4). Any bound Query listener is
 	// closed first so the Query-before-Hint guarantee is preserved.
 	failStartup := func(queryLn net.Listener, err error) error {
 		if queryLn != nil {
 			_ = queryLn.Close()
 		}
+		stopIncremental()
 		cancelWorker()
 		joinWorker(workerDone, cfg.ShutdownTimeout, logger)
 		return err
@@ -192,11 +233,17 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 	var hintSrv hintTransport
 	var hintDone chan error
 	if cfg.HintEnabled() {
-		ingester, ierr := newHintIngester(st)
+		base, ierr := newHintIngester(st)
 		if ierr != nil {
 			return failStartup(queryLn, fmt.Errorf("construct hint ingester: %w", ierr))
 		}
-		hintSrv, ierr = newHintTransport(hintapi.Deps{Ingester: ingester, Token: cfg.HintToken, Logger: logger})
+		var ing hintapi.Ingester = base
+		if incRt != nil {
+			// Wake the P10 runtime only AFTER a successful durable P8 merge. The
+			// wake is non-blocking; 202 keeps its durable-merge-only meaning.
+			ing = notifyingIngester{inner: base, wake: incRt.Wake}
+		}
+		hintSrv, ierr = newHintTransport(hintapi.Deps{Ingester: ing, Token: cfg.HintToken, Logger: logger})
 		if ierr != nil {
 			return failStartup(queryLn, fmt.Errorf("construct hint transport: %w", ierr))
 		}
@@ -239,6 +286,7 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 	select {
 	case err := <-errCh:
 		stopHint()
+		stopIncremental()
 		cancelWorker()
 		joinWorker(workerDone, cfg.ShutdownTimeout, logger)
 		if err != nil {
@@ -249,6 +297,7 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 		// An enabled Hint server exiting unexpectedly is fatal: never degrade
 		// silently to a serve without hint ingestion.
 		stopHint()
+		stopIncremental()
 		cancelWorker()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		_ = srv.Shutdown(shutdownCtx)
@@ -258,12 +307,32 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 			return fmt.Errorf("hint transport: %w", herr)
 		}
 		return errors.New("hint transport stopped unexpectedly")
+	case rerr := <-runtimeDone:
+		// The P10 runtime goroutine exited. It has already stopped, so it is not
+		// joined again here (its result channel was just consumed). If the parent
+		// context is shutting down this is a normal stop; otherwise the enabled
+		// runtime died and serve must fail closed with no silent degraded mode.
+		stopHint()
+		cancelRuntime()
+		cancelWorker()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		_ = srv.Shutdown(shutdownCtx)
+		cancel()
+		joinWorker(workerDone, cfg.ShutdownTimeout, logger)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if rerr != nil {
+			return fmt.Errorf("incremental runtime: %w", rerr)
+		}
+		return errors.New("incremental runtime stopped prematurely")
 	case <-ctx.Done():
 		logger.Info("shutting down", "timeout", cfg.ShutdownTimeout.String())
-		// P9 shutdown order: stop/drain Hint handlers, then the worker, then the
-		// read-only Query server. The deferred writer-lock release runs only
-		// after all of this has returned.
+		// P10 shutdown order: drain Hint handlers, then the P10 runtime, then the
+		// existing worker, then the read-only Query server. The deferred
+		// writer-lock release runs only after all of this has returned.
 		stopHint()
+		stopIncremental()
 		cancelWorker()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancel()
