@@ -1,6 +1,6 @@
 # IndexCore Operations
 
-Current mode: **Stable Alpha Foundation / Incremental Hardening**.
+Current mode: **Stable Alpha Foundation / Incremental Hardening**. P0–P11 are Architect-accepted; P12 deployment soak with the separate Reference Web consumer is the active validation phase.
 
 IndexCore is a single Go runtime backed by PostgreSQL 18. The public application-facing surface is read-only HTTP.
 
@@ -40,7 +40,7 @@ IndexCore
 
 See [.env.example](../.env.example).
 
-## Hybrid incremental runtime (P10 accepted, opt-in)
+## Hybrid incremental runtime (P10/P11 accepted, opt-in)
 
 Disabled by default. When `INDEXCORE_INCREMENTAL_RUNTIME_ENABLED=true`, `serve`
 hosts one serialized in-process runtime that repeatedly invokes the accepted P6
@@ -51,7 +51,7 @@ schema compatible
   -> AcquireWriterLock
   -> bounded stale-IN_FLIGHT startup recovery
   -> existing Gate-3 admission worker
-  -> P10 hybrid incremental runtime
+  -> accepted P10/P11 hybrid incremental runtime
   -> bind read-only Query listener
   -> optional P9 Hint listener LAST
 ```
@@ -68,11 +68,14 @@ schema compatible
 - A P6 wall-time interruption with a proven committed claim recovers only that
   root after the call returned; it is never retried inline.
 - Backlog continuation is capped at 4 consecutive cycles / 20 item attempts per
-  burst, then a 1s cooldown. Hint floods cannot bypass the cooldown.
+  burst. P11 defines the cooldown as real post-cycle idle time: a fifth
+  immediately-contiguous cycle must wait until 1s of post-cycle idle has elapsed,
+  while an already-idle interval >=1s satisfies that cooldown without an extra wait.
+  Hint/timer floods cannot bypass the bound.
 - An enabled runtime failure is **fatal to `serve`** (no silent degraded mode).
-- Shutdown order: drain Hint handlers -> cancel/join P10 runtime -> cancel/join the
-  existing worker -> shut down Query -> release the writer lock. The writer lock is
-  never released while P10 or the worker may still be running.
+- Shutdown order: mark not-ready -> drain Hint handlers -> cancel/join hybrid runtime
+  -> cancel/join the existing worker -> shut down Query -> release the writer lock.
+  The writer lock is never released while write-capable actors may still be running.
 - While `serve` owns the writer lock, manual `indexcore incremental run` still
   fails with the writer-lock error (P7 remains mutually exclusive).
 
@@ -88,7 +91,7 @@ indexcore serve
 
 `serve` never auto-migrates and rejects incompatible/missing/future schema state.
 
-## Trusted hint transport (P9 prototype)
+## Trusted Hint transport (P9 accepted)
 
 The P9 hint transport lets a trusted same-host process deliver a Mutation Hint
 into the already-running `indexcore serve` writer **without** turning the public
@@ -114,11 +117,11 @@ Content-Type: application/json
 - Bounded ingress: max 4 in-flight calls, 5s ingestion timeout, 4096-byte body;
   `429 busy` (with `Retry-After: 1`) when full, `503 ingest_unavailable` on
   failure. There is no internal queue, retry, or idempotency table.
-- With the P10 runtime **disabled** (the default), a 202 hint remains durable
+- With the hybrid runtime **disabled** (the default), a 202 hint remains durable
   pending work and can later be processed by the manual `incremental run` path
   after `serve` releases the writer lock.
 - With `INDEXCORE_INCREMENTAL_RUNTIME_ENABLED=true`, a successful P8 merge also
-  sends a non-blocking coalesced wake to the same-process P10 runtime, which may
+  sends a non-blocking coalesced wake to the same-process hybrid runtime, which may
   execute the durable work through P6/P5/P4/P0. The HTTP 202 still means only
   durable Hint acceptance and never waits for provider execution.
 - Manual `indexcore incremental run` remains writer-lock-exclusive and therefore
@@ -140,7 +143,32 @@ checks:
 
 - PostgreSQL reachability;
 - schema compatibility;
-- runtime worker readiness.
+- whole-serve runtime readiness.
+
+Readiness becomes false at the beginning of shutdown/fatal drain before long actor joins. During that short drain window the Query listener may still be reachable but `/readyz` returns 503.
+
+## Application / Reference Web boundary
+
+Applications should access IndexCore through a server-side BFF/application layer:
+
+```text
+Browser
+  -> application server / Reference Web
+  -> read-only IndexCore /v1
+```
+
+The accepted reference consumer is:
+
+`nathanxiangang-web/indexcore-reference-web`
+
+It must not receive the Hint token, database DSN, provider credentials, or direct
+PostgreSQL access. Its `INDEXCORE_BASE_URL` is server-side only.
+
+P12 uses that repository as a continuous read-only observer while the accepted
+hybrid runtime is exercised. This validation does not expand the production
+contract.
+
+See [INTEGRATION.md](INTEGRATION.md).
 
 ## Single writer
 
@@ -152,11 +180,11 @@ Read-only Query traffic remains conceptually separate from Store mutation capabi
 
 ## Shutdown / restart
 
-On SIGINT/SIGTERM with the accepted P10 runtime:
+On SIGINT/SIGTERM with the accepted hybrid runtime:
 
 1. the service transitions out of readiness;
 2. trusted Hint admission is closed/drained;
-3. the P10 incremental runtime is cancelled and joined;
+3. the hybrid incremental runtime is cancelled and joined;
 4. the existing Gate-3 worker is cancelled and joined;
 5. the read-only Query server is shut down;
 6. the writer lock is released only after write-capable actors are fully stopped.
