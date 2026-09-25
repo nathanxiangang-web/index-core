@@ -10,14 +10,15 @@ This directory contains two kinds of documentation:
 | Goal | Document |
 | --- | --- |
 | Understand the project quickly | [README](../README.md) |
+| Understand the current architecture / interface planes | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Run IndexCore locally | [QUICKSTART.md](QUICKSTART.md) |
 | Learn the CLI | [CLI.md](CLI.md) |
 | Call the read-only HTTP API | [HTTP-API.md](HTTP-API.md) |
 | Configure rclone / AList / OpenList | [COLLECTORS.md](COLLECTORS.md) |
 | Integrate a new Web/application | [INTEGRATION.md](INTEGRATION.md) |
 | Operate / deploy / recover | [OPERATIONS.md](OPERATIONS.md) |
-| Review incremental discovery architecture | [architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md](architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md) |
-| Follow authorized P0 scoped-refresh prototype | [architecture/INCREMENTAL-P0-SCOPED-REFRESH-PROTOTYPE.md](architecture/INCREMENTAL-P0-SCOPED-REFRESH-PROTOTYPE.md) |
+| Review incremental architecture/history | [architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md](architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md) |
+| Review current P12 deployment-soak plan | [architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md](architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md) |
 | Read accepted incremental capability research | [research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md](research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md) |
 
 A complete consumer example is available in the separate repository:
@@ -37,13 +38,18 @@ Gate 3  Standalone runtime + scale            CLOSED
 Gate 4  Independent consumer validation       CLOSED
 
 Current mode: Stable Alpha Foundation / Incremental Hardening
-IndexCore extension: D0 + P0–P10 ARCHITECT_ACCEPTED
-Active architecture phase: P11 Production Hybrid Runtime Hardening
+IndexCore extension: D0 + P0–P11 ARCHITECT_ACCEPTED
+Active validation phase: P12 Deployment Soak with Reference Consumer
 Incremental runtime: accepted opt-in same-process/same-writer runtime, default disabled
+Reference consumer: nathanxiangang-web/indexcore-reference-web
 Next product blueprint phase: Gate 5 (NOT AUTHORIZED)
 ```
 
-The accepted baseline includes PostgreSQL 18, safe reconcile, canonical inventory, change journal, rclone and AList/OpenList collectors, a standalone runtime, read-only HTTP Query API, restart/recovery behavior, and a verified external consumer.
+The accepted baseline includes PostgreSQL 18, safe reconcile, canonical inventory,
+change journal, rclone and AList/OpenList collectors, a standalone runtime,
+read-only HTTP Query API, trusted loopback Hint ingestion, the accepted opt-in
+hybrid incremental runtime, P11 readiness/recovery/CI hardening, and a verified
+external consumer.
 
 ## Architecture contracts
 
