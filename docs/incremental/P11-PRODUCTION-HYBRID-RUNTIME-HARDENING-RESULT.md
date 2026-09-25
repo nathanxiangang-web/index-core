@@ -135,33 +135,30 @@ PostgreSQL 18 runs as a service container with disposable CI-only credentials fe
 through `INDEXCORE_TEST_DATABASE_URL`; the job has an explicit
 `timeout-minutes: 30`. No external SaaS CI dependency.
 
-**Blocker (environment credential scope).** The workflow content is committed at
-`docs/ci/ci.yml`, not `.github/workflows/ci.yml`: this environment's GitHub
-credential is an OAuth App token with token scopes only `read:org`, `repo`, and
-GitHub rejects pushes that create/update `.github/workflows/**` without the
-`workflow` scope:
+**Workflow activation.** The workflow was authored in this environment but could
+not be pushed from it: the credential is an OAuth App token with only
+`read:org`/`repo` scopes, and GitHub rejects pushes that create/update
+`.github/workflows/**` without the `workflow` scope:
 
 ```text
 ! [remote rejected] ... (refusing to allow an OAuth App to create or update
 workflow `.github/workflows/ci.yml` without `workflow` scope)
 ```
 
-Per the plan's rule to stop rather than drop evidence, the exact YAML is committed
-at `docs/ci/ci.yml` (with a header explaining the intended location and the
-instruction to delete it once active) so it is reviewable in Git. **The Architect
-has stated they will move it to `.github/workflows/ci.yml` with a `workflow`-scoped
-credential to activate CI.** Once the workflow is active there, `docs/ci/ci.yml`
-must be deleted so there is only one authoritative copy. No path outside the
-authorized surface was modified.
+A rename/move to `.github/workflows/ci.yml` cannot bypass this — the check is on
+the destination path. The exact YAML was therefore committed at `docs/ci/ci.yml`
+for review, and the **Architect activated it with a `workflow`-scoped credential**:
+`.github/workflows/ci.yml` now exists on this branch (`bd4fc53`), and the temporary
+`docs/ci/ci.yml` copy was removed (`5040b75`) so there is only one authoritative
+copy. No path outside the authorized surface was modified.
 
-Race result locally (same commands the workflow would run): the targeted race
-suite passed on real PostgreSQL 18 for both `internal/runtime/incrementalruntime`
-and `internal/runtime/app` (no race reported).
+Race result locally (same commands the workflow runs): the targeted race suite
+passed on real PostgreSQL 18 for both `internal/runtime/incrementalruntime` and
+`internal/runtime/app` (no race reported).
 
-**Provenance note:** until the Architect activates `.github/workflows/ci.yml` and
-GitHub Actions runs on a PR head, the local `gofmt`/`vet`/`test`/`build`/`race`
-results remain submitter-provided evidence. H5 is therefore pending the Architect's
-workflow activation, not silently dropped.
+**Provenance:** with `.github/workflows/ci.yml` active, the gofmt / vet / build /
+full PostgreSQL suite / targeted race results are produced by GitHub Actions on the
+PR head; the local runs above are the pre-push equivalent of the same commands.
 
 ## 7. H6 — documentation synchronization
 
@@ -191,7 +188,7 @@ internal/runtime/incrementalruntime/p11_burst_internal_test.go (new: determinist
 internal/runtime/app/app.go                                (readiness lifecycle)
 internal/runtime/app/serve_runtime_test.go                 (fakeRuntime block-then-fatal)
 internal/runtime/app/serve_readiness_test.go               (new: readiness tests)
-docs/ci/ci.yml                                             (new: intended PostgreSQL 18 CI workflow; see H5 blocker)
+.github/workflows/ci.yml                                   (PostgreSQL 18 CI, activated by the Architect: bd4fc53)
 PROJECT-STATE.md
 NEXT-ACTIONS.md
 PROJECT-CONTEXT.md
@@ -252,8 +249,11 @@ surface; the accepted H1/H2/H3 direction and the frozen boundaries are unchanged
    `TestP11RetryMaintenanceFatalLogPhase`,
    `TestP11InterruptedRecoveryFatalLogPhase`, each also asserting that injected
    `postgres://…supersecret…` material never appears in the captured logs.
-3. **H5 CI evidence** is pending the Architect's workflow activation (see §6); the
-   Worker cannot push `.github/workflows/**` with the current credential. The exact
-   YAML remains reviewable at `docs/ci/ci.yml`.
+3. **H5 CI evidence** is now active: the Architect moved the reviewed workflow to
+   `.github/workflows/ci.yml` (`bd4fc53`) and removed the temporary `docs/ci/ci.yml`
+   copy (`5040b75`). GitHub Actions therefore runs gofmt / vet / build / the full
+   PostgreSQL 18 suite / the targeted race suite on the PR head; the earlier
+   Worker-side push limitation (credential lacking the `workflow` scope) no longer
+   blocks H5.
 
 `FROZEN_CONTRACT_CHANGES: NONE`
