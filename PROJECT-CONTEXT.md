@@ -15,7 +15,7 @@ Current status:
 Core development for accepted Alpha scope: COMPLETE
 Gate 1–4: CLOSED / ARCHITECT_ACCEPTED
 Post-MVP Incremental P0–P10: ARCHITECT_ACCEPTED
-P11 Production Hybrid Runtime Hardening: ACTIVE / IN IMPLEMENTATION
+P11 Production Hybrid Runtime Hardening: ARCHITECT_ACCEPTED
 Operating mode: Stable Alpha Foundation / Incremental Hardening
 Gate 5: NOT AUTHORIZED
 ```
@@ -128,9 +128,13 @@ New providers belong behind the Collector boundary unless canonical truth/safety
 
 ## 8. Execution model for future changes
 
-P11 Production Hybrid Runtime Hardening is the current active implementation phase:
-its planning PR #98 is Architect-accepted and merged (`329210c`), and the bounded
-execution Issue #99 is open. Implementation stays within that Issue/plan scope.
+P11 Production Hybrid Runtime Hardening is complete and Architect-accepted
+(PR #100 merged as `ec980a5`).
+
+P11 exit decision: `AUTHORIZE_DEPLOYMENT_SOAK`.
+
+Deployment soak is the next bounded step, but no execution task is active until the
+Architect defines its scope.
 
 When work is authorized:
 
