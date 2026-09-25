@@ -34,6 +34,10 @@ Configuration is environment variables plus flags. Flags override environment va
 | `INDEXCORE_SHUTDOWN_TIMEOUT` | `--shutdown-timeout` | `15s` |
 | `INDEXCORE_LOG_LEVEL` | `--log-level` | `info` |
 | `INDEXCORE_LOG_FORMAT` | `--log-format` | `text` |
+| `INDEXCORE_HINT_ADDR` | `--hint-addr` | empty / disabled |
+| `INDEXCORE_HINT_TOKEN` | no flag; env-only secret | empty |
+| `INDEXCORE_INCREMENTAL_RUNTIME_ENABLED` | `--incremental-runtime` | `false` |
+| `INDEXCORE_INCREMENTAL_WAKE_INTERVAL` | `--incremental-wake-interval` | `5s` |
 
 Valid log levels: `debug|info|warn|error`.
 
@@ -170,7 +174,40 @@ indexcore serve
 
 A second active writer daemon for the same database fails closed.
 
-Default bind is loopback. There is no built-in authentication in the current Alpha, so keep the service on a trusted/private boundary.
+Default Query bind is loopback. There is no built-in application authentication in the current Alpha, so keep the service on a trusted/private boundary.
+
+When configured, `serve` may additionally host:
+
+- the accepted same-process hybrid incremental runtime;
+- the separate trusted Hint listener.
+
+Example:
+
+```bash
+export INDEXCORE_INCREMENTAL_RUNTIME_ENABLED=true
+export INDEXCORE_INCREMENTAL_WAKE_INTERVAL=5s
+export INDEXCORE_HINT_ADDR=127.0.0.1:8090
+export INDEXCORE_HINT_TOKEN='replace-with-at-least-32-random-bytes'
+
+indexcore serve
+```
+
+The Hint listener is exact-loopback-only and the token is deliberately env-only.
+The Query `/v1` API remains read-only.
+
+Startup order when enabled is:
+
+```text
+writer lock
+ -> startup stale-IN_FLIGHT recovery
+ -> worker
+ -> hybrid runtime
+ -> Query listener
+ -> Hint listener last
+ -> ready
+```
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) and [OPERATIONS.md](OPERATIONS.md).
 
 ## Incremental manual cycle
 
@@ -203,7 +240,7 @@ Command-local flags (defaults):
 | `--retry-throttled` | `45s` | `>0` |
 | `--retry-internal` | `60s` | `>0` |
 
-These are command-local prototype safety budgets, not production cadence/SLA.
+These are command-local bounded safety budgets, not production cadence/SLA.
 They are not added to persistent/global config or environment variables.
 Existing runtime flags/env (`--database-url`, `--rclone-path`, `--rclone-config`,
 `--scan-timeout`, `--shutdown-timeout`, logging) are reused.
@@ -241,9 +278,12 @@ new exit-code classes are introduced.
 
 The `incremental run` command itself performs no background scheduler/ticker or
 daemon behavior and does not attach to a running `serve`. The separate accepted
-P10 hybrid runtime may run inside `serve` when explicitly enabled; because both
-use the same writer advisory lock, the manual command fails closed while `serve`
-is active.
+P10/P11 hybrid runtime may run inside `serve` when explicitly enabled; because
+both use the same writer advisory lock, the manual command fails closed while
+`serve` is active.
+
+Current P0 scoped execution behind that runtime supports AList/OpenList only.
+A normal rclone full scan is not a scoped incremental cycle.
 
 ## Build identity
 
