@@ -4,7 +4,7 @@
 
 IndexCore collects resource observations from external sources, evaluates identity/completeness/safety, maintains one trustworthy Canonical Inventory, appends a canonical Change Journal, and exposes the result through a small read-only HTTP Query API.
 
-> **Status:** Core development is complete for the accepted Alpha scope. Gate 1–4 and incremental P0–P11 are Architect-accepted. P12 **Deployment Soak with Reference Consumer** is the current validation phase. The project is a **Stable Alpha Foundation / Incremental Hardening** component. The hybrid incremental runtime remains default disabled. Gate 5 (future product architecture) is not authorized.
+> **Status:** Core development is complete for the accepted Alpha scope. Gate 1–4 and incremental P0–P11 are Architect-accepted. P12 **Deployment Soak with Reference Test Web** is the current validation phase. The project is a **Stable Alpha Foundation / Incremental Hardening** component. The hybrid incremental runtime remains default disabled. Gate 5 (future product architecture) is not authorized.
 
 IndexCore is **not CloudSite 2**, not a search engine, not a user system, and not a downloader. Product concerns belong in consumers.
 
@@ -49,7 +49,7 @@ Key rule: **one canonical resource truth**. Collectors acquire facts; consumers 
 - single-writer runtime ownership;
 - read-only Q1–Q9 HTTP API;
 - 20k real-PostgreSQL scale validation;
-- independent Reference Web integration validation;
+- independent Reference Test Web integration validation;
 - trusted loopback Mutation Hint ingestion;
 - optional same-process/same-writer hybrid incremental runtime (default disabled).
 
@@ -132,7 +132,7 @@ API reference: [docs/HTTP-API.md](docs/HTTP-API.md)
 Interface separation:
 
 ```text
-Query /v1        -> application server / BFF / Reference Web (read-only)
+Query /v1        -> application server / BFF / Reference Test Web (read-only)
 CLI              -> operator / administration
 internal Hint    -> trusted same-host integration only
 ```
@@ -165,13 +165,15 @@ Do not connect a product directly to IndexCore PostgreSQL and do not expose raw 
 
 Integration guide: [docs/INTEGRATION.md](docs/INTEGRATION.md)
 
-Reference consumer: `nathanxiangang-web/indexcore-reference-web`
+Reference test consumer: `nathanxiangang-web/indexcore-reference-web`
 
-Gate 4 proved that a brand-new Web can consume Q1–Q9 through server-side HTTP with
-zero direct PostgreSQL, IndexCore Go, provider, or CloudSite coupling. P12 now
-reuses the same repository as a continuous read-only consumer during deployment
-soak validation; it does not gain Hint, DB, provider-control, or canonical-write
-capabilities.
+`indexcore-reference-web` is a **test/reference Web used only for IndexCore validation**. It is not the production Web, not a product frontend, and not the future UI starter kit.
+
+Gate 4 proved that this clean test Web can consume Q1–Q9 through server-side HTTP
+with zero direct PostgreSQL, IndexCore Go, provider, or CloudSite coupling. P12
+reuses the same test repository as a continuous read-only validation consumer
+during deployment soak; it does not gain Hint, DB, provider-control, or
+canonical-write capabilities.
 
 ## Documentation
 
