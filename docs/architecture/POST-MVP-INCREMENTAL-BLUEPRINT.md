@@ -1,6 +1,6 @@
 # Post-MVP Incremental Ingestion Blueprint
 
-> Status: **D0 COMPLETE / P0–P11 ARCHITECT_ACCEPTED / DEPLOYMENT SOAK AUTHORIZED FOR NEXT SCOPING / GATE 5 NOT AUTHORIZED**
+> Status: **D0 COMPLETE / P0–P11 ARCHITECT_ACCEPTED / P12 DEPLOYMENT SOAK PLAN ACTIVE / GATE 5 NOT AUTHORIZED**
 >
 > Architecture tracking: #57
 >
@@ -1267,5 +1267,29 @@ Deployment soak is authorized as the next bounded validation phase only. Runtime
 default-on, native delta/provider cursor, network/public Hint, second writer,
 migration/schema expansion, destructive removal, direct 115 integration, and
 Gate 5 remain unauthorized.
+
+`FROZEN_CONTRACT_CHANGES: NONE`.
+
+
+## 36. P12 deployment soak with reference consumer
+
+P11 exit authorized deployment soak. P12 is governed by:
+
+`docs/architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md`
+
+P12 uses the accepted external consumer baseline:
+
+`nathanxiangang-web/indexcore-reference-web@3fea8a83a8c3faa78e713de71a110b9757c07bc1`
+
+The Reference Web remains a read-only observer of Q1–Q9. Provider mutation,
+trusted Hint delivery, durable-state inspection, and crash/restart orchestration
+remain on the IndexCore verification/operations side.
+
+P12 validates the accepted P11 runtime over a bounded deployment interval using
+real P8/P10/P11 incremental flow, a controlled AList/OpenList-compatible provider
+fixture, continuous Reference Web observations, provider transient retry,
+Hint burst, graceful restart, and deterministic crash/startup recovery.
+
+No production contract expansion is authorized.
 
 `FROZEN_CONTRACT_CHANGES: NONE`.
