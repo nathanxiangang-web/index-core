@@ -36,8 +36,10 @@ Gate 2  PostgreSQL + Kernel PoC               CLOSED
 Gate 3  Standalone runtime + scale            CLOSED
 Gate 4  Independent consumer validation       CLOSED
 
-Current mode: Stable Alpha Foundation / Maintenance
-IndexCore extension: D0 COMPLETE; P0 Targeted Scoped Refresh PROTOTYPE AUTHORIZED (Issue #62 under #57); production incremental implementation NOT AUTHORIZED
+Current mode: Stable Alpha Foundation / Incremental Hardening
+IndexCore extension: D0 + P0–P10 ARCHITECT_ACCEPTED
+Active architecture phase: P11 Production Hybrid Runtime Hardening
+Incremental runtime: accepted opt-in same-process/same-writer runtime, default disabled
 Next product blueprint phase: Gate 5 (NOT AUTHORIZED)
 ```
 
