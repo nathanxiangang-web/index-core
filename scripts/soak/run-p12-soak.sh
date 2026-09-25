@@ -12,9 +12,12 @@
 # lets the soak driver, the fixtures, and the Reference Test Web observer share
 # one host, which is what P12 requires for deterministic restart/crash control.
 #
-# Modes:
-#   P12_MODE=smoke   short harness validation (small duration/target)
-#   P12_MODE=full    the mandatory >=30min / >=100 visibility soak + scenarios
+# Modes (fail-closed either way):
+#   P12_MODE=test        SHORTENED TEST VALIDATION (owner-directed short profile)
+#   P12_MODE=acceptance  the mandatory >=30min / >=100 visibility acceptance soak
+#
+# `full`/`smoke` are rejected: the shortened profile must not masquerade as the
+# mandatory long-duration soak.
 #
 # This is verification-only: no production IndexCore code or contract changes.
 set -uo pipefail
@@ -27,7 +30,7 @@ source "$SCRIPT_DIR/lib.sh"
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-P12_MODE="${P12_MODE:-smoke}"
+P12_MODE="${P12_MODE:-test}"
 P12_PG_CONTAINER="${P12_PG_CONTAINER:-p12-postgres}"
 P12_PG_VOLUME="${P12_PG_VOLUME:-p12-pgdata}"
 P12_PG_PORT="${P12_PG_PORT:-55433}"
@@ -54,20 +57,31 @@ P12_HINT_TOKEN="${P12_HINT_TOKEN:-$(openssl rand -hex 32)}"
 SCOPE_A="/hot-a"
 SCOPE_B="/hot-b"
 
-if [ "$P12_MODE" = "smoke" ]; then
-  P12_DURATION_SECONDS="${P12_DURATION_SECONDS:-40}"
-  P12_TARGET_VISIBILITY="${P12_TARGET_VISIBILITY:-6}"
-  P12_SAMPLE_INTERVAL="${P12_SAMPLE_INTERVAL:-2}"
-  P12_BURST_HINTS="${P12_BURST_HINTS:-6}"
-  P12_CRASH_RETRY_TIMEOUT="${P12_CRASH_RETRY_TIMEOUT:-90}"
-else
-  P12_DURATION_SECONDS="${P12_DURATION_SECONDS:-1800}"
-  P12_TARGET_VISIBILITY="${P12_TARGET_VISIBILITY:-100}"
-  P12_SAMPLE_INTERVAL="${P12_SAMPLE_INTERVAL:-5}"
-  P12_BURST_HINTS="${P12_BURST_HINTS:-24}"
-fi
+case "$P12_MODE" in
+  test)
+    PROFILE_LABEL="SHORTENED TEST VALIDATION"
+    P12_DURATION_SECONDS="${P12_DURATION_SECONDS:-120}"
+    P12_TARGET_VISIBILITY="${P12_TARGET_VISIBILITY:-10}"
+    P12_SAMPLE_INTERVAL="${P12_SAMPLE_INTERVAL:-2}"
+    P12_BURST_HINTS="${P12_BURST_HINTS:-24}"
+    P12_CRASH_RETRY_TIMEOUT="${P12_CRASH_RETRY_TIMEOUT:-120}"
+    ;;
+  acceptance)
+    PROFILE_LABEL="FULL ACCEPTANCE SOAK (>=30min / >=100 visibility)"
+    P12_DURATION_SECONDS="${P12_DURATION_SECONDS:-1800}"
+    P12_TARGET_VISIBILITY="${P12_TARGET_VISIBILITY:-100}"
+    P12_SAMPLE_INTERVAL="${P12_SAMPLE_INTERVAL:-5}"
+    P12_BURST_HINTS="${P12_BURST_HINTS:-24}"
+    P12_CRASH_RETRY_TIMEOUT="${P12_CRASH_RETRY_TIMEOUT:-180}"
+    ;;
+  full|smoke)
+    die "P12_MODE='$P12_MODE' is not valid; use 'test' (shortened) or 'acceptance' (long-duration)"
+    ;;
+  *)
+    die "P12_MODE must be 'test' or 'acceptance' (got '$P12_MODE')"
+    ;;
+esac
 P12_VISIBLE_TIMEOUT="${P12_VISIBLE_TIMEOUT:-60}"
-P12_CRASH_RETRY_TIMEOUT="${P12_CRASH_RETRY_TIMEOUT:-180}"
 
 SERVE_PID=""
 WEB_PID=""
@@ -77,15 +91,27 @@ FIXTURE_B_PID=""
 ROOT_A=""
 ROOT_B=""
 
-HINT_202=0; HINT_429=0; HINT_OTHER=0
+HINT_202=0
+HINT_OTHER=0
 STEADY_OK=0
 VIS_LAT_MS=()
+FAILURES=()
+
+# Fail-closed bookkeeping: mandatory predicates append a failure; main exits
+# non-zero if any remain.
+fail_run() { FAILURES+=("$1"); log "FAIL: $1"; }
+assert_eq() { # expected actual label
+  [ "$1" = "$2" ] || fail_run "$3: expected '$1', got '$2'"
+}
+assert_ge() { # min actual label
+  if ! [ "$2" -ge "$1" ] 2>/dev/null; then fail_run "$3: expected >= $1, got '$2'"; fi
+}
 
 # ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
 serve_pid() { printf '%s' "${SERVE_PID:-$(cat "$P12_LOG_DIR/serve.pid" 2>/dev/null || true)}"; }
-stop_serve() { # graceful
+stop_serve() {
   local pid; pid="$(serve_pid)"
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
     kill -TERM "$pid" 2>/dev/null || true
@@ -142,6 +168,21 @@ start_observer_watch() {
   OBSERVER_PID="$(cat "$P12_LOG_DIR/observer.pid" 2>/dev/null || true)"
 }
 
+# The continuous observer is part of the oracle: if it dies or reports a failure
+# at any point, the run fails. It must never be restarted.
+check_observer() { # label
+  local label="${1:-observer}"
+  if [ -z "$OBSERVER_PID" ] || ! kill -0 "$OBSERVER_PID" 2>/dev/null; then
+    fail_run "$label: continuous Reference Test Web observer is not alive"
+    return 1
+  fi
+  if grep -q 'OBSERVER FAILURE' "$P12_LOG_DIR/observer.log" 2>/dev/null; then
+    fail_run "$label: continuous observer reported a failure"
+    return 1
+  fi
+  return 0
+}
+
 ensure_binary() {
   if [ -x "$P12_INDEXCORE_BIN" ]; then return 0; fi
   mkdir -p "$(dirname "$P12_INDEXCORE_BIN")"
@@ -181,7 +222,7 @@ start_fixtures_and_seed() {
 create_roots_and_scan() {
   ROOT_A="$(python3 -c 'import uuid;print(uuid.uuid4())')"
   ROOT_B="$(python3 -c 'import uuid;print(uuid.uuid4())')"
-  local pair id port path
+  local pair id port
   for pair in "$ROOT_A:9050" "$ROOT_B:9051"; do
     id="${pair%%:*}"; port="${pair##*:}"
     "$P12_INDEXCORE_BIN" root create --root-id "$id" --lifecycle ACTIVE >/dev/null 2>&1
@@ -195,9 +236,8 @@ create_roots_and_scan() {
 
 provision() {
   ensure_binary
-  log "provisioning (mode=$P12_MODE)"
+  log "provisioning (mode=$P12_MODE profile=\"$PROFILE_LABEL\")"
   cleanup; sleep 1
-  # free the host HTTP/Hint ports from any leftover compose stack
   docker stop index-core-indexcore-1 >/dev/null 2>&1 || true
   start_postgres_clean
   start_fixtures_and_seed
@@ -205,6 +245,7 @@ provision() {
   start_serve
   start_test_web
   start_observer_watch
+  check_observer "provision"
   log "provisioned; readyz=$(curl -s -o /dev/null -w '%{http_code}' "http://$P12_HTTP_ADDR/readyz")"
 }
 
@@ -219,10 +260,14 @@ one_mutation() {
   hint_send "$root" "$scope" POSSIBLE_CHANGE
   case "$HINT_CODE" in
     202) HINT_202=$((HINT_202 + 1)) ;;
-    429) HINT_429=$((HINT_429 + 1)) ;;
     *)   HINT_OTHER=$((HINT_OTHER + 1)) ;;
   esac
+  if [ "$HINT_CODE" != "202" ]; then
+    fail_run "mutation $resource: Hint final code '$HINT_CODE' (expected 202, attempts=$HINT_ATTEMPTS)"
+    return 1
+  fi
   if ! observer_wait_visible "$root" "$resource" "$timeout" >/dev/null 2>&1; then
+    fail_run "mutation $resource: not Test Web-visible within ${timeout}s"
     return 1
   fi
   local t1; t1="$(now_ms)"
@@ -246,23 +291,22 @@ run_steady() {
     seq=$((seq + 1))
     local resource="soak-$(printf '%05d' "$seq").txt"
     if ! one_mutation "$ROOT_A" "$P12_FIXTURE_A" "$SCOPE_A" "$resource"; then
-      log "steady: mutation $seq on A not visible within ${P12_VISIBLE_TIMEOUT}s"
       printf 'steady_failure,seq=%s,resource=%s\n' "$seq" "$resource" >>"$EVIDENCE_DIR/steady.csv"
       break
     fi
     resource="soak-b-$(printf '%05d' "$seq").txt"
     if ! one_mutation "$ROOT_B" "$P12_FIXTURE_B" "$SCOPE_B" "$resource"; then
-      log "steady: mutation $seq on B not visible within ${P12_VISIBLE_TIMEOUT}s"
       printf 'steady_failure,seq=%s,resource=%s\n' "$seq" "$resource" >>"$EVIDENCE_DIR/steady.csv"
       break
     fi
     sleep "$P12_SAMPLE_INTERVAL"
   done
-  log "steady soak done: visible=${STEADY_OK} hint202=${HINT_202} hint429=${HINT_429} other=${HINT_OTHER}"
+  assert_ge "$P12_TARGET_VISIBILITY" "$STEADY_OK" "steady visibility"
+  log "steady soak done: visible=${STEADY_OK} hint202=${HINT_202} hint429=${HINT_429_COUNT} other=${HINT_OTHER}"
 }
 
 latency_summary() {
-  if [ "${#VIS_LAT_MS[@]}" -eq 0 ]; then echo "min=NA p50=NA p95=NA max=NA"; return; fi
+  if [ "${#VIS_LAT_MS[@]}" -eq 0 ]; then echo "min=NA p50=NA p95=NA max=NA n=0"; return; fi
   printf '%s\n' "${VIS_LAT_MS[@]}" | sort -n >"$P12_LOG_DIR/lat.txt"
   local n min max p50 p95
   n="$(wc -l <"$P12_LOG_DIR/lat.txt")"
@@ -274,11 +318,11 @@ latency_summary() {
 }
 
 # ---------------------------------------------------------------------------
-# Scenarios
+# Scenarios (each fails closed)
 # ---------------------------------------------------------------------------
 scenario_hint_burst() {
   log "scenario: hint burst (${P12_BURST_HINTS} hints)"
-  local i resource codes=()
+  local i codes=() c202=0 c429=0 cother=0
   for i in $(seq 1 5); do
     fixture_upsert "$P12_FIXTURE_A" "{\"path\":\"$SCOPE_A\",\"entry\":{\"name\":\"burst-a-$i.txt\",\"is_dir\":false,\"size\":3,\"sha1\":\"ba$i\"}}"
   done
@@ -289,9 +333,12 @@ scenario_hint_burst() {
   for i in $(seq 1 "$P12_BURST_HINTS"); do
     if [ $((i % 2)) -eq 0 ]; then hint_send "$ROOT_A" "$SCOPE_A" POSSIBLE_CHANGE; else hint_send "$ROOT_B" "$SCOPE_B" POSSIBLE_CHANGE; fi
     codes+=("$HINT_CODE")
+    case "$HINT_CODE" in
+      202) c202=$((c202 + 1)) ;;
+      429) c429=$((c429 + 1)) ;;
+      *)   cother=$((cother + 1)) ;;
+    esac
   done
-  local expected=0
-  for i in $(seq 1 5); do expected=$((expected + 1)); done
   local ok=0
   for i in $(seq 1 5); do observer_wait_visible "$ROOT_A" "burst-a-$i.txt" 60 >/dev/null 2>&1 && ok=$((ok + 1)); done
   for i in $(seq 1 5); do observer_wait_visible "$ROOT_B" "burst-b-$i.txt" 60 >/dev/null 2>&1 && ok=$((ok + 1)); done
@@ -301,11 +348,15 @@ import json, sys
 path, codes, ok, fb, fa = sys.argv[1:6]
 codes = codes.split() if codes else []
 json.dump({"hints": len(codes), "codes": codes,
-           "http_202": codes.count("202"), "http_429": codes.count("429"),
+           "final_202": codes.count("202"), "final_429": codes.count("429"),
+           "unexpected_final": len([c for c in codes if c not in ("202", "429")]),
            "visible": int(ok), "expected_visible": 10,
            "runtime_fatal_before": int(fb), "runtime_fatal_after": int(fa)}, open(path, "w"), indent=2)
 PY
-  log "burst: codes=${HINT_202}202/${HINT_429}429 visible=${ok}/10 fatal=${fatal_after}"
+  assert_eq 0 "$cother" "burst unexpected final Hint codes (202/429 only)"
+  assert_eq 10 "$ok" "burst visibility (10 expected)"
+  assert_eq "$fatal_before" "$fatal_after" "burst runtime fatal count unchanged"
+  log "burst: final202=$c202 final429=$c429 unexpected=$cother visible=${ok}/10 fatal=${fatal_after}"
 }
 
 scenario_transient_retry() {
@@ -314,6 +365,9 @@ scenario_transient_retry() {
   fixture_fail "$P12_FIXTURE_A" "{\"count\":1,\"paths\":[\"$SCOPE_A\"],\"status\":500,\"code\":500}"
   local t0; t0="$(now_epoch)"
   hint_send "$ROOT_A" "$SCOPE_A" POSSIBLE_CHANGE
+  if [ "$HINT_CODE" != "202" ]; then
+    fail_run "transient: Hint final code '$HINT_CODE' (expected 202)"
+  fi
   local retry_seen=0 visible=0 elapsed=0
   while [ "$elapsed" -lt "$P12_CRASH_RETRY_TIMEOUT" ]; do
     if grep -q incremental_retry_promotion "$P12_LOG_DIR/serve.log"; then retry_seen=1; fi
@@ -327,30 +381,30 @@ path, retry_seen, visible, elapsed, error_class = sys.argv[1:6]
 json.dump({"retry_promotion_seen": retry_seen == "1", "visible": visible == "1",
            "seconds_to_visible": int(elapsed), "last_error_class": error_class}, open(path, "w"), indent=2)
 PY
+  assert_eq 1 "$retry_seen" "transient retry promotion observed"
+  assert_eq 1 "$visible" "transient eventual visibility"
   log "transient retry: retry_seen=$retry_seen visible=$visible after ${elapsed}s"
 }
 
 scenario_graceful_restart() {
   log "scenario: graceful restart"
-  local readyz_seen_503=0 degraded_seen=0 web_held_200=0 leak=0 recovered=0
-  echo degraded >"$P12_LOG_DIR/observer-state"
-  # Put one bounded scoped refresh in flight so shutdown has something to drain
-  # and the /readyz 503 window is observable rather than sub-millisecond.
+  local readyz_seen_503=0 degraded_seen=0 web_held_200=0 leak=0 recovered=0 inflight=0
+  # 1) create one in-flight cycle in the NORMAL window (IndexCore still healthy).
   fixture_upsert "$P12_FIXTURE_A" "{\"path\":\"$SCOPE_A\",\"entry\":{\"name\":\"drain-a.txt\",\"is_dir\":false,\"size\":4,\"sha1\":\"da\"}}"
   fixture_delay "$P12_FIXTURE_A" "{\"seconds\":8,\"paths\":[\"$SCOPE_A\"]}"
   hint_send "$ROOT_A" "$SCOPE_A" POSSIBLE_CHANGE
-  local inflight=0
+  local i
   for i in $(seq 1 30); do
     local n; n="$(psql_q "select count(*) from index_dirty_scope_work where root_id='$ROOT_A' and scope_key='$SCOPE_A' and work_state='IN_FLIGHT';")"
     [ "$n" = "1" ] && { inflight=1; break; }
     sleep 0.5
   done
-  # Continuous /readyz poller: the 503 window can be short, so sample without
-  # sleeping until the process actually exits.
+  # 2) declare the degraded window immediately before shutdown (not seconds
+  #    early), so the observer never sees a healthy page in a degraded window.
+  echo degraded >"$P12_LOG_DIR/observer-state"
   local pid; pid="$(serve_pid)"
   : >"$P12_LOG_DIR/readyz-poll.txt"
-  local pollers=()
-  local k
+  local pollers=(); local k
   for k in $(seq 1 8); do
     ( while kill -0 "$pid" 2>/dev/null; do
         curl -s -o /dev/null -w '%{http_code}\n' -m 2 "http://$P12_HTTP_ADDR/readyz" 2>/dev/null >>"$P12_LOG_DIR/readyz-poll.txt" || echo 000 >>"$P12_LOG_DIR/readyz-poll.txt"
@@ -358,7 +412,7 @@ scenario_graceful_restart() {
     pollers+=($!)
   done
   kill -TERM "$pid" 2>/dev/null || true
-  local i body code
+  local body code
   for i in $(seq 1 45); do
     body="$(curl -s -m 5 "$P12_TEST_WEB_URL/" 2>/dev/null || true)"
     code="$(curl -s -o /dev/null -w '%{http_code}' -m 5 "$P12_TEST_WEB_URL/" 2>/dev/null || echo 000)"
@@ -371,39 +425,51 @@ scenario_graceful_restart() {
   local p; for p in "${pollers[@]}"; do wait "$p" 2>/dev/null || true; done
   grep -q '^503$' "$P12_LOG_DIR/readyz-poll.txt" && readyz_seen_503=1
   fixture_delay "$P12_FIXTURE_A" '{"seconds":0}'
-  rm -f "$P12_LOG_DIR/observer-state"
+  # 3) restart, then leave the degraded window only once IndexCore is ready.
   start_serve
+  rm -f "$P12_LOG_DIR/observer-state"
   if observer_wait_visible "$ROOT_A" "soak-00001.txt" 30 >/dev/null 2>&1 || one_mutation "$ROOT_A" "$P12_FIXTURE_A" "$SCOPE_A" "post-restart-a.txt"; then recovered=1; fi
-  python3 - "$EVIDENCE_DIR/restart.json" "$readyz_seen_503" "$degraded_seen" "$web_held_200" "$leak" "$recovered" <<'PY'
+  python3 - "$EVIDENCE_DIR/restart.json" "$readyz_seen_503" "$degraded_seen" "$web_held_200" "$leak" "$recovered" "$inflight" <<'PY'
 import json, sys
 p = sys.argv[1:]
-json.dump({"readyz_503": p[1] == "1", "degraded_seen": p[2] == "1",
-           "web_held_200": p[3] == "1", "origin_leak": p[4] == "1",
-           "recovered_and_visible": p[5] == "1"}, open(p[0], "w"), indent=2)
+json.dump({"readyz_503": p[1] == "1", "readyz_503_note": "not-observed is allowed for this shortened test",
+           "degraded_seen": p[2] == "1", "web_held_200": p[3] == "1",
+           "origin_leak": p[4] == "1", "recovered_and_visible": p[5] == "1",
+           "inflight_created": p[6] == "1"}, open(p[0], "w"), indent=2)
 PY
-  log "graceful restart: readyz503=$readyz_seen_503 degraded=$degraded_seen hold200=$web_held_200 leak=$leak recovered=$recovered"
+  # readyz 503 is explicitly NON-BLOCKING (P11 readiness tests cover it).
+  assert_eq 1 "$degraded_seen" "graceful restart degraded render"
+  assert_eq 1 "$web_held_200" "graceful restart Web held HTTP 200"
+  assert_eq 0 "$leak" "graceful restart no private-origin leak"
+  assert_eq 1 "$recovered" "graceful restart recovery + later visibility"
+  log "graceful restart: readyz503=$readyz_seen_503(not-blocking) degraded=$degraded_seen hold200=$web_held_200 leak=$leak recovered=$recovered"
 }
 
 scenario_crash_recovery() {
   log "scenario: deterministic crash recovery"
+  local inflight=0 i visible=0
+  # 1) block one scoped request and confirm in-flight in the NORMAL window.
   fixture_upsert "$P12_FIXTURE_A" "{\"path\":\"$SCOPE_A\",\"entry\":{\"name\":\"crash-a.txt\",\"is_dir\":false,\"size\":4,\"sha1\":\"ca\"}}"
   fixture_block "$P12_FIXTURE_A" "{\"paths\":[\"$SCOPE_A\"]}"
   hint_send "$ROOT_A" "$SCOPE_A" POSSIBLE_CHANGE
-  local inflight=0 i
+  if [ "$HINT_CODE" != "202" ]; then fail_run "crash: Hint final code '$HINT_CODE' (expected 202)"; fi
   for i in $(seq 1 40); do
     local n; n="$(psql_q "select count(*) from index_dirty_scope_work where root_id='$ROOT_A' and scope_key='$SCOPE_A' and work_state='IN_FLIGHT';")"
     [ "$n" = "1" ] && { inflight=1; break; }
     sleep 1
   done
+  # 2) declare degraded immediately before the hard kill.
+  echo degraded >"$P12_LOG_DIR/observer-state"
   kill_serve_hard
   fixture_unblock "$P12_FIXTURE_A"
   sleep 1
   local recovered_events_before; recovered_events_before="$(grep -c incremental_inflight_recovered "$P12_LOG_DIR/serve.log" || true)"
+  # 3) restart on the same volume, then leave the degraded window once ready.
   start_serve
+  rm -f "$P12_LOG_DIR/observer-state"
   sleep 3
   local recovered_events_after; recovered_events_after="$(grep -c incremental_inflight_recovered "$P12_LOG_DIR/serve.log" || true)"
   hint_send "$ROOT_A" "$SCOPE_A" POSSIBLE_CHANGE
-  local visible=0
   if observer_wait_visible "$ROOT_A" "crash-a.txt" "$P12_CRASH_RETRY_TIMEOUT" >/dev/null 2>&1; then visible=1; fi
   local residue; residue="$(psql_q "select count(*) from index_dirty_scope_work where root_id='$ROOT_A' and scope_key='$SCOPE_A' and work_state='IN_FLIGHT';")"
   python3 - "$EVIDENCE_DIR/crash.json" "$inflight" "$recovered_events_before" "$recovered_events_after" "$visible" "$residue" <<'PY'
@@ -414,35 +480,37 @@ json.dump({"blocked_inflight_confirmed": p[1] == "1",
            "visible_after_recovery": p[4] == "1", "inflight_residue": int(p[5])},
           open(p[0], "w"), indent=2)
 PY
+  assert_eq 1 "$inflight" "crash recovery blocked in-flight confirmed"
+  # start_serve truncates serve.log, so assert the startup recovery event in the
+  # NEW process log rather than comparing counts across two different logs.
+  assert_ge 1 "$recovered_events_after" "crash startup stale-IN_FLIGHT recovery event"
+  assert_eq 1 "$visible" "crash recovery eventual visibility"
+  assert_eq 0 "$residue" "crash recovery IN_FLIGHT residue"
   log "crash recovery: inflight=$inflight recovered_events=$recovered_events_after visible=$visible residue=$residue"
 }
 
 # ---------------------------------------------------------------------------
-# Final durable-state verification
+# Final durable-state verification (fail-closed)
 # ---------------------------------------------------------------------------
 verify_durable_state() {
   log "final durable-state verification"
-  local work_admission root_lifecycle
-  work_admission="$(psql_q "select work_state||':'||count(*) from index_dirty_scope_work group by work_state order by work_state;")"
-  local adm; adm="$(psql_q "select status||':'||count(*) from index_admission group by status order by status;")"
-  local roots; roots="$(psql_q "select lifecycle_state||':'||count(*) from index_root group by lifecycle_state order by lifecycle_state;")"
-  local inflight pending retry blocked suspended
+  local work_state admission_status root_lifecycle
+  work_state="$(psql_q "select work_state||':'||count(*) from index_dirty_scope_work group by work_state order by work_state;")"
+  admission_status="$(psql_q "select status||':'||count(*) from index_admission group by status order by status;")"
+  root_lifecycle="$(psql_q "select lifecycle_state||':'||count(*) from index_root group by lifecycle_state order by lifecycle_state;")"
+  local inflight pending retry blocked
   inflight="$(psql_q "select count(*) from index_dirty_scope_work where work_state='IN_FLIGHT';")"
   pending="$(psql_q "select count(*) from index_dirty_scope_work where work_state='PENDING';")"
   retry="$(psql_q "select count(*) from index_dirty_scope_work where work_state='RETRY_WAIT' and pending_not_before is not null and pending_not_before <= now();")"
   blocked="$(psql_q "select count(*) from index_dirty_scope_work where work_state in ('BLOCKED','SUSPENDED');")"
   local adm_pending; adm_pending="$(psql_q "select count(*) from index_admission where status='PENDING';")"
   local active_roots; active_roots="$(psql_q "select count(*) from index_root where lifecycle_state='ACTIVE';")"
-  # writer lock must be released after final shutdown
   stop_serve
   sleep 1
-  # A single short-lived psql session: if it can take the writer advisory lock
-  # the previous daemon released it. The session close drops the lock again.
   local lock_free; lock_free="$(psql_q "select pg_try_advisory_lock(490651870);" | tr -d '[:space:]')"
-  python3 - "$EVIDENCE_DIR/durable_state.json" "$inflight" "$pending" "$retry" "$blocked" "$adm_pending" "$active_roots" "$lock_free" "$work_admission" "$adm" "$roots" <<'PY'
+  python3 - "$EVIDENCE_DIR/durable_state.json" "$inflight" "$pending" "$retry" "$blocked" "$adm_pending" "$active_roots" "$lock_free" "$work_state" "$admission_status" "$root_lifecycle" <<'PY'
 import json, sys
 p = sys.argv[1:]
-def s(x): x = x.splitlines(); return x[0] if x else ""
 json.dump({
   "unexpected_inflight": int(p[1]),
   "unresolved_pending_work": int(p[2]),
@@ -451,11 +519,18 @@ json.dump({
   "pending_admission": int(p[5]),
   "active_roots": int(p[6]),
   "writer_lock_free_after_shutdown": p[7] == "t",
-  "work_state": p[8:9] and [l for l in p[8].splitlines() if l],
+  "work_state": [l for l in p[8].splitlines() if l],
   "admission_status": [l for l in p[9].splitlines() if l],
   "root_lifecycle": [l for l in p[10].splitlines() if l],
 }, open(p[0], "w"), indent=2)
 PY
+  assert_eq 0 "$inflight" "durable unexpected IN_FLIGHT"
+  assert_eq 0 "$pending" "durable unresolved PENDING work"
+  assert_eq 0 "$retry" "durable overdue RETRY_WAIT"
+  assert_eq 0 "$blocked" "durable BLOCKED/SUSPENDED"
+  assert_eq 0 "$adm_pending" "durable PENDING admission"
+  assert_ge 2 "$active_roots" "durable ACTIVE roots"
+  assert_eq t "$lock_free" "durable writer lock released after shutdown"
   log "durable: inflight=$inflight pending=$pending retry_due=$retry blocked=$blocked adm_pending=$adm_pending active_roots=$active_roots lock_free=$lock_free"
 }
 
@@ -466,35 +541,47 @@ main() {
   require_cmd docker; require_cmd curl; require_cmd python3; require_cmd openssl
   mkdir -p "$EVIDENCE_DIR" "$P12_LOG_DIR/bin"
   [ -f "$REFERENCE_WEB_OBSERVER" ] || die "observer not found: $REFERENCE_WEB_OBSERVER"
+  bash "$SCRIPT_DIR/test-hint-429.sh" >"$P12_LOG_DIR/hint-429-selftest.log" 2>&1 \
+    || die "Hint 429 retry-path self-test failed (see $P12_LOG_DIR/hint-429-selftest.log)"
 
   provision
   run_steady
+  check_observer "after steady"
 
   scenario_hint_burst
+  check_observer "after hint burst"
   scenario_transient_retry
+  check_observer "after transient retry"
   scenario_graceful_restart
+  check_observer "after graceful restart"
   scenario_crash_recovery
+  check_observer "after crash recovery"
 
+  # Stop the continuous observer before the final shutdown probe so it is not
+  # asked to judge an intentional IndexCore-down interval outside a declared
+  # window.
+  stop_observer
   verify_durable_state
   stop_web
-  stop_observer
   stop_fixtures
 
   latency_summary >"$EVIDENCE_DIR/latency.txt"
   {
+    echo "profile=$PROFILE_LABEL"
     echo "mode=$P12_MODE"
     echo "duration_seconds=$P12_DURATION_SECONDS"
     echo "target_visibility=$P12_TARGET_VISIBILITY"
     echo "visible_confirmations=$STEADY_OK"
-    echo "hint_202=$HINT_202"
-    echo "hint_429=$HINT_429"
+    echo "hint_final_202=$HINT_202"
+    echo "hint_retryable_429=$HINT_429_COUNT"
     echo "hint_other=$HINT_OTHER"
     echo "root_a=$ROOT_A"
     echo "root_b=$ROOT_B"
+    echo "failures=${#FAILURES[@]}"
     echo "latency=$(cat "$EVIDENCE_DIR/latency.txt")"
   } >"$EVIDENCE_DIR/summary.env"
 
-  log "================ P12 SOAK SUMMARY ================"
+  log "================ P12 SOAK SUMMARY ($PROFILE_LABEL) ================"
   cat "$EVIDENCE_DIR/summary.env"
   echo "--- durable_state.json ---"; cat "$EVIDENCE_DIR/durable_state.json"
   echo "--- burst.json ---"; cat "$EVIDENCE_DIR/burst.json"
@@ -503,10 +590,13 @@ main() {
   echo "--- crash.json ---"; cat "$EVIDENCE_DIR/crash.json"
   log "=================================================="
 
-  if [ "$STEADY_OK" -lt "$P12_TARGET_VISIBILITY" ]; then
-    die "steady visibility $STEADY_OK < target $P12_TARGET_VISIBILITY"
+  if [ "${#FAILURES[@]}" -gt 0 ]; then
+    log "P12 $PROFILE_LABEL FAILED (fail-closed): ${#FAILURES[@]} failure(s)"
+    local f
+    for f in "${FAILURES[@]}"; do printf '  - %s\n' "$f" >&2; done
+    exit 1
   fi
-  log "P12 soak completed"
+  log "P12 $PROFILE_LABEL completed (fail-closed, no failures)"
 }
 
 main "$@"

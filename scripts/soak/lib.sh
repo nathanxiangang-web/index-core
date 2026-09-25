@@ -37,13 +37,26 @@ fixture_delay()   { curl -s -XPOST "$1/__control/delay"   -H 'Content-Type: appl
 fixture_unblock() { curl -s -XPOST "$1/__control/unblock" -H 'Content-Type: application/json' -d '{}' >/dev/null; }
 fixture_state()   { curl -s "$1/__control/state"; }
 
+# Hint retry/backpressure state. Counters are initialized here so the 429
+# branch is executable under `set -u` (HINT_429_COUNT was previously unbound).
+HINT_MAX_ATTEMPTS="${HINT_MAX_ATTEMPTS:-5}"
+: "${HINT_429_COUNT:=0}"
+HINT_CODE="000"
+HINT_RETRY_AFTER=""
+HINT_BODY=""
+HINT_ATTEMPTS=0
+
 # hint_send <root_id> <scope_key> [reason]
-# Sets HINT_CODE, HINT_RETRY_AFTER, HINT_BODY. Retries once on 429 after
-# Retry-After, as P12 requires the soak driver to honour explicit backpressure.
+# Sets HINT_CODE (final code; 000 on transport failure), HINT_ATTEMPTS,
+# HINT_RETRY_AFTER and HINT_BODY, and increments HINT_429_COUNT per retryable
+# 429. 429 is retried up to HINT_MAX_ATTEMPTS honouring Retry-After. The caller
+# must require the final HINT_CODE (normal mutation requires 202).
 hint_send() {
   local root="$1" scope="$2" reason="${3:-POSSIBLE_CHANGE}"
   local attempt out hdrs
-  for attempt in 1 2 3; do
+  HINT_CODE="000"; HINT_RETRY_AFTER=""; HINT_BODY=""; HINT_ATTEMPTS=0
+  for attempt in $(seq 1 "$HINT_MAX_ATTEMPTS"); do
+    HINT_ATTEMPTS="$attempt"
     out="$(mktemp)"; hdrs="$(mktemp)"
     HINT_CODE="$(curl -s -m 10 -o "$out" -D "$hdrs" -w '%{http_code}' \
       -XPOST -H "Authorization: Bearer $P12_HINT_TOKEN" -H 'Content-Type: application/json' \
