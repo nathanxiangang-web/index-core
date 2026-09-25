@@ -1,9 +1,12 @@
 package incrementalruntime_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -541,4 +544,100 @@ func TestP10BurstCooldownCapsConsecutiveCycles(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+// --- P11 hardening ---
+
+func TestP11StartupRecoveryZeroProgressFailsClosed(t *testing.T) {
+	// ListInflightRoots reports a root, but RecoverStaleInflight recovers nothing:
+	// the durable state cannot advance, so recovery must fail closed.
+	store := &fakeStore{inflightSeq: [][]string{{"r1"}}, recoverTotal: 0}
+	rt := p10New(t, store, &fakeCycle{}, p10Cfg())
+	total, err := rt.RecoverStartupInflight(context.Background())
+	if err == nil {
+		t.Fatal("zero-progress startup recovery must fail closed")
+	}
+	if total != 0 {
+		t.Fatalf("total = %d, want 0", total)
+	}
+	if !strings.Contains(err.Error(), "no progress") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestP11StartupRecoveryLogHasStartupPhase(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	store := &fakeStore{inflightSeq: [][]string{{"r1"}, {}}, recoverTotal: 1}
+	rt, err := incrementalruntime.New(store, &fakeCycle{}, p10Cfg(), logger, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.RecoverStartupInflight(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "incremental_inflight_recovered") || !strings.Contains(out, `"phase":"startup"`) {
+		t.Fatalf("startup recovery log = %s", out)
+	}
+}
+
+func TestP11RuntimeStructuredLogFields(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	store := &fakeStore{due: []state.DirtyScopeWork{{RootID: "r1", ScopeKey: "/a", Version: 1}}}
+	cycle := &fakeCycle{fn: func(int, context.Context) (incrementalorch.Result, error) {
+		return incrementalorch.Result{
+			StopReason:     incrementalorch.StopCompleted,
+			DueCandidates:  2,
+			DueAttempted:   2,
+			DueEmitted:     1,
+			MoreDueWatches: true,
+			ExecutorRan:    true,
+			Executor:       incrementalexec.CycleResult{SelectedItems: 1, Succeeded: 1, Failed: 0},
+		}, nil
+	}}
+	rt, err := incrementalruntime.New(store, cycle, p10Cfg(), logger, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 1300*time.Millisecond)
+	defer cancel()
+	_ = rt.Run(ctx)
+
+	out := buf.String()
+	for _, want := range []string{
+		"incremental_runtime_wake", "wake_reason", "burst_count",
+		"incremental_retry_promotion", "candidates", "attempted", "promoted", "stale", "more",
+		"incremental_cycle_finished", "stop_reason", "duration_ms",
+		"due_candidates", "due_attempted", "due_emitted", "more_due_watches",
+		"selected_items", "succeeded", "failed", "interrupted_in_flight", "backlog",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("structured log missing %q:\n%s", want, out)
+		}
+	}
+	for _, secret := range []string{"supersecret", "INDEXCORE_HINT_TOKEN", "postgres://"} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("structured log leaked %q:\n%s", secret, out)
+		}
+	}
+}
+
+func TestP11RuntimeFatalLogHasPhase(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	cycle := &fakeCycle{errs: []error{errors.New("MATERIALIZATION_ERROR")}}
+	rt, err := incrementalruntime.New(&fakeStore{}, cycle, p10Cfg(), logger, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Run(context.Background()); err == nil {
+		t.Fatal("systemic cycle error must be fatal")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "incremental_runtime_fatal") || !strings.Contains(out, `"phase"`) {
+		t.Fatalf("fatal log missing phase/error_class:\n%s", out)
+	}
 }

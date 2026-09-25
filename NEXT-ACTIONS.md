@@ -25,7 +25,7 @@ P7 manual incremental command            ARCHITECT_ACCEPTED
 P8 mutation hint ingestion               ARCHITECT_ACCEPTED
 P9 trusted hint transport                ARCHITECT_ACCEPTED
 P10 hybrid runtime                       ARCHITECT_ACCEPTED
-P11 production hybrid runtime hardening  ARCHITECT PLAN ACTIVE
+P11 production hybrid runtime hardening  ACTIVE / IN IMPLEMENTATION
 ```
 
 P10 implementation PR #96 merged at `f655f04`; closeout PR #97 merged at
@@ -73,8 +73,9 @@ Do not begin:
 
 ## Execution protocol
 
-Until the P11 planning PR is Architect-accepted and merged, no P11 implementation
-is authorized.
+The P11 planning PR #98 is Architect-accepted and merged (`329210c`), and the
+bounded P11 hardening execution Issue #99 is open. Implementation proceeds only
+within that Issue/plan scope.
 
 After plan merge, the Architect opens one bounded execution Issue. Worker must:
 
