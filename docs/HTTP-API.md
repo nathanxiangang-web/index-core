@@ -410,10 +410,22 @@ Body:
 ```json
 {
   "root_id": "11111111-1111-4111-8111-111111111111",
-  "scope_key": "/downloads",
+  "scope_key": "/",
   "reason": "POSSIBLE_CHANGE"
 }
 ```
+
+Scope-key rules:
+
+- `/` is the root scope;
+- non-root scopes are root-absolute, for example `/downloads`;
+- no trailing slash on non-root scopes;
+- no empty, `.`, or `..` components;
+- no backslash separators.
+
+The Hint transport validates scope syntax. During P0 execution, a non-root scoped
+refresh must also resolve to exactly one PRESENT canonical directory; otherwise
+the work fails closed as an invalid scope.
 
 Allowed `reason` values are:
 
@@ -429,7 +441,7 @@ Example with curl from the same host/process namespace:
 curl -i \
   -H "Authorization: Bearer $INDEXCORE_HINT_TOKEN" \
   -H 'Content-Type: application/json' \
-  --data '{"root_id":"'"$ROOT_ID"'","scope_key":"/downloads","reason":"POSSIBLE_CHANGE"}' \
+  --data '{"root_id":"'"$ROOT_ID"'","scope_key":"/","reason":"POSSIBLE_CHANGE"}' \
   "http://127.0.0.1:8090/internal/v1/mutation-hints"
 ```
 
@@ -439,7 +451,7 @@ Successful response:
 {
   "status": "accepted",
   "root_id": "11111111-1111-4111-8111-111111111111",
-  "scope_key": "/downloads",
+  "scope_key": "/",
   "work_state": "PENDING",
   "signal_seq": 7
 }
