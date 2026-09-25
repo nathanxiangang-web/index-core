@@ -30,6 +30,12 @@ type Config struct {
 	// env-only secret (never serialized, never exposed as a CLI flag).
 	HintAddr  string `json:"hint_addr,omitempty"`
 	HintToken string `json:"-"`
+
+	// P10 hybrid incremental runtime. Disabled by default; when enabled the wake
+	// interval must be within [1s, 60s]. It is a scheduler check interval, not
+	// provider polling cadence.
+	IncrementalRuntimeEnabled bool          `json:"incremental_runtime_enabled"`
+	IncrementalWakeInterval   time.Duration `json:"incremental_wake_interval"`
 }
 
 // Defaults returns the default configuration (loopback HTTP, safe limits).
@@ -42,6 +48,8 @@ func Defaults() Config {
 		ShutdownTimeout:    15 * time.Second,
 		LogLevel:           "info",
 		LogFormat:          "text",
+
+		IncrementalWakeInterval: 5 * time.Second,
 	}
 }
 
@@ -85,6 +93,20 @@ func Load() (Config, error) {
 	}
 	c.HintAddr = os.Getenv("INDEXCORE_HINT_ADDR")
 	c.HintToken = os.Getenv("INDEXCORE_HINT_TOKEN")
+	if v := os.Getenv("INDEXCORE_INCREMENTAL_RUNTIME_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("INDEXCORE_INCREMENTAL_RUNTIME_ENABLED: %w", err)
+		}
+		c.IncrementalRuntimeEnabled = b
+	}
+	if v := os.Getenv("INDEXCORE_INCREMENTAL_WAKE_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("INDEXCORE_INCREMENTAL_WAKE_INTERVAL: %w", err)
+		}
+		c.IncrementalWakeInterval = d
+	}
 	return c, nil
 }
 
@@ -101,6 +123,8 @@ func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.LogFormat, "log-format", c.LogFormat, "log format: text|json")
 	// P9: the hint token is deliberately env-only (no --hint-token flag).
 	fs.StringVar(&c.HintAddr, "hint-addr", c.HintAddr, "loopback address for the trusted hint transport (disabled when empty)")
+	fs.BoolVar(&c.IncrementalRuntimeEnabled, "incremental-runtime", c.IncrementalRuntimeEnabled, "enable the in-process P10 hybrid incremental runtime (default disabled)")
+	fs.DurationVar(&c.IncrementalWakeInterval, "incremental-wake-interval", c.IncrementalWakeInterval, "P10 scheduler wake interval (1s..60s)")
 }
 
 // LoopbackOnly reports whether the HTTP address binds only to loopback.
@@ -153,10 +177,20 @@ func (c Config) Validate() error {
 			return fmt.Errorf("INDEXCORE_HINT_TOKEN must be at least %d bytes when the hint transport is enabled", minHintTokenBytes)
 		}
 	}
+	if c.IncrementalRuntimeEnabled {
+		if c.IncrementalWakeInterval < minWakeInterval || c.IncrementalWakeInterval > maxWakeInterval {
+			return fmt.Errorf("INDEXCORE_INCREMENTAL_WAKE_INTERVAL must be within [%s, %s], got %s",
+				minWakeInterval, maxWakeInterval, c.IncrementalWakeInterval)
+		}
+	}
 	return nil
 }
 
-const minHintTokenBytes = 32
+const (
+	minHintTokenBytes = 32
+	minWakeInterval   = time.Second
+	maxWakeInterval   = 60 * time.Second
+)
 
 // HintEnabled reports whether the P9 trusted hint transport is enabled. An empty
 // HintAddr keeps the transport disabled so existing deployments are unchanged.

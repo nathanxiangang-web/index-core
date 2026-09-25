@@ -35,8 +35,46 @@ IndexCore
 | `INDEXCORE_LOG_FORMAT` | `text` | text/json |
 | `INDEXCORE_HINT_ADDR` | empty (disabled) | P9 hint listener, literal loopback `127.0.0.1:<port>` / `[::1]:<port>` |
 | `INDEXCORE_HINT_TOKEN` | empty | P9 hint bearer token, env-only, `>= 32` bytes when enabled |
+| `INDEXCORE_INCREMENTAL_RUNTIME_ENABLED` | `false` | P10 in-process hybrid incremental runtime |
+| `INDEXCORE_INCREMENTAL_WAKE_INTERVAL` | `5s` | P10 scheduler wake interval, `1s..60s` when enabled |
 
 See [.env.example](../.env.example).
+
+## Hybrid incremental runtime (P10 prototype)
+
+Disabled by default. When `INDEXCORE_INCREMENTAL_RUNTIME_ENABLED=true`, `serve`
+hosts one serialized in-process runtime that repeatedly invokes the accepted P6
+`RunCycle` under the **same** single-writer advisory lock:
+
+```text
+schema compatible
+  -> AcquireWriterLock
+  -> bounded stale-IN_FLIGHT startup recovery
+  -> existing Gate-3 admission worker
+  -> P10 hybrid incremental runtime
+  -> bind read-only Query listener
+  -> optional P9 Hint listener LAST
+```
+
+- `INDEXCORE_INCREMENTAL_WAKE_INTERVAL` (1s..60s) is a **scheduler check**
+  interval, not provider polling cadence. Actual watch eligibility remains owned
+  by persisted `ScopeWatchState.next_due_at` / `effective_interval_seconds` /
+  `deferred_until`.
+- Only `TRANSIENT_PROVIDER` and `THROTTLED` due `RETRY_WAIT` rows are
+  auto-promoted (max 5 per pass). `INTERNAL` / `BLOCKED` / `SUSPENDED` are never
+  auto-repaired.
+- Startup drains stale `IN_FLIGHT` roots (crash residue) in bounded batches before
+  any listener is exposed; a recovery error fails `serve` closed.
+- A P6 wall-time interruption with a proven committed claim recovers only that
+  root after the call returned; it is never retried inline.
+- Backlog continuation is capped at 4 consecutive cycles / 20 item attempts per
+  burst, then a 1s cooldown. Hint floods cannot bypass the cooldown.
+- An enabled runtime failure is **fatal to `serve`** (no silent degraded mode).
+- Shutdown order: drain Hint handlers -> cancel/join P10 runtime -> cancel/join the
+  existing worker -> shut down Query -> release the writer lock. The writer lock is
+  never released while P10 or the worker may still be running.
+- While `serve` owns the writer lock, manual `indexcore incremental run` still
+  fails with the writer-lock error (P7 remains mutually exclusive).
 
 ## Startup sequence
 
