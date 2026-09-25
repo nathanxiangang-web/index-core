@@ -160,6 +160,19 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 		workerDone <- runWorker(workerCtx)
 	}()
 
+	// failStartup funnels every post-worker-start startup error through one
+	// cleanup: cancel the worker and WAIT for it to actually stop before the
+	// deferred writer-lock release can run (G3-R2.4). Any bound Query listener is
+	// closed first so the Query-before-Hint guarantee is preserved.
+	failStartup := func(queryLn net.Listener, err error) error {
+		if queryLn != nil {
+			_ = queryLn.Close()
+		}
+		cancelWorker()
+		joinWorker(workerDone, cfg.ShutdownTimeout, logger)
+		return err
+	}
+
 	srv := httpapi.New(httpapi.Deps{
 		Query:     postgres.NewQueryReader(pool),
 		Readiness: postgres.NewReadiness(pool),
@@ -170,7 +183,7 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 	srv.Addr = cfg.HTTPAddr
 	queryLn, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
-		return fmt.Errorf("bind http listener %s: %w", cfg.HTTPAddr, err)
+		return failStartup(nil, fmt.Errorf("bind http listener %s: %w", cfg.HTTPAddr, err))
 	}
 
 	// The optional trusted Hint listener is created only AFTER writer ownership
@@ -181,18 +194,15 @@ func runServe(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 	if cfg.HintEnabled() {
 		ingester, ierr := newHintIngester(st)
 		if ierr != nil {
-			_ = queryLn.Close()
-			return fmt.Errorf("construct hint ingester: %w", ierr)
+			return failStartup(queryLn, fmt.Errorf("construct hint ingester: %w", ierr))
 		}
 		hintSrv, ierr = newHintTransport(hintapi.Deps{Ingester: ingester, Token: cfg.HintToken, Logger: logger})
 		if ierr != nil {
-			_ = queryLn.Close()
-			return fmt.Errorf("construct hint transport: %w", ierr)
+			return failStartup(queryLn, fmt.Errorf("construct hint transport: %w", ierr))
 		}
 		hintLn, lerr := net.Listen("tcp", cfg.HintAddr)
 		if lerr != nil {
-			_ = queryLn.Close()
-			return fmt.Errorf("bind hint listener %s: %w", cfg.HintAddr, lerr)
+			return failStartup(queryLn, fmt.Errorf("bind hint listener %s: %w", cfg.HintAddr, lerr))
 		}
 		hintDone = make(chan error, 1)
 		go func() {

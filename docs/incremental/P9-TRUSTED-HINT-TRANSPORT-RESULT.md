@@ -120,7 +120,7 @@ exiting unexpectedly is fatal (no silent degraded mode).
 
 ## 7. Tests and evidence
 
-P9 tests = **24**:
+P9 tests = **26**:
 
 - config (5): disabled default; invalid loopback/token rejection (including
   `127.0.0.2` and IPv4-mapped `[::ffff:127.0.0.1]`) and `127.0.0.1:<port>` /
@@ -136,14 +136,16 @@ P9 tests = **24**:
   body before the lifecycle gate drains.
 - hintapi boundary (1): `Deps` has no write-capable type.
 - hintapi timeout (1): shortened ingestion timeout cancels without retry.
-- app (7, real PostgreSQL): disabled-transport regression; writer-lock required
+- app (9, real PostgreSQL): disabled-transport regression; writer-lock required
   before the Hint address binds; occupied Query port fails serve before the Hint
   listener is exposed; occupied Hint port fails `serve` closed;
   unexpected Hint server failure is fatal; authenticated POST → P8 →
   `DirtyScopeWork` with duplicate HTTP hints coalescing to one row / `signal_seq`
   twice and **no Canonical resource** (no provider, no executor); shutdown with an
   in-flight Hint handler keeps the writer lock unacquirable until the handler
-  returns.
+  returns; a cancellation-resistant worker plus a failed Query bind, and the same
+  with a failed Hint bind, both keep the writer lock held until the worker
+  actually stops and release it only afterwards.
 - httpapi regression (1): the Query listener does not expose the hint route;
   `TestDepsExposeNoWriteCapability` remains green.
 
@@ -230,3 +232,33 @@ Four blockers from the P9 Round 1 review were fixed inside the authorized
    input length goes through a constant-length comparison.
 
 No Store/P8/P4/P5/P6/worker/migration change; `FROZEN_CONTRACT_CHANGES: NONE`.
+## 13. Round 2 rework (Issue #91 review)
+
+One startup-lifecycle blocker from the P9 Round 2 review was fixed inside
+`internal/runtime/app/**` (tests/docs included); the four Round 1 fixes remain
+PASS.
+
+**Startup-error worker join before writer-lock release.** The Round 1
+Query-before-Hint rework started the worker before the Query bind, so a Query
+bind, `newHintIngester`, `newHintTransport`, or Hint bind failure returned
+through `defer cancelWorker()` and the writer-lock release defer **without**
+joining the worker — a cancellation-resistant worker could still be alive while
+writer ownership was released.
+
+All post-worker-start startup errors now funnel through one `failStartup` helper
+that closes any bound Query listener, cancels the worker, and calls
+`joinWorker` (which waits for the worker to actually stop) **before** returning,
+so the deferred writer-lock release runs only after the started write-capable
+actor has stopped. The Query-before-Hint guarantee is preserved (the Query
+listener is closed first and Hint is never exposed on a failed startup).
+
+Proof (real PostgreSQL): `TestP9QueryBindFailureWaitsForWorkerBeforeLockRelease`
+and `TestP9HintBindFailureWaitsForWorkerBeforeLockRelease` use a
+cancellation-resistant worker (exits 400ms after cancellation) plus an occupied
+Query / Hint port, and assert that while the worker is still running a second
+Store cannot acquire the writer lock, that `runServe` returns only after the
+worker stops, and that the lock becomes acquirable only afterwards.
+
+P9 tests = 26 (config 5 / hintapi 9 + boundary 1 + timeout 1 / app 9 / httpapi 1).
+
+`FROZEN_CONTRACT_CHANGES: NONE`
