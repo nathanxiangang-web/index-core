@@ -46,7 +46,7 @@ The experimental subagent topology is retired.
 
 **IndexCore Core Development — COMPLETE for accepted Alpha scope**
 
-Operating mode: **Stable Alpha Foundation / Maintenance**
+Operating mode: **Stable Alpha Foundation / Incremental Hardening**
 
 **Post-MVP Incremental D0 and P0–P10 are COMPLETE / ARCHITECT_ACCEPTED.**
 
