@@ -440,7 +440,7 @@ Successful response:
   "status": "accepted",
   "root_id": "11111111-1111-4111-8111-111111111111",
   "scope_key": "/downloads",
-  "work_state": "READY",
+  "work_state": "PENDING",
   "signal_seq": 7
 }
 ```
