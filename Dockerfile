@@ -4,7 +4,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-ARG VERSION=0.3.0-alpha
+ARG VERSION=v0.4.0-alpha.1
 ARG COMMIT=unknown
 ARG DATE=unknown
 RUN CGO_ENABLED=0 go build \
