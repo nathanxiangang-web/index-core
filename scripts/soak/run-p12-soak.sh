@@ -30,6 +30,16 @@ source "$SCRIPT_DIR/lib.sh"
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+require_acceptance_minimum() { # name value minimum
+  local name="$1" value="$2" minimum="$3"
+  if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+    die "$name must be an integer >= $minimum in acceptance mode (got '$value')"
+  fi
+  if (( 10#$value < minimum )); then
+    die "$name must be >= $minimum in acceptance mode (got '$value')"
+  fi
+}
+
 P12_MODE="${P12_MODE:-test}"
 P12_PG_CONTAINER="${P12_PG_CONTAINER:-p12-postgres}"
 P12_PG_VOLUME="${P12_PG_VOLUME:-p12-pgdata}"
@@ -72,6 +82,8 @@ case "$P12_MODE" in
     P12_TARGET_VISIBILITY="${P12_TARGET_VISIBILITY:-100}"
     P12_SAMPLE_INTERVAL="${P12_SAMPLE_INTERVAL:-5}"
     P12_BURST_HINTS="${P12_BURST_HINTS:-24}"
+    require_acceptance_minimum P12_DURATION_SECONDS "$P12_DURATION_SECONDS" 1800
+    require_acceptance_minimum P12_TARGET_VISIBILITY "$P12_TARGET_VISIBILITY" 100
     P12_CRASH_RETRY_TIMEOUT="${P12_CRASH_RETRY_TIMEOUT:-180}"
     ;;
   full|smoke)
