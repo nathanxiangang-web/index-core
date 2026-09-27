@@ -1,6 +1,6 @@
 # Incremental P12 — Deployment Soak with Reference Test Web (Result)
 
-> Status: **SHORTENED TEST VALIDATION — PASSED (fail-closed)**
+> Status: **SHORTENED CROSS-REPO TEST VALIDATION — ARCHITECT_ACCEPTED**
 >
 > Issue: `nathanxiangang-web/index-core#103` (P12 Phase B)
 >
@@ -183,3 +183,39 @@ MIGRATION: NO
 GATE5: NO
 FROZEN_CONTRACT_CHANGES: NONE
 ```
+
+## 8. Architect cross-repository closeout
+
+IndexCore Phase B was Architect-accepted and merged:
+
+`94eab92ed98a0497e1270e8ace0d6df167cc8aa2`
+
+Reference Test Web Phase A was Architect-accepted and merged:
+
+`169535dcd4ca8cec5bfe59534c086f93698168d7`
+
+Important provenance note:
+
+- the live Phase-B soak used the pinned observer head
+  `98884cb94beb300e8a4167007ac7a84114b03a57`;
+- the Reference Test Web PR later added only the requested exact
+  `not_ready + expected-resource` regression and terminology cleanup before
+  final merge;
+- no test-Web application/client behavior changed after the live soak.
+
+Final status:
+
+```text
+P12 shortened cross-repo test validation    ARCHITECT_ACCEPTED
+long-duration >=30min / >=100 soak          NOT RUN / NOT CLAIMED
+runtime default-on                          NOT AUTHORIZED
+native delta/provider cursor                NOT AUTHORIZED
+network/public Hint                         NOT AUTHORIZED
+second writer / HA                          NOT AUTHORIZED
+migration/schema expansion                  NOT AUTHORIZED
+Gate 5                                      NOT AUTHORIZED
+FROZEN_CONTRACT_CHANGES                     NONE
+```
+
+Because the original long-duration acceptance profile was not run, no full-P12
+exit decision is recorded by this shortened-test closeout.
