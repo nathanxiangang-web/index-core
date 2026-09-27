@@ -1,0 +1,206 @@
+name: Release Alpha
+
+on:
+  push:
+    tags:
+      - "v*-alpha.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify tag commit (PostgreSQL 18)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: indexcore
+          POSTGRES_PASSWORD: indexcore
+          POSTGRES_DB: indexcore
+        ports:
+          - 5432:5432
+        # Disposable CI-only credentials; never used outside this job.
+        options: >-
+          --health-cmd "pg_isready -U indexcore -d indexcore"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      INDEXCORE_TEST_DATABASE_URL: postgres://indexcore:indexcore@127.0.0.1:5432/indexcore?sslmode=disable
+
+    steps:
+      - name: Checkout tag commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify Alpha release boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]]; then
+            echo "Unsupported release tag: ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "Release commit ${GITHUB_SHA} is not in origin/main history" >&2
+            exit 1
+          fi
+          if ! grep -Fqx "ARG VERSION=${GITHUB_REF_NAME}" Dockerfile; then
+            echo "Dockerfile VERSION does not match tag ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt is required for:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: Full PostgreSQL 18 test suite
+        run: go test -p 1 -count=1 ./...
+
+      - name: Targeted race suite (hybrid runtime + app lifecycle)
+        run: go test -race -count=1 ./internal/runtime/incrementalruntime ./internal/runtime/app
+
+  publish:
+    name: Publish linux/amd64 image and pre-release
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout tag commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare immutable release metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          short_sha="${GITHUB_SHA::7}"
+          build_date="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          {
+            echo "version=${version}"
+            echo "short_sha=${short_sha}"
+            echo "build_date=${build_date}"
+            echo "image=${image}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push linux/amd64 image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ steps.metadata.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ steps.metadata.outputs.build_date }}
+          tags: |
+            ${{ steps.metadata.outputs.image }}:${{ steps.metadata.outputs.version }}
+            ${{ steps.metadata.outputs.image }}:sha-${{ steps.metadata.outputs.short_sha }}
+            ${{ steps.metadata.outputs.image }}:alpha
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.metadata.outputs.version }}
+            org.opencontainers.image.created=${{ steps.metadata.outputs.build_date }}
+
+      - name: Verify image digest and embedded version
+        id: verify-image
+        env:
+          IMAGE: ${{ steps.metadata.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          BUILD_DATE: ${{ steps.metadata.outputs.build_date }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${DIGEST}"
+          docker buildx imagetools inspect "${IMAGE}@${DIGEST}"
+          docker pull --platform linux/amd64 "${IMAGE}@${DIGEST}"
+          actual="$(docker run --rm --platform linux/amd64 "${IMAGE}@${DIGEST}" version)"
+          expected="indexcore ${VERSION} (commit ${GITHUB_SHA}, built ${BUILD_DATE})"
+          printf 'Expected: %s\nActual:   %s\n' "${expected}" "${actual}"
+          test "${actual}" = "${expected}"
+          printf '%s@%s\n' "${IMAGE}" "${DIGEST}" > image-digest.txt
+          printf '### Published image\n\n`%s@%s`\n' "${IMAGE}" "${DIGEST}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Create GitHub pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ steps.metadata.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          SHORT_SHA: ${{ steps.metadata.outputs.short_sha }}
+        shell: bash
+        run: |
+          cat > release-notes.md <<EOF
+          ## IndexCore ${VERSION}
+
+          - Release commit: ${GITHUB_SHA}
+          - Validated functional baseline: d7c49e8a2cc1c51ac1eb199547e8d3f172ce6332
+          - Image: ${IMAGE}@${DIGEST}
+          - Tags: ${VERSION}, sha-${SHORT_SHA}, alpha
+          - Platform: linux/amd64 only
+
+          ### Validation boundary
+
+          - P12: **SHORTENED CROSS-REPO TEST VALIDATION -- ARCHITECT_ACCEPTED**
+          - Long acceptance soak: **NOT RUN / NOT CLAIMED**
+          - Incremental/hybrid runtime remains default disabled.
+          - Runtime default-on is **NOT AUTHORIZED**.
+          - Multi-architecture support is **NOT CLAIMED**.
+          - FROZEN_CONTRACT_CHANGES: NONE
+          EOF
+          gh release create "${VERSION}" \
+            --verify-tag \
+            --prerelease \
+            --title "IndexCore ${VERSION}" \
+            --notes-file release-notes.md \
+            image-digest.txt
