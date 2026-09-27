@@ -16,7 +16,7 @@ Core development for accepted Alpha scope: COMPLETE
 Gate 1–4: CLOSED / ARCHITECT_ACCEPTED
 Post-MVP Incremental P0–P10: ARCHITECT_ACCEPTED
 P11 Production Hybrid Runtime Hardening: ARCHITECT_ACCEPTED
-P12 Deployment Soak with Reference Consumer: ARCHITECT PLAN ACTIVE
+P12 Deployment Soak with Reference Test Web: SHORTENED TEST VALIDATION COMPLETE / ARCHITECT_ACCEPTED
 Operating mode: Stable Alpha Foundation / Incremental Hardening
 Gate 5: NOT AUTHORIZED
 ```
@@ -134,9 +134,14 @@ P11 Production Hybrid Runtime Hardening is complete and Architect-accepted
 
 P11 exit decision: `AUTHORIZE_DEPLOYMENT_SOAK`.
 
-Deployment soak is now the P12 architecture-planning phase. The accepted Reference Web
-(`nathanxiangang-web/indexcore-reference-web`) is the external read-only consumer baseline.
-Implementation remains unauthorized until the P12 plan merges and bounded paired Issues are opened.
+P12 cross-repository shortened test validation is complete.
+
+IndexCore Phase B PR #106 merged as `94eab92`.
+Reference Test Web Phase A PR #5 merged as `169535d`.
+
+The owner explicitly shortened wall-clock duration, so this result is **not** the
+original >=30 minute / >=100 visibility acceptance soak and does not authorize
+runtime default-on or any next feature phase.
 
 When work is authorized:
 

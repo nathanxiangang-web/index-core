@@ -1,6 +1,6 @@
 # Post-MVP Incremental Ingestion Blueprint
 
-> Status: **D0 COMPLETE / P0–P11 ARCHITECT_ACCEPTED / P12 DEPLOYMENT SOAK PLAN ACTIVE / GATE 5 NOT AUTHORIZED**
+> Status: **D0 COMPLETE / P0–P11 ARCHITECT_ACCEPTED / P12 SHORTENED CROSS-REPO TEST VALIDATION COMPLETE / GATE 5 NOT AUTHORIZED**
 >
 > Architecture tracking: #57
 >
@@ -1271,7 +1271,7 @@ Gate 5 remain unauthorized.
 `FROZEN_CONTRACT_CHANGES: NONE`.
 
 
-## 36. P12 deployment soak with reference consumer
+## 36. P12 deployment soak with Reference Test Web
 
 P11 exit authorized deployment soak. P12 is governed by:
 
@@ -1291,5 +1291,55 @@ fixture, continuous Reference Web observations, provider transient retry,
 Hint burst, graceful restart, and deterministic crash/startup recovery.
 
 No production contract expansion is authorized.
+
+`FROZEN_CONTRACT_CHANGES: NONE`.
+
+
+## 37. P12 shortened cross-repository validation closeout
+
+The task owner explicitly requested a shortened test run rather than the original
+long-duration acceptance profile.
+
+Accepted merges:
+
+```text
+IndexCore P12 Phase B:
+94eab92ed98a0497e1270e8ace0d6df167cc8aa2
+
+Reference Test Web P12 Phase A:
+169535dcd4ca8cec5bfe59534c086f93698168d7
+```
+
+Accepted shortened evidence includes:
+
+- 2 ACTIVE roots / 2 hot scopes;
+- 42 mutation -> Reference Test Web visibility confirmations;
+- 24-Hint burst;
+- provider transient -> automatic retry promotion -> visibility;
+- graceful restart with Reference Test Web degraded/recovery behavior;
+- deterministic crash with startup stale-IN_FLIGHT recovery;
+- final durable-state drain and writer-lock release;
+- fail-closed soak harness;
+- PostgreSQL 18 CI and targeted race evidence;
+- Gate-4 Reference Test Web regression `PASS=52 FAIL=0`.
+
+The reusable harness distinguishes:
+
+```text
+P12_MODE=test
+  -> owner-directed shortened validation
+
+P12_MODE=acceptance
+  -> requires duration >= 1800s
+  -> requires visibility target >= 100
+```
+
+The >=30 minute / >=100 visibility acceptance profile was **not run** and is
+**not claimed**.
+
+Therefore no P12 full-acceptance exit decision is taken here. In particular this
+closeout does not authorize runtime default-on, native delta/provider cursor,
+network/public Hint, second writer, migration/schema expansion, destructive
+removal, direct 115 integration, or Gate 5.
 
 `FROZEN_CONTRACT_CHANGES: NONE`.
