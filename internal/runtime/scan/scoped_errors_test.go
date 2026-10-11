@@ -302,7 +302,7 @@ func TestScanScopeTypedIncompletePayloadIsTransient(t *testing.T) {
 		`{"code":200,"message":"ok","data":null}`,
 		`{"code":200,"message":"ok","data":{}}`,
 		`{"code":200,"message":"ok","data":{"total":0}}`,
-		`{"code":200,"message":"ok","data":{"content":null,"total":0}}`,
+		`{"code":200,"message":"ok","data":{"content":null,"total":null}}`,
 		`{"code":200,"message":"ok","data":{"content":[]}}`,
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -313,6 +313,41 @@ func TestScanScopeTypedIncompletePayloadIsTransient(t *testing.T) {
 		_, err := p4ScanService(st).ScanScope(ctx, p4ScopeRootID, "/", 100)
 		assertScanScopeKind(t, err, scan.ScopeFailureTransientProvider)
 		srv.Close()
+	}
+}
+
+func TestScanScopeExplicitNullEmptyIsAdditiveSafe(t *testing.T) {
+	var requests int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if atomic.AddInt32(&requests, 1) == 1 {
+			_, _ = io.WriteString(w, `{"code":200,"data":{"content":[{"name":"keep.txt","is_dir":false,"size":1}],"total":1}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"code":200,"data":{"content":null,"total":0}}`)
+	}))
+	defer srv.Close()
+	st, ctx := p4ScanSetup(t, "alist", srv.URL, "/", true, domain.RootActive)
+	svc := p4ScanService(st)
+	if _, err := svc.ScanScope(ctx, p4ScopeRootID, "/", 100); err != nil {
+		t.Fatalf("baseline scan: %v", err)
+	}
+	result, err := svc.ScanScope(ctx, p4ScopeRootID, "/", 100)
+	if err != nil {
+		t.Fatalf("explicit null/zero scan: %v", err)
+	}
+	if result.Outcome.Status != domain.AdmissionApplied {
+		t.Fatalf("empty PARTIAL scan must APPLY: %+v", result.Outcome)
+	}
+	assertSnapshotScopedSemantics(t, st, result.SnapshotID)
+	paths := activePaths(t, postgres.NewQueryReader(st.Pool()), p4ScopeRootID)
+	if !paths["/keep.txt"] || len(paths) != 1 {
+		t.Fatalf("empty PARTIAL scan must preserve PRESENT resources: %v", paths)
+	}
+	for _, event := range journalEventTypes(t, st, p4ScopeRootID) {
+		if event == "resource-removed" {
+			t.Fatal("empty PARTIAL scan must not emit resource-removed")
+		}
 	}
 }
 

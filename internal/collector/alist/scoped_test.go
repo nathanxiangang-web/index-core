@@ -3,16 +3,87 @@ package alist_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync/atomic"
 	"testing"
 
+	"github.com/nathanxiangang-web/index-core/internal/collector/adapter"
 	"github.com/nathanxiangang-web/index-core/internal/collector/alist"
 	"github.com/nathanxiangang-web/index-core/internal/domain"
 )
+
+func TestScanScopeExplicitEmptyResponseContract(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		kind alist.ScopedErrorKind
+	}{
+		{"null zero", `{"code":200,"data":{"content":null,"total":0}}`, ""},
+		{"array zero", `{"code":200,"data":{"content":[],"total":0}}`, ""},
+		{"whitespace null", `{"code":200,"data":{"content": null ,"total":0}}`, ""},
+		{"missing data", `{"code":200}`, alist.ScopedTransientProvider},
+		{"null data", `{"code":200,"data":null}`, alist.ScopedTransientProvider},
+		{"array data", `{"code":200,"data":[]}`, alist.ScopedTransientProvider},
+		{"missing content zero", `{"code":200,"data":{"total":0}}`, alist.ScopedTransientProvider},
+		{"missing total", `{"code":200,"data":{"content":null}}`, alist.ScopedTransientProvider},
+		{"null total", `{"code":200,"data":{"content":null,"total":null}}`, alist.ScopedTransientProvider},
+		{"string total", `{"code":200,"data":{"content":null,"total":"0"}}`, alist.ScopedTransientProvider},
+		{"fraction total", `{"code":200,"data":{"content":null,"total":0.5}}`, alist.ScopedTransientProvider},
+		{"decimal total", `{"code":200,"data":{"content":null,"total":0.0}}`, alist.ScopedTransientProvider},
+		{"negative total", `{"code":200,"data":{"content":null,"total":-1}}`, alist.ScopedTransientProvider},
+		{"null positive total", `{"code":200,"data":{"content":null,"total":1}}`, alist.ScopedTransientProvider},
+		{"object content", `{"code":200,"data":{"content":{},"total":0}}`, alist.ScopedTransientProvider},
+		{"string content", `{"code":200,"data":{"content":"null","total":0}}`, alist.ScopedTransientProvider},
+		{"number content", `{"code":200,"data":{"content":0,"total":0}}`, alist.ScopedTransientProvider},
+		{"bool content", `{"code":200,"data":{"content":false,"total":0}}`, alist.ScopedTransientProvider},
+		{"truncated array", `{"code":200,"data":{"content":[],"total":1}}`, alist.ScopedTransientProvider},
+		{"array count mismatch", `{"code":200,"data":{"content":[{"name":"a"}],"total":0}}`, alist.ScopedTransientProvider},
+		{"overflow", `{"code":200,"data":{"content":[{"name":"a"},{"name":"b"}],"total":2}}`, alist.ScopedTooLarge},
+		{"unauthorized", `{"code":401,"data":{"content":null,"total":0}}`, alist.ScopedAuthOrPermission},
+		{"forbidden", `{"code":403,"data":{"content":null,"total":0}}`, alist.ScopedAuthOrPermission},
+		{"provider failure", `{"code":500,"data":{"content":null,"total":0}}`, alist.ScopedTransientProvider},
+		{"malformed JSON", `{"code":200,"data":{"content":null,"total":0}`, alist.ScopedTransientProvider},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				var req scopedListReq
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Error(err)
+				}
+				if r.Method != http.MethodPost || r.URL.Path != "/api/fs/list" || !req.Refresh || req.Page != 1 || req.PerPage != 2 {
+					t.Errorf("unexpected forced single-page request: %s %s %+v", r.Method, r.URL.Path, req)
+				}
+				io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+			raw, err := (alist.Adapter{BaseURL: srv.URL}).ScanScope(context.Background(), "/empty", 1)
+			if calls.Load() != 1 {
+				t.Fatalf("calls=%d, want exactly one", calls.Load())
+			}
+			if tc.kind != "" {
+				var typed *alist.ScopedError
+				if !errors.As(err, &typed) || typed.Kind != tc.kind {
+					t.Fatalf("error=%v, want typed %s", err, tc.kind)
+				}
+				if !reflect.DeepEqual(raw, adapter.RawScan{}) {
+					t.Fatalf("invalid payload must return no observation/removal evidence: %+v", raw)
+				}
+				return
+			}
+			if err != nil || len(raw.Entries) != 0 || raw.TraversalStatus != domain.TraversalPartial || raw.Freshness != domain.FreshRefreshed || raw.Assurance != domain.WeakFailureVisibility || raw.ProviderIdentityAssurance != domain.IdentityUnverified || raw.SkippedKnownEmpty || raw.SkippedScopes != nil {
+				t.Fatalf("explicit empty must retain additive-safe PARTIAL evidence: %+v, err=%v", raw, err)
+			}
+		})
+	}
+}
 
 type scopedListReq struct {
 	Path    string `json:"path"`
