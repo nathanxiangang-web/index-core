@@ -113,13 +113,13 @@ func TestScopedErrorInvalidBaseURLIsConfigInvalid(t *testing.T) {
 
 func TestScopedErrorIncompleteListPayloadIsTransient(t *testing.T) {
 	// A scoped observation is only valid when the provider explicitly returns
-	// both content and total; missing/null fields must never be completed from Go
-	// zero values into a fabricated empty directory.
+	// both content and total; missing content or missing/null total must never be
+	// completed from Go zero values into a fabricated empty directory.
 	bodies := []string{
 		`{"code":200,"message":"ok","data":null}`,
 		`{"code":200,"message":"ok","data":{}}`,
 		`{"code":200,"message":"ok","data":{"total":0}}`,
-		`{"code":200,"message":"ok","data":{"content":null,"total":0}}`,
+		`{"code":200,"message":"ok","data":{"content":null,"total":null}}`,
 		`{"code":200,"message":"ok","data":{"content":[]}}`,
 		`{"code":200,"message":"ok","data":{"content":[],"total":-1}}`,
 	}

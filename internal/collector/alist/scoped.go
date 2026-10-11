@@ -1,6 +1,7 @@
 package alist
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -143,10 +144,8 @@ func (a Adapter) listPageRefresh(ctx context.Context, token, dir string, perPage
 	if err := json.Unmarshal(resp.Data, &data); err != nil {
 		return nil, 0, scopedWrap(ScopedTransientProvider, err)
 	}
-	// The provider must explicitly return both content and total. Missing/null
-	// fields must never be completed from Go zero values into a fabricated empty
-	// directory.
-	if data == nil || data.Content == nil || data.Total == nil {
+	// Preserve key presence: a missing content key is not an empty directory.
+	if data == nil || len(data.Content) == 0 || data.Total == nil {
 		return nil, 0, scopedErrorf(ScopedTransientProvider,
 			"alist scoped refresh %q returned an incomplete payload (content/total missing)", dir)
 	}
@@ -154,18 +153,31 @@ func (a Adapter) listPageRefresh(ctx context.Context, token, dir string, perPage
 		return nil, 0, scopedErrorf(ScopedTransientProvider,
 			"alist scoped refresh %q returned a negative total %d", dir, *data.Total)
 	}
+	// Stock OpenList represents an empty directory as explicit null + integer
+	// zero. This narrow compatibility case remains a PARTIAL observation.
+	if bytes.Equal(bytes.TrimSpace(data.Content), []byte("null")) {
+		if *data.Total != 0 {
+			return nil, 0, scopedErrorf(ScopedTransientProvider,
+				"alist scoped refresh %q returned null content with nonzero total", dir)
+		}
+		return []item{}, 0, nil
+	}
+	var items []item
+	if err := json.Unmarshal(data.Content, &items); err != nil {
+		return nil, 0, scopedWrap(ScopedTransientProvider, err)
+	}
 	// total == len(content) is intentionally enforced by ScanScope AFTER the
 	// overflow check: a legitimate total > per_page truncation is an overflow,
 	// not a malformed short page.
-	return *data.Content, *data.Total, nil
+	return items, *data.Total, nil
 }
 
 // scopedListData is the scoped decoder shape. Field presence is significant:
-// content and total must both be provider-declared (an empty array is a legal
-// empty directory, but a missing/null field is not).
+// content and integer total must both be provider-declared. Explicit null
+// content is accepted only with total zero; missing fields are never inferred.
 type scopedListData struct {
-	Content *[]item `json:"content"`
-	Total   *int    `json:"total"`
+	Content json.RawMessage `json:"content"`
+	Total   *int            `json:"total"`
 }
 
 // validateScopedBaseURL rejects a persisted base URL that can never form a valid
