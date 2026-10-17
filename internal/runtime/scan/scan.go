@@ -70,6 +70,9 @@ func (s *Service) collector(kind string, ac adapterConfig) (adapter.Collector, e
 type Result struct {
 	SnapshotID string
 	Outcome    postgres.ReconcileOutcome
+	// ChildScopes contains only observed direct directories in root-relative
+	// scope-key coordinates. It is scheduling evidence, never completeness.
+	ChildScopes []string
 }
 
 // Scan runs one scan for a root through the full runtime path.

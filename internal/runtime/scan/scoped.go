@@ -206,7 +206,13 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 	if serr := scanOutcomeError(raw.TraversalStatus, out); serr != nil {
 		return Result{SnapshotID: snapID, Outcome: out}, scopeWrap(s.lifecycleFailureKind(ctx, rootID), serr)
 	}
-	return Result{SnapshotID: snapID, Outcome: out}, nil
+	children := []string{}
+	for _, entry := range raw.Entries {
+		if entry.IsDir {
+			children = append(children, strings.TrimSuffix("/"+strings.Trim(rel, "/"), "/")+"/"+entry.Name)
+		}
+	}
+	return Result{SnapshotID: snapID, Outcome: out, ChildScopes: children}, nil
 }
 
 // lifecycleFailureKind attributes a post-observation rejection to a root

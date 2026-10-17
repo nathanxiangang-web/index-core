@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/nathanxiangang-web/index-core/internal/domain"
@@ -26,6 +28,12 @@ type WorkStore interface {
 // ScopedScanner is the P0 scoped-refresh seam. *scan.Service implements it.
 type ScopedScanner interface {
 	ScanScope(ctx context.Context, rootID, scope string, maxEntries int) (scan.Result, error)
+}
+
+// DiscoveryStore commits follow-up scopes and the parent's verified prefix in
+// one transaction. A crash cannot strand a verified parent without its children.
+type DiscoveryStore interface {
+	CompleteSuccessWithChildren(context.Context, string, string, int64, []string, time.Time) (state.DirtyScopeWork, error)
 }
 
 // Result exposes the durable transitions of one ExecuteOne invocation.
@@ -59,6 +67,11 @@ func New(store WorkStore, scanner ScopedScanner, cfg Config, now func() time.Tim
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
+	}
+	if cfg.DiscoveryScope != "" {
+		if _, ok := store.(DiscoveryStore); !ok {
+			return nil, errors.New("incrementalexec: discovery requires atomic completion store")
+		}
 	}
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
@@ -126,7 +139,16 @@ func (e *Executor) ExecuteOne(ctx context.Context) (Result, error) {
 	}
 
 	completionNow := e.now()
-	done, err := e.store.CompleteSuccess(ctx, claimed.RootID, claimed.ScopeKey, *claimed.ClaimedSignalSeq, completionNow)
+	children, childErr := discoveryChildren(e.cfg.DiscoveryScope, claimed.ScopeKey, scanRes.ChildScopes)
+	if childErr != nil {
+		return e.completeFailure(ctx, res, claimed, state.ErrorInternal, childErr)
+	}
+	var done state.DirtyScopeWork
+	if len(children) > 0 {
+		done, err = e.store.(DiscoveryStore).CompleteSuccessWithChildren(ctx, claimed.RootID, claimed.ScopeKey, *claimed.ClaimedSignalSeq, children, completionNow)
+	} else {
+		done, err = e.store.CompleteSuccess(ctx, claimed.RootID, claimed.ScopeKey, *claimed.ClaimedSignalSeq, completionNow)
+	}
 	if err != nil {
 		// Never re-scan and never tight-loop completion: durable recovery owns the
 		// repair.
@@ -137,6 +159,32 @@ func (e *Executor) ExecuteOne(ctx context.Context) (Result, error) {
 	}
 	res.FinalWorkState = done.WorkState
 	return res, nil
+}
+
+// Discovery is bounded to eight levels below an explicit subtree, and at most
+// the existing 1000-entry scope cap per completion. No provider recursion or
+// recurring watch is added. Re-observing a directory deliberately re-verifies
+// its children, including files that arrived after an earlier empty observation.
+func discoveryChildren(prefix, parent string, observed []string) ([]string, error) {
+	if prefix == "" || (parent != prefix && !strings.HasPrefix(parent, strings.TrimSuffix(prefix, "/")+"/")) {
+		return nil, nil
+	}
+	if len(observed) > scan.MaxScopedEntries {
+		return nil, errors.New("discovery: child count exceeds scope cap")
+	}
+	children := []string{}
+	seen := map[string]bool{}
+	for _, child := range observed {
+		if state.ValidateScopeKey(child) != nil || path.Dir(child) != parent {
+			return nil, errors.New("discovery: invalid direct child")
+		}
+		rel := strings.TrimPrefix(child, strings.TrimSuffix(prefix, "/")+"/")
+		if len(strings.Split(rel, "/")) <= 8 && !seen[child] {
+			children = append(children, child)
+			seen[child] = true
+		}
+	}
+	return children, nil
 }
 
 // completeFailure records a classified failure through P3 and returns the
