@@ -52,13 +52,21 @@ func (p RetryPolicy) Validate() error {
 // three retry delays. There is no hidden scheduler cadence.
 type Config struct {
 	MaxEntriesPerScope int
-	Retry              RetryPolicy
+	// Empty disables child discovery. Otherwise only this subtree is expanded;
+	// each one-shot still performs exactly one provider refresh.
+	DiscoveryScope string
+	Retry          RetryPolicy
 }
 
 // Validate fails before any selection or claim when the configuration is
 // invalid: max_entries must be inside the accepted P0 hard cap and every retry
 // delay strictly positive.
 func (c Config) Validate() error {
+	if c.DiscoveryScope != "" {
+		if err := state.ValidateScopeKey(c.DiscoveryScope); err != nil {
+			return fmt.Errorf("discovery_scope: %w", err)
+		}
+	}
 	if c.MaxEntriesPerScope < 0 || c.MaxEntriesPerScope > scan.MaxScopedEntries {
 		return fmt.Errorf("max_entries_per_scope must be within [0, %d], got %d",
 			scan.MaxScopedEntries, c.MaxEntriesPerScope)

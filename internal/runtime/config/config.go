@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/nathanxiangang-web/index-core/internal/incremental/state"
 )
 
 // Config is the runtime configuration for the indexcore process.
@@ -36,6 +38,7 @@ type Config struct {
 	// provider polling cadence.
 	IncrementalRuntimeEnabled bool          `json:"incremental_runtime_enabled"`
 	IncrementalWakeInterval   time.Duration `json:"incremental_wake_interval"`
+	IncrementalDiscoveryScope string        `json:"incremental_discovery_scope,omitempty"`
 }
 
 // Defaults returns the default configuration (loopback HTTP, safe limits).
@@ -93,6 +96,7 @@ func Load() (Config, error) {
 	}
 	c.HintAddr = os.Getenv("INDEXCORE_HINT_ADDR")
 	c.HintToken = os.Getenv("INDEXCORE_HINT_TOKEN")
+	c.IncrementalDiscoveryScope = os.Getenv("INDEXCORE_INCREMENTAL_DISCOVERY_SCOPE")
 	if v := os.Getenv("INDEXCORE_INCREMENTAL_RUNTIME_ENABLED"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
@@ -144,6 +148,11 @@ func (c Config) LoopbackOnly() bool {
 
 // Validate rejects an invalid configuration before any background work starts.
 func (c Config) Validate() error {
+	if c.IncrementalDiscoveryScope != "" {
+		if err := state.ValidateScopeKey(c.IncrementalDiscoveryScope); err != nil {
+			return fmt.Errorf("INDEXCORE_INCREMENTAL_DISCOVERY_SCOPE: %w", err)
+		}
+	}
 	if strings.TrimSpace(c.DatabaseURL) == "" {
 		return errors.New("database URL is required (INDEXCORE_DATABASE_URL or --database-url)")
 	}

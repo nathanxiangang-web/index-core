@@ -23,6 +23,7 @@ var buildIncrementalCycle = func(st *postgres.Store, cfg config.Config, logger *
 	scanner := scan.New(st, cfg.RclonePath, cfg.RcloneConfig, cfg.ScanTimeout, logger)
 	one, err := incrementalexec.New(st, scanner, incrementalexec.Config{
 		MaxEntriesPerScope: 1000,
+		DiscoveryScope:     cfg.IncrementalDiscoveryScope,
 		Retry: incrementalexec.RetryPolicy{
 			TransientProvider: 30 * time.Second,
 			Throttled:         45 * time.Second,

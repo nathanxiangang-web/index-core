@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -520,14 +521,36 @@ func (s *Store) ClaimWork(ctx context.Context, rootID, scopeKey string, expected
 
 // CompleteSuccess records a successful claimed prefix. Lock order: Root -> Watch -> Work.
 func (s *Store) CompleteSuccess(ctx context.Context, rootID, scopeKey string, claimedSignalSeq int64, now time.Time) (state.DirtyScopeWork, error) {
+	return s.CompleteSuccessWithChildren(ctx, rootID, scopeKey, claimedSignalSeq, nil, now)
+}
+
+// CompleteSuccessWithChildren atomically records a verified prefix and queues
+// observed child directories using the existing durable work table. Root-first
+// locking serializes all work mutations for this root, including concurrent hints.
+func (s *Store) CompleteSuccessWithChildren(ctx context.Context, rootID, scopeKey string, claimedSignalSeq int64, children []string, now time.Time) (state.DirtyScopeWork, error) {
+	if err := state.ValidateScopeKey(scopeKey); err != nil {
+		return state.DirtyScopeWork{}, err
+	}
+	if len(children) > 1000 {
+		return state.DirtyScopeWork{}, fmt.Errorf("discovery: too many children")
+	}
+	for _, child := range children {
+		if state.ValidateScopeKey(child) != nil || path.Dir(child) != scopeKey || child == scopeKey {
+			return state.DirtyScopeWork{}, fmt.Errorf("discovery: invalid direct child")
+		}
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return state.DirtyScopeWork{}, err
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := lockRootForUpdate(ctx, tx, rootID); err != nil {
+	lifecycle, err := lockRootForUpdate(ctx, tx, rootID)
+	if err != nil {
 		return state.DirtyScopeWork{}, err
+	}
+	if len(children) > 0 && !activeFromLifecycle(lifecycle) {
+		return state.DirtyScopeWork{}, fmt.Errorf("discovery: root is not active")
 	}
 	if _, _, err := lockWatchForUpdate(ctx, tx, rootID, scopeKey); err != nil {
 		return state.DirtyScopeWork{}, err
@@ -544,6 +567,16 @@ func (s *Store) CompleteSuccess(ctx context.Context, rootID, scopeKey string, cl
 		return state.DirtyScopeWork{}, ErrStaleClaim
 	}
 	claimedSources := wk.ClaimedSourceSet
+	for _, child := range children {
+		if _, _, err := lockWatchForUpdate(ctx, tx, rootID, child); err != nil {
+			return state.DirtyScopeWork{}, err
+		}
+		if _, err := mergeSignalTx(ctx, tx, state.DirtySignal{RootID: rootID, ScopeKey: child,
+			Source: state.SourceRecovery, Reason: state.ReasonPossibleChange,
+			Priority: state.PriorityNormal, SeenAt: now}, true); err != nil {
+			return state.DirtyScopeWork{}, err
+		}
+	}
 
 	wk.LastAttemptFinishedAt = &now
 	wk.LastVerifiedAt = &now
