@@ -45,6 +45,7 @@ func (a Adapter) directoryTopology(ctx context.Context, scope string) string {
 		ID       int64  `json:"id"`
 		Mount    string `json:"mount_path"`
 		Status   string `json:"status"`
+		Driver   string `json:"driver"`
 		Disabled *bool  `json:"disabled"`
 		Modified string `json:"modified"`
 	}
@@ -77,7 +78,10 @@ func (a Adapter) directoryTopology(ctx context.Context, scope string) string {
 			return ""
 		}
 		if absolute == s.Mount || strings.HasPrefix(absolute, strings.TrimSuffix(s.Mount, "/")+"/") {
-			if s.Status != "work" {
+			// Alias/union covering stores can merge another namespace internally.
+			// Only the concrete live-tested driver is authority-qualified here;
+			// other drivers need their own failure/completeness contract tests.
+			if s.Status != "work" || s.Driver != "115 Open" {
 				return ""
 			}
 			cover = true

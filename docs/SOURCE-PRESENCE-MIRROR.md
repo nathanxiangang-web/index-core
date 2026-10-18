@@ -20,7 +20,10 @@ IO3 v5 includes the topology digest, avoiding replay of old false-removal decisi
 Do not disable unrelated mounts or move physical files to bypass this guard.
 A scope containing a nested virtual mount cannot safely mirror absence with this
 OpenList API. Its deletions remain paused; require an independently trustworthy
-source view before enabling. Safe child scopes may retain bounded confirmation.
+source view before enabling. Only a concrete115 Open covering storage is
+authority-qualified; Alias/unknown drivers cannot certify another namespace.
+Other drivers need dedicated failure/completeness contracts and tests. Safe
+child scopes may retain bounded confirmation.
 Recovery uses existing root-scoped queue CAS and normal re-observation, not SQL
 resurrection of old tombstones. Confirm all library/download partitions and
 surviving sibling subtrees over subsequent cycles, not a single initial total.

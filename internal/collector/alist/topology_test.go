@@ -10,7 +10,7 @@ import (
 )
 
 func TestMirrorTopologyRejectsVirtualOnlySuccess(t *testing.T) {
-	for _, scenario := range []string{"direct", "virtual-only", "hidden-virtual", "nested-virtual", "unrelated-mount", "missing-credential", "topology-denied", "truncated-topology", "topology-changed", "storage-unhealthy"} {
+	for _, scenario := range []string{"direct", "virtual-only", "hidden-virtual", "nested-virtual", "unrelated-mount", "missing-credential", "topology-denied", "truncated-topology", "topology-changed", "storage-unhealthy", "alias-cover", "unknown-driver"} {
 		t.Run(scenario, func(t *testing.T) {
 			topologyCalls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -30,7 +30,14 @@ func TestMirrorTopologyRejectsVirtualOnlySuccess(t *testing.T) {
 					if scenario == "storage-unhealthy" {
 						status = "error"
 					}
-					mounts := []map[string]any{{"id": 1, "mount_path": "/drive", "status": status, "disabled": false}}
+					driver := "115 Open"
+					if scenario == "alias-cover" {
+						driver = "Alias"
+					}
+					if scenario == "unknown-driver" {
+						driver = ""
+					}
+					mounts := []map[string]any{{"id": 1, "mount_path": "/drive", "status": status, "disabled": false, "driver": driver}}
 					if scenario == "virtual-only" || scenario == "hidden-virtual" || scenario == "nested-virtual" {
 						suffix := "/alias"
 						if scenario == "nested-virtual" {

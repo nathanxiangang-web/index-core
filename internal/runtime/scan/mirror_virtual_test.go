@@ -25,7 +25,7 @@ func TestMirrorVirtualOnlySuccessNeverRemovesUnrelatedInventory(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/api/admin/storage/list" {
-			mounts := []map[string]any{{"id": 1, "mount_path": "/drive", "status": "work", "disabled": false}}
+			mounts := []map[string]any{{"id": 1, "mount_path": "/drive", "status": "work", "disabled": false, "driver": "115 Open"}}
 			if broken.Load() {
 				mounts = append(mounts, map[string]any{"id": 2, "mount_path": "/drive/library/alias", "status": "work", "disabled": false})
 			}
