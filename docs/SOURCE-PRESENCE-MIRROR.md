@@ -66,3 +66,23 @@ API absence, with surviving resources still PRESENT. Never call StartDownload.
 
 Future providers need an equivalent explicit coverage/namespace contract and
 the same pure/PG tests; a generic absence or provider error is not equivalent.
+
+## Live evidence, 2026-10-18
+
+Code efd3cdca8d6443bc0431a7df97b165f177c26df3 / CI39100197664 SUCCESS is deployed
+to the owned public catalog process. Isolated PostgreSQL18 directory/mirror/watch
+tests and vet passed; full exact-head CI passed. An initial remote full run hit
+the existing50ms P5 deadline-before-claim test under constrained Docker load;
+that test was not weakened, and the full GitHub CI passes.
+
+The first live rollout did not remove the gallery: unrelated mtime identity
+conflicts suppressed absence and NORMAL root watch work was starved by children.
+The successor scopes conflict protection to observed identities/paths, uses the
+v4 coverage IO3 contract and HIGH root watch priority, with pure/PG regressions.
+10 gallery rows now REMOVED,10 matching Q8 removals in one generation, and four
+image Q5 lookups return no PRESENT match. Public authenticated CloudSite inventory
+contains zero gallery rows with276 surviving files. Three obsolete alias rows
+also absent from this namespace converged, so total new root removals are13.
+Only logical tombstones were written through the coordinator; no physical file
+deletion, direct canonical SQL, new Provider start, schema change or other Root
+configuration change. Protected old binary/config/database backups remain.
