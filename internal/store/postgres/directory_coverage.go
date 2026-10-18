@@ -38,7 +38,8 @@ func (s *Store) directoryCoverage(ctx context.Context, tx pgx.Tx, snap domain.Sn
 		return nil, ErrDirectoryCoverage
 	}
 	invalid := ErrDirectoryCoverage
-	if p.Version != 1 || p.Generation != generation || p.EntryCount != len(entries) || p.Path == "" || !strings.HasPrefix(p.Path, "/") || path.Clean(p.Path) != p.Path || strings.ContainsAny(p.Path, "\\\x00") || p.EntryCount > 10000 {
+	decoded, decodeErr := hex.DecodeString(p.TopologyDigest)
+	if p.Version != 2 || decodeErr != nil || len(decoded) != sha256.Size || p.Generation != generation || p.EntryCount != len(entries) || p.Path == "" || !strings.HasPrefix(p.Path, "/") || path.Clean(p.Path) != p.Path || strings.ContainsAny(p.Path, "\\\x00") || p.EntryCount > 10000 {
 		return nil, invalid
 	}
 	if snap.TraversalStatus != domain.TraversalPartial || snap.CompletenessFlag != domain.CompletenessFlagPartial || snap.FreshnessEvidence == nil || *snap.FreshnessEvidence != domain.FreshRefreshed || len(snap.ErrorSummary) != 0 || len(snap.SkippedScopes) != 0 {
@@ -56,11 +57,12 @@ func (s *Store) directoryCoverage(ctx context.Context, tx pgx.Tx, snap domain.Sn
 		return nil, err
 	}
 	var ac struct {
-		Mirror bool   `json:"mirror_presence"`
-		Path   string `json:"path"`
-		Base   string `json:"expected_base_path"`
+		Mirror   bool   `json:"mirror_presence"`
+		Path     string `json:"path"`
+		Base     string `json:"expected_base_path"`
+		Topology string `json:"topology_token_env"`
 	}
-	if json.Unmarshal(a.Config, &ac) != nil || !ac.Mirror || ac.Base == "" || (a.CollectorKind != "alist" && a.CollectorKind != "openlist") || p.AdapterDigest != AdapterConfigDigest(a) {
+	if json.Unmarshal(a.Config, &ac) != nil || !ac.Mirror || ac.Base == "" || ac.Topology == "" || (a.CollectorKind != "alist" && a.CollectorKind != "openlist") || p.AdapterDigest != AdapterConfigDigest(a) {
 		return nil, invalid
 	}
 	base := path.Clean("/" + strings.Trim(ac.Path, "/"))

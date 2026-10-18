@@ -48,6 +48,7 @@ type adapterConfig struct {
 	TokenEnv         string `json:"token_env"`
 	MirrorPresence   bool   `json:"mirror_presence"`
 	ExpectedBasePath string `json:"expected_base_path"`
+	TopologyTokenEnv string `json:"topology_token_env"`
 }
 
 // collector builds the provider-neutral Collector for a root's adapter kind.

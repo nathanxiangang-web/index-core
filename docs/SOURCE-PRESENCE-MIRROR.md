@@ -1,5 +1,48 @@
 # ADR: opt-in source presence mirror
 
+## Issue115 correction: virtual-overlay success is not completeness
+
+The initial live acceptance below was insufficient. A later successful root list
+contained only a virtual alias and caused749 false removals. OpenList v4.2.6
+internal/fs/list.go suppresses a backend List error whenever virtual children
+exist. Mount detail fields can be hidden, so item shape/count cannot detect it.
+
+Coverage v2 now requires independent before/after storage topology evidence from
+the optional protected topology credential. Only a bounded GET of
+/api/admin/storage/list uses it; decode only routing facts, never persist/log
+provider addition/password fields. Config stores topology_token_env, not a token.
+No API/HTTP error, truncated topology, unhealthy covering storage, nested virtual
+mount, missing credential or changed topology can mint absence authority.
+Such observations remain additive PARTIAL; positive inventory/discovery continues.
+The coordinator rejects all old v1 proofs and config lacking the topology ref.
+IO3 v5 includes the topology digest, avoiding replay of old false-removal decisions.
+
+Do not disable unrelated mounts or move physical files to bypass this guard.
+A scope containing a nested virtual mount cannot safely mirror absence with this
+OpenList API. Its deletions remain paused; require an independently trustworthy
+source view before enabling. Only a concrete115 Open covering storage is
+authority-qualified; Alias/unknown drivers cannot certify another namespace.
+Other drivers need dedicated failure/completeness contracts and tests. Safe
+child scopes may retain bounded confirmation.
+Recovery uses existing root-scoped queue CAS and normal re-observation, not SQL
+resurrection of old tombstones. Confirm all library/download partitions and
+surviving sibling subtrees over subsequent cycles, not a single initial total.
+
+Original upstream behavior: https://github.com/OpenListTeam/OpenList/blob/v4.2.6/internal/fs/list.go
+
+Mitigation verified11:53Z: guarded code399eca4 / CI39123818119 SUCCESS deployed.
+All300 invalid-scope blockers repaired,14 due INTERNAL retries manually resumed
+once through their existing CAS API,7 missing parents re-observed. Public272
+files partition into library270/downloads2; gallery PRESENT0, no removal events
+after containment, sample attachment302 (CDN not followed), unrelated services
+unchanged. Root watch30s runs positive-only: mirror_presence enables existing
+child discovery, but no topology credential is configured and latest3 snapshots
+carry no deletion authority. This is containment/recovery, not full source parity:
+4 real same-hash/different-path files remain unresolved under existing R3 rules
+and are tracked separately as Issue117. No identity-rule bypass or SQL resurrection.
+
+## Original motivation and bounded design
+
 2026-10-18. Human requests that deleting a real drive directory promptly removes
 its indexed files from CloudSite, rather than preserving them indefinitely.
 Production evidence: `/图库` no longer exists in a successful forced parent list,

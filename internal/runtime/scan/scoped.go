@@ -112,6 +112,7 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 			return Result{}, scopeErrorf(ScopeFailureConfigInvalid, "mirror requires expected_base_path")
 		}
 		col.ExpectedBasePath = ac.ExpectedBasePath
+		col.TopologyToken = os.Getenv(ac.TopologyTokenEnv)
 	}
 	raw, err := col.ScanScope(ctx, target, maxEntries)
 	if err != nil {
@@ -130,8 +131,8 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 		"collector_kind": acfg.CollectorKind, "path": ac.Path, "scope": target,
 		"mode": "scoped_refresh", "max_entries": maxEntries,
 	}
-	if ac.MirrorPresence {
-		metadata["directory_coverage"] = domain.DirectoryCoverage{Version: 1, Path: target, Generation: root.CurrentGeneration, AdapterDigest: postgres.AdapterConfigDigest(acfg), EntryCount: len(raw.Entries)}
+	if ac.MirrorPresence && raw.DirectoryTopologyDigest != "" {
+		metadata["directory_coverage"] = domain.DirectoryCoverage{Version: 2, Path: target, Generation: root.CurrentGeneration, AdapterDigest: postgres.AdapterConfigDigest(acfg), EntryCount: len(raw.Entries), TopologyDigest: raw.DirectoryTopologyDigest}
 	}
 	provenance, _ := json.Marshal(metadata)
 	freshness := raw.Freshness

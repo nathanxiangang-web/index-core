@@ -17,8 +17,13 @@ import (
 func TestMirrorDeletedDirectoryAtomicJournalAndReplay(t *testing.T) {
 	st, mock, rootID := setupScopedRoot(t)
 	ctx := context.Background()
+	t.Setenv("MIRROR_TOPOLOGY_TOKEN", "test-topology-token")
 	var badIdentity, failList, truncated atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/admin/storage/list" {
+			io.WriteString(w, `{"code":200,"data":{"total":1,"content":[{"id":1,"mount_path":"/drive","driver":"115 Open","status":"work","disabled":false}]}}`)
+			return
+		}
 		if r.URL.Path == "/api/me" {
 			base := "/drive/library"
 			if badIdentity.Load() {
@@ -38,7 +43,7 @@ func TestMirrorDeletedDirectoryAtomicJournalAndReplay(t *testing.T) {
 		mock.handler()(w, r)
 	}))
 	defer server.Close()
-	config, _ := json.Marshal(map[string]any{"base_url": server.URL, "path": "/", "mirror_presence": true, "expected_base_path": "/drive/library"})
+	config, _ := json.Marshal(map[string]any{"base_url": server.URL, "path": "/", "mirror_presence": true, "expected_base_path": "/drive/library", "topology_token_env": "MIRROR_TOPOLOGY_TOKEN"})
 	if err := st.UpsertAdapterConfig(ctx, rootID, postgres.AdapterConfig{CollectorKind: "openlist", Config: config}); err != nil {
 		t.Fatal(err)
 	}

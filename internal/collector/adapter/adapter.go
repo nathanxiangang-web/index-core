@@ -28,6 +28,10 @@ type NormalizedEntry struct {
 
 // RawScan is the normalized Collector evidence for one scan.
 type RawScan struct {
+	// DirectoryTopologyDigest is set only after independent before/after checks
+	// prove no nested virtual storage can mask an underlying listing failure.
+	// Positive observations remain usable when this evidence is unavailable.
+	DirectoryTopologyDigest   string
 	Entries                   []NormalizedEntry
 	TraversalStatus           domain.TraversalStatus
 	ErrorSummary              []byte
