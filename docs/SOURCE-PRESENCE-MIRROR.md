@@ -30,6 +30,17 @@ surviving sibling subtrees over subsequent cycles, not a single initial total.
 
 Original upstream behavior: https://github.com/OpenListTeam/OpenList/blob/v4.2.6/internal/fs/list.go
 
+Mitigation verified11:53Z: guarded code399eca4 / CI39123818119 SUCCESS deployed.
+All300 invalid-scope blockers repaired,14 due INTERNAL retries manually resumed
+once through their existing CAS API,7 missing parents re-observed. Public272
+files partition into library270/downloads2; gallery PRESENT0, no removal events
+after containment, sample attachment302 (CDN not followed), unrelated services
+unchanged. Root watch30s runs positive-only: mirror_presence enables existing
+child discovery, but no topology credential is configured and latest3 snapshots
+carry no deletion authority. This is containment/recovery, not full source parity:
+4 real same-hash/different-path files remain unresolved under existing R3 rules
+and are tracked separately as Issue117. No identity-rule bypass or SQL resurrection.
+
 ## Original motivation and bounded design
 
 2026-10-18. Human requests that deleting a real drive directory promptly removes

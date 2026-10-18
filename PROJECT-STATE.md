@@ -44,7 +44,7 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
-**2026-10-18 REGRESSION / Issue115: previous Issue113 acceptance is insufficient.**
+**2026-10-18 Issue115 mitigated / guard accepted; full parity remains open#117.**
 At08:06Z OpenList returned HTTP/API success with only a virtual alias while the
 underlying provider listing failed;749 unrelated rows were marked REMOVED at
 generation10. Later source listings recover, but300 directory work items were
@@ -55,12 +55,29 @@ positive result. Recovery uses existing root-scoped RepairBlocked CAS and
 MergeSignal only for current PRESENT canonical directories, letting the accepted
 single writer perform normal positive observations. No canonical SQL resurrection.
 
-Fix in progress: directory coverage requires independent before/after OpenList
+Guard code399eca404c6815e37810739ddc67aa621e08708b passed full CI39123818119
+(gofmt/vet/build/PG18/race) and isolated focused PG18+vet/build. It is deployed,
+binary SHA2560e1b357c1ef13bfc4c31d4a4ab662c2c7d4bf840a91ebcef0173184a7436f071.
+All300 INVALID_SCOPE blockers repaired via CAS,14 due INTERNAL items explicitly
+resumed once via RetryReady, and7 positively verified missing-parent scopes
+re-observed. At11:53Z public inventory272 = library270 + downloads2. Gallery
+PRESENT0; no removal events after containment; sample document download302
+without following the CDN URL; product healthy and unrelated service IDs stable.
+The four remaining source-present same-hash/different-path conflicts are Issue117,
+not silently repaired by stripping evidence or resurrecting old IDs. Full source
+parity and automatic root deletion are NOT accepted.
+
+Native root watch30s is restored for positive observation/child discovery only.
+mirror_presence is requested for that existing scheduling path, but no live
+topology credential/ref is configured: all new observations have NO absence
+authority. The last3 root snapshots were independently checked, not just a flag.
+Directory coverage now requires independent before/after OpenList
 storage topology checks, not just response count/namespace. A nested virtual
 mount makes that scope's absence untrusted even when mount details are hidden;
 positives remain usable. Missing optional topology credential also means no
 deletion authority. The v2 coverage proof and v5 IO3 reject earlier unsafe proof.
-Do not re-enable the root mirror until tests/CI and real partition-level acceptance.
+Do not enable deletion authority on the mixed virtual root without a reliable
+source view. Preserve the retained rollback artifacts and incident evidence.
 
 ### Earlier one-time evidence (superseded by the regression above)
 
