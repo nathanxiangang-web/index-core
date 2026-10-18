@@ -23,15 +23,19 @@ func AdapterConfigDigest(a AdapterConfig) string {
 // Revalidate immutable coverage against current generation and adapter. The
 // adapter row lock prevents concurrent namespace/config changes before commit.
 func (s *Store) directoryCoverage(ctx context.Context, tx pgx.Tx, snap domain.Snapshot, entries []domain.SnapshotEntry, generation int64) (*domain.DirectoryCoverage, error) {
-	var provenance struct {
-		Directory *domain.DirectoryCoverage `json:"directory_coverage"`
-	}
-	if err := json.Unmarshal(snap.Provenance, &provenance); err != nil {
-		return nil, err
-	}
-	p := provenance.Directory
-	if p == nil {
+	var provenance map[string]json.RawMessage
+	// Legacy provenance is opaque JSON, not necessarily an object. It never
+	// gains removal authority merely because the opt-in feature now exists.
+	if json.Unmarshal(snap.Provenance, &provenance) != nil {
 		return nil, nil
+	}
+	raw, ok := provenance["directory_coverage"]
+	if !ok {
+		return nil, nil
+	}
+	var p *domain.DirectoryCoverage
+	if json.Unmarshal(raw, &p) != nil || p == nil {
+		return nil, ErrDirectoryCoverage
 	}
 	invalid := ErrDirectoryCoverage
 	if p.Version != 1 || p.Generation != generation || p.EntryCount != len(entries) || p.Path == "" || !strings.HasPrefix(p.Path, "/") || path.Clean(p.Path) != p.Path || strings.ContainsAny(p.Path, "\\\x00") || p.EntryCount > 10000 {
