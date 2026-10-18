@@ -44,7 +44,27 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
-**2026-10-18 hotfix: Issue113 / PR114, source-presence mirroring — LIVE VERIFIED.**
+**2026-10-18 REGRESSION / Issue115: previous Issue113 acceptance is insufficient.**
+At08:06Z OpenList returned HTTP/API success with only a virtual alias while the
+underlying provider listing failed;749 unrelated rows were marked REMOVED at
+generation10. Later source listings recover, but300 directory work items were
+BLOCKED by the now-missing canonical parent precondition. Physical drive files
+remain present. Native watch/mirror were disabled on the owned Root immediately.
+An ordinary additive whole-root recovery hit its300s deadline and wrote no
+positive result. Recovery uses existing root-scoped RepairBlocked CAS and
+MergeSignal only for current PRESENT canonical directories, letting the accepted
+single writer perform normal positive observations. No canonical SQL resurrection.
+
+Fix in progress: directory coverage requires independent before/after OpenList
+storage topology checks, not just response count/namespace. A nested virtual
+mount makes that scope's absence untrusted even when mount details are hidden;
+positives remain usable. Missing optional topology credential also means no
+deletion authority. The v2 coverage proof and v5 IO3 reject earlier unsafe proof.
+Do not re-enable the root mirror until tests/CI and real partition-level acceptance.
+
+### Earlier one-time evidence (superseded by the regression above)
+
+**2026-10-18 hotfix: Issue113 / PR114 initial rollout.**
 See [scope contract and ADR](docs/SOURCE-PRESENCE-MIRROR.md). The user requests
 confirmed real-drive directory deletion to converge promptly, including indexed
 descendants. Add an explicit opt-in direct-child coverage gate, not destructive

@@ -29,6 +29,7 @@ type Adapter struct {
 	Timeout          time.Duration
 	HTTP             *http.Client
 	ExpectedBasePath string // namespace fence for opt-in source mirror
+	TopologyToken    string // optional protected topology-read credential; never persisted
 }
 
 // Scan walks the AList tree under subPath (BFS) and returns normalized evidence.

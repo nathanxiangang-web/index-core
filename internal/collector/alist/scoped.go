@@ -72,6 +72,9 @@ func (a Adapter) ScanScope(ctx context.Context, scope string, maxEntries int) (a
 	}
 
 	dir := normalizePath(scope)
+	// HTTP/API success is NOT completeness: OpenList can suppress a failed
+	// backend List and return only virtual mounts. Independently fence topology.
+	topologyBefore := a.directoryTopology(ctx, dir)
 	if a.ExpectedBasePath != "" {
 		if err := a.verifyScopedIdentity(ctx, token); err != nil {
 			return adapter.RawScan{}, err
@@ -126,7 +129,12 @@ func (a Adapter) ScanScope(ctx context.Context, scope string, maxEntries int) (a
 			return adapter.RawScan{}, err
 		}
 	}
+	topology := ""
+	if topologyBefore != "" && a.directoryTopology(ctx, dir) == topologyBefore {
+		topology = topologyBefore
+	}
 	return adapter.RawScan{
+		DirectoryTopologyDigest:   topology,
 		Entries:                   entries,
 		TraversalStatus:           domain.TraversalPartial,
 		SkippedScopes:             nil, // UNKNOWN, never confirmed-empty
