@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/nathanxiangang-web/index-core/internal/domain"
+	"github.com/nathanxiangang-web/index-core/internal/kernel/identity"
 	"github.com/nathanxiangang-web/index-core/internal/kernel/pipeline"
 	"github.com/nathanxiangang-web/index-core/internal/kernel/reconcile"
 )
@@ -265,6 +266,13 @@ func (s *Store) reconcileHeadSafe(ctx context.Context, rootID string, seq int64,
 	if err != nil {
 		return ReconcileOutcome{}, err
 	}
+	coverage, err := s.directoryCoverage(ctx, tx, snap, entries, currentGen)
+	if errors.Is(err, ErrDirectoryCoverage) {
+		return s.staleInput(ctx, tx, in, currentGen)
+	}
+	if err != nil {
+		return ReconcileOutcome{}, err
+	}
 	priorPresent := int64(0)
 	for i := range prior {
 		if prior[i].ResourcePresence == domain.ResourcePresent {
@@ -292,6 +300,9 @@ func (s *Store) reconcileHeadSafe(ctx context.Context, rootID string, seq int64,
 		PriorPresent:      priorPresent,
 		Corroboration:     corroboration,
 	}, cfg, now)
+	if coverage != nil {
+		eval.Identity = identity.DirectoryDigest(eval.Identity, *coverage)
+	}
 	if err := s.SetSnapshotEvaluated(ctx, tx, snapshotID, eval.Acceptance, &eval.Corroboration); err != nil {
 		return ReconcileOutcome{}, err
 	}
@@ -332,6 +343,9 @@ func (s *Store) reconcileHeadSafe(ctx context.Context, rootID string, seq int64,
 	}
 
 	res := reconcile.Reconcile(prior, entries, eval.Acceptance, cfg, now, snapshotID)
+	if coverage != nil {
+		res = reconcile.ReconcileDirectory(prior, entries, coverage.Path, cfg, now, snapshotID)
+	}
 	plan := s.PlanFromResult(rootID, snapshotID, snap.ObservedAt, res)
 
 	appliedGen := currentGen

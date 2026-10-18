@@ -44,6 +44,15 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
+**2026-10-18 authorized hotfix: Issue113, source-presence mirroring — IN PROGRESS.**
+See [scope contract and ADR](docs/SOURCE-PRESENCE-MIRROR.md). The user requests
+confirmed real-drive directory deletion to converge promptly, including indexed
+descendants. Add an explicit opt-in direct-child coverage gate, not destructive
+ordinary PARTIAL semantics. Reuse existing Coordinator/Journal/watch/CAS. No
+physical deletion or canonical SQL repair. Deployment/acceptance require tests,
+exact-head CI, same-agent review and actual production Q5/Q8/resource evidence.
+Schema remains5. The earlier foundation milestone below remains historical.
+
 **IndexCore Core Development — COMPLETE for accepted Alpha scope**
 
 Operating mode: **Stable Alpha Foundation / Incremental Hardening**

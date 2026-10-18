@@ -22,6 +22,12 @@ Failure to observe an item during an incomplete, failed, stale or ambiguous coll
 
 Any destructive reconcile requires an explicit completeness/safety gate.
 
+The opt-in [source presence mirror](docs/SOURCE-PRESENCE-MIRROR.md) adds a
+validated fresh direct-child coverage gate, distinct from whole-root COMPLETE.
+Ordinary PARTIAL inputs retain their non-destructive meaning. Only a successful,
+complete parent observation can confirm missing children/subtrees; provider
+errors and incomplete/unauthorized listings cannot authorize this gate.
+
 ## INV-005 — Kernel is independent from CloudSite
 
 CloudSite may consume Index Core but the kernel must not import CloudSite application concerns.

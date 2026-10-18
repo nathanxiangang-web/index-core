@@ -22,12 +22,13 @@ import (
 
 // Adapter scans a real AList/OpenList instance via its HTTP API.
 type Adapter struct {
-	BaseURL  string
-	Token    string // optional pre-obtained token
-	Username string
-	Password string
-	Timeout  time.Duration
-	HTTP     *http.Client
+	BaseURL          string
+	Token            string // optional pre-obtained token
+	Username         string
+	Password         string
+	Timeout          time.Duration
+	HTTP             *http.Client
+	ExpectedBasePath string // namespace fence for opt-in source mirror
 }
 
 // Scan walks the AList tree under subPath (BFS) and returns normalized evidence.

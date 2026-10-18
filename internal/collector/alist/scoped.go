@@ -36,7 +36,9 @@ const MaxScopedEntries = 10000
 //	SkippedScopes             = UNKNOWN (nil, never confirmed-empty)
 //
 // An empty directory is a legal PARTIAL zero-entry observation; absence inside a
-// scoped response MUST NOT be interpreted as removal by the Kernel.
+// scoped response alone MUST NOT be interpreted as removal by the Kernel. The
+// optional source mirror uses a separately validated directory-coverage gate,
+// never a promotion of these observations to whole-root COMPLETE.
 //
 // This is a prototype-only path: it does not modify the generic Collector
 // interface or the existing Adapter.Scan() behavior.
@@ -70,6 +72,11 @@ func (a Adapter) ScanScope(ctx context.Context, scope string, maxEntries int) (a
 	}
 
 	dir := normalizePath(scope)
+	if a.ExpectedBasePath != "" {
+		if err := a.verifyScopedIdentity(ctx, token); err != nil {
+			return adapter.RawScan{}, err
+		}
+	}
 
 	// Exactly one request. per_page = maxEntries+1 lets us detect overflow
 	// (total > maxEntries) without ever requesting a second page, and guarantees
@@ -89,7 +96,12 @@ func (a Adapter) ScanScope(ctx context.Context, scope string, maxEntries int) (a
 	}
 
 	entries := make([]adapter.NormalizedEntry, 0, len(items))
+	seen := map[string]bool{}
 	for _, it := range items {
+		if it.Name == "" || it.Name == "." || it.Name == ".." || strings.ContainsAny(it.Name, "/\\\x00") || seen[it.Name] {
+			return adapter.RawScan{}, scopedErrorf(ScopedTransientProvider, "invalid or duplicate direct-child name")
+		}
+		seen[it.Name] = true
 		e := adapter.NormalizedEntry{
 			EntryLocalID: joinLocal(dir, it.Name),
 			Name:         it.Name,
@@ -109,6 +121,11 @@ func (a Adapter) ScanScope(ctx context.Context, scope string, maxEntries int) (a
 		entries = append(entries, e)
 	}
 
+	if a.ExpectedBasePath != "" {
+		if err := a.verifyScopedIdentity(ctx, token); err != nil {
+			return adapter.RawScan{}, err
+		}
+	}
 	return adapter.RawScan{
 		Entries:                   entries,
 		TraversalStatus:           domain.TraversalPartial,
@@ -130,9 +147,9 @@ func (a Adapter) listPageRefresh(ctx context.Context, token, dir string, perPage
 		"refresh":  true,
 	})
 	var resp apiResp
-	if err := a.post(ctx, "/api/fs/list", token, body, &resp); err != nil {
+	if err := a.postScoped(ctx, "/api/fs/list", token, body, &resp); err != nil {
 		// Transport failure / provider-side timeout / malformed body.
-		return nil, 0, scopedWrap(ScopedTransientProvider, err)
+		return nil, 0, err
 	}
 	if resp.Code != http.StatusOK {
 		// Surfaces refresh-permission failures (403 "Refresh without permission")
@@ -207,8 +224,8 @@ func validateScopedBaseURL(raw string) error {
 func (a Adapter) loginScoped(ctx context.Context) (string, error) {
 	body, _ := json.Marshal(map[string]string{"username": a.Username, "password": a.Password})
 	var resp apiResp
-	if err := a.post(ctx, "/api/auth/login", "", body, &resp); err != nil {
-		return "", scopedWrap(ScopedTransientProvider, err)
+	if err := a.postScoped(ctx, "/api/auth/login", "", body, &resp); err != nil {
+		return "", err
 	}
 	if resp.Code != http.StatusOK {
 		return "", scopedErrorf(scopedKindFromAPICode(resp.Code),

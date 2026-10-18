@@ -139,13 +139,21 @@ func (e *Executor) ExecuteOne(ctx context.Context) (Result, error) {
 	}
 
 	completionNow := e.now()
-	children, childErr := discoveryChildren(e.cfg.DiscoveryScope, claimed.ScopeKey, scanRes.ChildScopes)
+	prefix := e.cfg.DiscoveryScope
+	if scanRes.MirrorPresence {
+		prefix = "/"
+	}
+	children, childErr := discoveryChildren(prefix, claimed.ScopeKey, scanRes.ChildScopes)
 	if childErr != nil {
 		return e.completeFailure(ctx, res, claimed, state.ErrorInternal, childErr)
 	}
 	var done state.DirtyScopeWork
 	if len(children) > 0 {
-		done, err = e.store.(DiscoveryStore).CompleteSuccessWithChildren(ctx, claimed.RootID, claimed.ScopeKey, *claimed.ClaimedSignalSeq, children, completionNow)
+		discoveryStore, ok := e.store.(DiscoveryStore)
+		if !ok {
+			return res, errors.New("source mirror requires atomic discovery store")
+		}
+		done, err = discoveryStore.CompleteSuccessWithChildren(ctx, claimed.RootID, claimed.ScopeKey, *claimed.ClaimedSignalSeq, children, completionNow)
 	} else {
 		done, err = e.store.CompleteSuccess(ctx, claimed.RootID, claimed.ScopeKey, *claimed.ClaimedSignalSeq, completionNow)
 	}

@@ -21,8 +21,9 @@ import (
 // It observes only the direct children of scope, submits a mandatory PARTIAL /
 // additive-safe Snapshot, and drives the EXISTING draft -> admission -> Kernel
 // coordinator -> reconcile path. It is additive-only by construction: a scoped
-// observation never produces removal evidence (the frozen Kernel already treats
-// PARTIAL/absence that way).
+// observation never produces removal evidence by itself. Opt-in mirror roots
+// additionally carry explicit bounded directory coverage (see SOURCE-PRESENCE-
+// MIRROR.md); that separate gate may confirm direct-child/subtree absence.
 //
 // This does not change the behavior of Service.Scan(), the generic Collector
 // interface, or any frozen contract. No scheduler, polling, public API, or
@@ -106,6 +107,12 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 		Password: os.Getenv(ac.PasswordEnv),
 		Timeout:  s.timeout,
 	}
+	if ac.MirrorPresence {
+		if ac.ExpectedBasePath == "" {
+			return Result{}, scopeErrorf(ScopeFailureConfigInvalid, "mirror requires expected_base_path")
+		}
+		col.ExpectedBasePath = ac.ExpectedBasePath
+	}
 	raw, err := col.ScanScope(ctx, target, maxEntries)
 	if err != nil {
 		// Fail closed: no Snapshot is created on any refresh/permission/
@@ -119,10 +126,14 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 	}
 
 	snapID := reconcile.NewUUID()
-	provenance, _ := json.Marshal(map[string]any{
+	metadata := map[string]any{
 		"collector_kind": acfg.CollectorKind, "path": ac.Path, "scope": target,
 		"mode": "scoped_refresh", "max_entries": maxEntries,
-	})
+	}
+	if ac.MirrorPresence {
+		metadata["directory_coverage"] = domain.DirectoryCoverage{Version: 1, Path: target, Generation: root.CurrentGeneration, AdapterDigest: postgres.AdapterConfigDigest(acfg), EntryCount: len(raw.Entries)}
+	}
+	provenance, _ := json.Marshal(metadata)
 	freshness := raw.Freshness
 	assurance := raw.Assurance
 	entryCount := int64(len(raw.Entries))
@@ -212,7 +223,7 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 			children = append(children, strings.TrimSuffix("/"+strings.Trim(rel, "/"), "/")+"/"+entry.Name)
 		}
 	}
-	return Result{SnapshotID: snapID, Outcome: out, ChildScopes: children}, nil
+	return Result{SnapshotID: snapID, Outcome: out, ChildScopes: children, MirrorPresence: ac.MirrorPresence}, nil
 }
 
 // lifecycleFailureKind attributes a post-observation rejection to a root

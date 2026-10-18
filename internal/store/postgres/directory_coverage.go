@@ -1,0 +1,74 @@
+package postgres
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"github.com/jackc/pgx/v5"
+	"github.com/nathanxiangang-web/index-core/internal/domain"
+	"path"
+	"strings"
+	"time"
+)
+
+var ErrDirectoryCoverage = errors.New("invalid or stale directory coverage")
+
+func AdapterConfigDigest(a AdapterConfig) string {
+	sum := sha256.Sum256(append([]byte(a.CollectorKind+"\x00"), a.Config...))
+	return hex.EncodeToString(sum[:])
+}
+
+// Revalidate immutable coverage against current generation and adapter. The
+// adapter row lock prevents concurrent namespace/config changes before commit.
+func (s *Store) directoryCoverage(ctx context.Context, tx pgx.Tx, snap domain.Snapshot, entries []domain.SnapshotEntry, generation int64) (*domain.DirectoryCoverage, error) {
+	var provenance struct {
+		Directory *domain.DirectoryCoverage `json:"directory_coverage"`
+	}
+	if err := json.Unmarshal(snap.Provenance, &provenance); err != nil {
+		return nil, err
+	}
+	p := provenance.Directory
+	if p == nil {
+		return nil, nil
+	}
+	invalid := ErrDirectoryCoverage
+	if p.Version != 1 || p.Generation != generation || p.EntryCount != len(entries) || p.Path == "" || !strings.HasPrefix(p.Path, "/") || path.Clean(p.Path) != p.Path || strings.ContainsAny(p.Path, "\\\x00") || p.EntryCount > 10000 {
+		return nil, invalid
+	}
+	if snap.TraversalStatus != domain.TraversalPartial || snap.CompletenessFlag != domain.CompletenessFlagPartial || snap.FreshnessEvidence == nil || *snap.FreshnessEvidence != domain.FreshRefreshed || len(snap.ErrorSummary) != 0 || len(snap.SkippedScopes) != 0 {
+		return nil, invalid
+	}
+	var dbNow time.Time
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&dbNow); err != nil {
+		return nil, err
+	}
+	if snap.ObservedAt.Before(dbNow.Add(-2*time.Minute)) || snap.ObservedAt.After(dbNow.Add(30*time.Second)) || snap.EntryCount == nil || *snap.EntryCount != int64(p.EntryCount) {
+		return nil, invalid
+	}
+	a := AdapterConfig{}
+	if err := tx.QueryRow(ctx, `SELECT collector_kind,config FROM index_root_adapter_config WHERE root_id=$1::uuid FOR SHARE`, snap.RootID).Scan(&a.CollectorKind, &a.Config); err != nil {
+		return nil, err
+	}
+	var ac struct {
+		Mirror bool   `json:"mirror_presence"`
+		Path   string `json:"path"`
+		Base   string `json:"expected_base_path"`
+	}
+	if json.Unmarshal(a.Config, &ac) != nil || !ac.Mirror || ac.Base == "" || (a.CollectorKind != "alist" && a.CollectorKind != "openlist") || p.AdapterDigest != AdapterConfigDigest(a) {
+		return nil, invalid
+	}
+	base := path.Clean("/" + strings.Trim(ac.Path, "/"))
+	if p.Path != base && !strings.HasPrefix(p.Path, strings.TrimSuffix(base, "/")+"/") {
+		return nil, invalid
+	}
+	seen := map[string]bool{}
+	for _, e := range entries {
+		if e.ParentRef != p.Path || e.Name == "" || e.Name == "." || e.Name == ".." || strings.ContainsAny(e.Name, "/\\\x00") || seen[e.Name] {
+			return nil, invalid
+		}
+		seen[e.Name] = true
+	}
+	return p, nil
+}
