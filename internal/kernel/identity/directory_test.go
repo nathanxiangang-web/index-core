@@ -9,7 +9,7 @@ func TestDirectoryDigestScopeBoundAndClockIndependent(t *testing.T) {
 	base := domain.SnapshotIdentity{Value: "empty", Version: DigestVersion}
 	p := domain.DirectoryCoverage{Version: 1, Path: "/a", AdapterDigest: "config", Generation: 3}
 	one := DirectoryDigest(base, p)
-	if one.Version != "v5-directory-coverage" {
+	if one.Version != "v6-directory-coverage" {
 		t.Fatal("old all-conflicts-block decision may be replayed")
 	}
 	p.Generation = 7

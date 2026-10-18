@@ -13,7 +13,7 @@ import (
 // rule-set id and Version is its version (doc A Sec 3.8, doc E Sec 2.4.3).
 const (
 	DigestNamespace = "kernel.index-core/io3"
-	DigestVersion   = "v2"
+	DigestVersion   = "v3-live-copies"
 )
 
 // Entry is a normalized SnapshotEntry field set that contributes to the digest.

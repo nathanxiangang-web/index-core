@@ -29,6 +29,8 @@ type PriorIndex struct {
 	presentByPath     map[string][]*PriorResource
 	missingByHash     map[string][]*PriorResource // PRESENT + MISSING evidence
 	missingBySize     map[string][]*PriorResource // PRESENT + MISSING evidence, key: size
+	observedByHash    map[string]int
+	observedPaths     map[string]int
 }
 
 // BuildPriorIndex indexes the prior canonical inventory for one reconcile.
@@ -71,8 +73,21 @@ func BuildPriorIndex(prior []PriorResource) *PriorIndex {
 	return ix
 }
 
-// resolve implements the FROZEN Gate 1B Stable Identity v1 rules for the
-// scenarios the PoC exercises (R1, R3, R4, R5 overlay, R8, R10, R11).
+// indexObservation gives both reconcile and removal-context evaluation the same
+// order-independent move ambiguity checks. It never upgrades PARTIAL absence.
+func (ix *PriorIndex) indexObservation(entries []domain.SnapshotEntry) {
+	ix.observedByHash = map[string]int{}
+	ix.observedPaths = map[string]int{}
+	for _, e := range entries {
+		ix.observedPaths[EntryPath(e)]++
+		if entryHashComparable(e) {
+			ix.observedByHash[derefStr(e.HashAlgorithm)+"\x00"+*e.ContentHash]++
+		}
+	}
+}
+
+// resolve implements Stable Identity, including Issue117's distinct-copy
+// clarification. Hash equality is content evidence, never object identity.
 func (ix *PriorIndex) resolve(entry domain.SnapshotEntry, cfg Config, now time.Time) (IdentityResolution, *PriorResource, string) {
 	entryPath := EntryPath(entry)
 
@@ -97,8 +112,33 @@ func (ix *PriorIndex) resolve(entry domain.SnapshotEntry, cfg Config, now time.T
 
 	// R3: content_hash + hash_algorithm with continuity context.
 	entryHasHash := entryHashComparable(entry)
+	samePath := ix.presentByPath[entryPath]
+	if len(samePath) > 1 || ix.observedPaths[entryPath] > 1 {
+		return ResolutionConflict, nil, "R4 multiple rows at path"
+	}
 	if entryHasHash {
-		matches := ix.presentByHash[derefStr(entry.HashAlgorithm)+"\x00"+*entry.ContentHash]
+		// Path continuity and R8 take precedence over cross-path hash candidates.
+		// Otherwise another copy can shadow the actual resource at this path.
+		if len(samePath) == 1 {
+			c := samePath[0]
+			if hashAgrees(c.ContentHash, entry.ContentHash, c.HashAlgorithm, entry.HashAlgorithm) {
+				return ResolutionMatched, c, "R3 same-path content_hash"
+			}
+			if c.ContentHash != nil && *c.ContentHash != "" {
+				return ResolutionNewResource, nil, "R8 imposter (different content_hash)"
+			}
+		}
+		key := derefStr(entry.HashAlgorithm) + "\x00" + *entry.ContentHash
+		matches := ix.presentByHash[key]
+		// All candidates are still live elsewhere: retain each as a separate
+		// copy, never merge or report hash equality alone as a conflict.
+		if len(matches) > 0 && len(ix.missingByHash[key]) == 0 {
+			if len(samePath) == 0 {
+				return ResolutionNewResource, nil, "R3 distinct live content copy"
+			}
+			// A hashless existing same-path row still needs R4 continuity.
+			matches = nil
+		}
 		switch len(matches) {
 		case 1:
 			c := matches[0]
@@ -106,12 +146,15 @@ func (ix *PriorIndex) resolve(entry domain.SnapshotEntry, cfg Config, now time.T
 				return ResolutionMatched, c, "R3 same-path content_hash"
 			}
 			if c.hasMissingEvidence() {
+				if ix.observedByHash[key] > 1 || ix.observedPaths[c.canonicalPath()] > 0 || len(samePath) > 0 {
+					return ResolutionConflict, nil, "R3 ambiguous move observation"
+				}
 				if withinMoveHorizon(c, cfg, now) {
 					return ResolutionMatched, c, "R3/R5 cross-path content_hash within horizon"
 				}
 				return ResolutionUnresolved, nil, "R3 cross-path content_hash outside horizon"
 			}
-			return ResolutionConflict, nil, "R3 identical content at two live paths"
+			return ResolutionConflict, nil, "R3 ambiguous continuity"
 		case 0:
 			// no hash agreement anywhere
 		default:
@@ -120,7 +163,6 @@ func (ix *PriorIndex) resolve(entry domain.SnapshotEntry, cfg Config, now time.T
 	}
 
 	// R4: path + size + mtime heuristic.
-	samePath := ix.presentByPath[entryPath]
 	switch len(samePath) {
 	case 1:
 		c := samePath[0]

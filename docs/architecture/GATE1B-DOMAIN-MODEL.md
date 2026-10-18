@@ -320,6 +320,13 @@ If provider_object_id is present but assurance is UNVERIFIED, UNSTABLE, or
 UNAVAILABLE, R1 does NOT fire on STRONG grounds; the id is treated as weak
 evidence and the matcher proceeds to R2.
 
+**Issue117 clarification (2026-10-18).** The original bullets below conflicted
+with their own copy-case NEW_RESOURCE rule. The governing clarification is
+[ADR-004](../decisions/ADR-004-DISTINCT-CONTENT-COPIES.md): unique same-path hash
+continuity takes precedence; new-path equal-content copies receive distinct IDs
+when no matching candidate is MISSING. Multiple live hash matches alone are not
+identity conflicts. Ambiguous MISSING/move candidates remain fail-closed.
+
 **Rule.** Look up CanonicalResources in the same root with matching
 (provider_object_id, provider_object_id_scope).
 
@@ -375,8 +382,10 @@ forced MATCHED. Hash is also not required of every Provider (principle 7).
 
 - Zero matches -> proceed to R4 (path heuristic; the entry may be a genuinely
   new resource, or a moved resource whose hash we have not seen).
-- Multiple matches -> CONFLICT (hash collision or duplicate content; cannot
-  auto-resolve).
+- First check unique same-path continuity and R8 contradiction. Multiple rows at
+  that path remain CONFLICT. Otherwise multiple hash matches with no MISSING
+  candidate at a new path -> NEW_RESOURCE (independent copy); if any matching
+  candidate is MISSING -> CONFLICT (ambiguous continuity).
 - Exactly one match -> evaluate continuity context:
   - If the matched candidate is at the SAME observed_path (in-place re-observation
     of the same canonical resource) -> MATCHED (same path + same content is
@@ -387,8 +396,7 @@ forced MATCHED. Hash is also not required of every Provider (principle 7).
     a rename/move: canonical_path and current_attributes update; resource_id is
     unchanged.
   - If the matched candidate is at a DIFFERENT path but is still PRESENT (not
-    MISSING) -> CONFLICT (two live resources with same content at different
-    paths; cannot auto-merge).
+    MISSING) -> NEW_RESOURCE at a new path (two live copies must not auto-merge).
   - If the matched candidate is at a DIFFERENT path, is MISSING, but is OUTSIDE
     the recognition horizon (already eligible for removal confirmation) ->
     UNRESOLVED. The hash overlap may be a copy, not a continuation.
