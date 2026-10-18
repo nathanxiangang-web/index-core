@@ -53,6 +53,9 @@ func rootWatch(ctx context.Context, base config.Config, args []string) error {
 	} else {
 		seconds := int64(interval.Seconds())
 		now := time.Now().UTC()
+		// Root presence checks must not sit behind their potentially large
+		// NORMAL-priority descendant expansion. Cadence still bounds the work.
+		w.Priority = state.PriorityHigh
 		w.WatchState = state.WatchHot
 		w.EffectiveIntervalSeconds = &seconds
 		w.NextDueAt = &now

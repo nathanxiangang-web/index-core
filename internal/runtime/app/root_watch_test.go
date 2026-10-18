@@ -22,7 +22,7 @@ func TestRootWatchUsesExistingCASAndCanDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	w, err := st.GetWatch(ctx, id, "/")
-	if err != nil || w.WatchState != state.WatchHot || w.EffectiveIntervalSeconds == nil || *w.EffectiveIntervalSeconds != 30 {
+	if err != nil || w.WatchState != state.WatchHot || w.Priority != state.PriorityHigh || w.EffectiveIntervalSeconds == nil || *w.EffectiveIntervalSeconds != 30 {
 		t.Fatalf("watch %+v %v", w, err)
 	}
 	version := w.Version

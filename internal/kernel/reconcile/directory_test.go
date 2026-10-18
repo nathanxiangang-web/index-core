@@ -38,3 +38,23 @@ func TestDirectoryMirrorFilesAndEmptyScope(t *testing.T) {
 		t.Fatalf("empty directory must remove only its direct files: %+v", r.Counts)
 	}
 }
+
+func TestDirectoryAbsenceIndependentOfUnrelatedIdentityConflict(t *testing.T) {
+	dir := priorFile("gallery", "/gallery", "", 0, epoch)
+	isDir := true
+	dir.IsDir = &isDir
+	keep := priorFile("keep", "/keep", "", 0, epoch)
+	keep.IsDir = &isDir
+	prior := []PriorResource{dir, priorFile("photo", "/gallery/a.jpg", "a", 1, epoch), keep}
+	entry := entryFile("keep", "/", "", 0, epoch.Add(time.Hour))
+	entry.IsDir = true
+	res := ReconcileDirectory(prior, []domain.SnapshotEntry{entry}, "/", Config{}, epoch, snap1)
+	if res.Counts.Conflict == 0 || res.Counts.Removed != 2 {
+		t.Fatalf("unrelated identity drift must not freeze confirmed absence: %+v", res.Counts)
+	}
+	for _, tr := range res.Transitions {
+		if tr.Kind == KindConfirmRemoved && tr.ResourceID == "keep" {
+			t.Fatal("observed conflicted path removed")
+		}
+	}
+}

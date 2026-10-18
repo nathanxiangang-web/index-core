@@ -26,13 +26,16 @@ physical files, or let a consumer redefine presence.
 - Pure Kernel: reconcile positive observations normally; confirm missing direct
   children immediately. A missing directory confirms its prior path subtree;
   siblings and identities observed at a new path are excluded. Preserve logical
-  tombstones and existing atomic generation/Journal writes. Conflicts do not
-  authorize removal. This explicit gate bypasses the unrelated whole-root grace.
+  tombstones and existing atomic generation/Journal writes. Conflicted observed
+  paths are protected, but identity drift elsewhere cannot freeze confirmed
+  absence. Coverage IO3 uses v4-directory-coverage to avoid replaying the earlier
+  all-conflicts-block-absence decision. This gate bypasses whole-root grace.
 - Existing incremental executor: mirror results enqueue bounded child scopes via
   existing atomic parent/child completion (1000 per scope, eight levels). Other
   roots retain their configured discovery prefix. No new scheduler or Job engine.
 - `root watch`: operator enables/disables the root's existing HOT watch by CAS;
-  default interval30s, configurable15s..24h. Each observation is still bounded;
+  default interval30s, configurable15s..24h; root HIGH priority stays ahead of its
+  NORMAL descendant expansion without bypassing cadence. Each observation is bounded;
   large trees may need multiple cycles, so no universal30s SLA is claimed.
 - Consumers: continue reading PRESENT and consuming resource-removed Journal;
   no frontend hide list, direct provider crawl or hand-written canonical UPDATE.

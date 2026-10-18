@@ -11,12 +11,12 @@ import (
 // are authorization fences, not semantic identity, and are deliberately omitted.
 func DirectoryDigest(base domain.SnapshotIdentity, coverage domain.DirectoryCoverage) domain.SnapshotIdentity {
 	h := sha256.New()
-	writeTag(h, "directory-coverage-v1")
+	writeTag(h, "directory-coverage-v2")
 	writeTag(h, base.Value)
 	writeTag(h, coverage.Path)
 	writeTag(h, coverage.AdapterDigest)
 	writeTag(h, strconv.Itoa(coverage.EntryCount))
-	base.Version = "v3-directory-coverage"
+	base.Version = "v4-directory-coverage"
 	base.Value = hex.EncodeToString(h.Sum(nil))
 	return base
 }

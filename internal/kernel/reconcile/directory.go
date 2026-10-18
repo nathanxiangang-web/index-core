@@ -13,9 +13,9 @@ import (
 // or identities positively observed at a new path. No provider data is deleted.
 func ReconcileDirectory(prior []PriorResource, entries []domain.SnapshotEntry, scope string, cfg Config, now time.Time, snapshotID string) Result {
 	res := Reconcile(prior, entries, domain.AcceptancePartial, cfg, now, snapshotID)
-	if res.Counts.Conflict != 0 {
-		return res
-	}
+	// An identity conflict at an observed path does not invalidate complete
+	// coverage of OTHER absent paths. The observed-path set below protects
+	// conflicted entries; do not let unrelated mtime/identity drift freeze absence.
 	paths, observed := map[string]bool{}, map[string]bool{}
 	for _, e := range entries {
 		paths[EntryPath(e)] = true

@@ -57,7 +57,9 @@ func TestMirrorDeletedDirectoryAtomicJournalAndReplay(t *testing.T) {
 	observe("/gallery")
 	mock.set("/gallery-other", fileEntry("keep.jpg", 20, "def"))
 	observe("/gallery-other")
-	mock.set("/", dirEntry("gallery-other"))
+	changedDirectory := dirEntry("gallery-other")
+	changedDirectory["modified"] = "2026-01-02T04:04:05Z"
+	mock.set("/", changedDirectory)
 	// Timeout/HTTP failure, truncation and namespace mismatch cannot remove.
 	for _, kind := range []string{"identity", "http", "truncated"} {
 		badIdentity.Store(kind == "identity")
