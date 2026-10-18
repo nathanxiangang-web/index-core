@@ -44,6 +44,26 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
+**2026-10-18 hotfix: Issue113 / PR114, source-presence mirroring — LIVE VERIFIED.**
+See [scope contract and ADR](docs/SOURCE-PRESENCE-MIRROR.md). The user requests
+confirmed real-drive directory deletion to converge promptly, including indexed
+descendants. Add an explicit opt-in direct-child coverage gate, not destructive
+ordinary PARTIAL semantics. Reuse existing Coordinator/Journal/watch/CAS. No
+physical deletion or canonical SQL repair. Deployment/acceptance require tests,
+exact-head CI, same-agent review and actual production Q5/Q8/resource evidence.
+Schema remains5. The earlier foundation milestone below remains historical.
+
+Code efd3cdca8d6443bc0431a7df97b165f177c26df3, exact CI39100197664 SUCCESS.
+Owned public Root mirror and HIGH-priority30s native watch enabled.10 gallery
+records became REMOVED in one generation with10 matching Q8 removals; four
+screenshot image Q5 queries no longer return PRESENT. Authenticated CloudSite
+inventory has zero gallery rows and276 surviving files. Three obsolete alias
+rows absent from the same source namespace also converged;13 total new root
+removal events. No physical drive deletion or manual canonical SQL. The initial
+live attempt exposed unrelated mtime-conflict suppression and watch starvation;
+both have targeted pure/PG regressions and the deployed successor uses IO3 v4.
+Rollback backups retained; unrelated service container identities unchanged.
+
 **IndexCore Core Development — COMPLETE for accepted Alpha scope**
 
 Operating mode: **Stable Alpha Foundation / Incremental Hardening**

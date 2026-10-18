@@ -40,12 +40,14 @@ func New(store *postgres.Store, rclonePath, rcloneConfig string, timeout time.Du
 // resolved at runtime; plaintext provider secrets are never persisted into
 // index_root_adapter_config (G3-R2.8).
 type adapterConfig struct {
-	Remote      string `json:"remote"` // rclone
-	Path        string `json:"path"`   // shared
-	BaseURL     string `json:"base_url"`
-	UsernameEnv string `json:"username_env"`
-	PasswordEnv string `json:"password_env"`
-	TokenEnv    string `json:"token_env"`
+	Remote           string `json:"remote"` // rclone
+	Path             string `json:"path"`   // shared
+	BaseURL          string `json:"base_url"`
+	UsernameEnv      string `json:"username_env"`
+	PasswordEnv      string `json:"password_env"`
+	TokenEnv         string `json:"token_env"`
+	MirrorPresence   bool   `json:"mirror_presence"`
+	ExpectedBasePath string `json:"expected_base_path"`
 }
 
 // collector builds the provider-neutral Collector for a root's adapter kind.
@@ -72,7 +74,8 @@ type Result struct {
 	Outcome    postgres.ReconcileOutcome
 	// ChildScopes contains only observed direct directories in root-relative
 	// scope-key coordinates. It is scheduling evidence, never completeness.
-	ChildScopes []string
+	ChildScopes    []string
+	MirrorPresence bool
 }
 
 // Scan runs one scan for a root through the full runtime path.

@@ -40,6 +40,8 @@ func Root(ctx context.Context, base config.Config, logger *slog.Logger, args []s
 		return rootConfig(ctx, base, logger, rest)
 	case "adapter":
 		return rootAdapter(ctx, base, rest)
+	case "watch":
+		return rootWatch(ctx, base, rest)
 	default:
 		return fmt.Errorf("root: unknown subcommand %q", sub)
 	}
