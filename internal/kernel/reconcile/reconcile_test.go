@@ -117,13 +117,13 @@ func TestWithProviderUpdate(t *testing.T) {
 }
 
 // B1.1: same content at a NEW path while the original is still PRESENT (no
-// MISSING candidate) must NOT auto-MATCH. Two live same-content resources -> CONFLICT.
-func TestCrossPathHashAgainstPresentIsConflict(t *testing.T) {
+// MISSING candidate) must NOT auto-MATCH. The copy gets its own resource_id.
+func TestCrossPathHashAgainstPresentIsNewCopy(t *testing.T) {
 	prior := []PriorResource{priorFile("r1", "/a.txt", "h1", 1, epoch)}
 	res := Reconcile(prior, []domain.SnapshotEntry{entryFile("copy.txt", "/", "h1", 1, epoch)},
 		domain.AcceptanceComplete, Config{}, epoch, snap2)
-	if res.Counts.Conflict != 1 || res.Counts.Renamed != 0 || res.Counts.Moved != 0 {
-		t.Fatalf("identical content at a new path with original PRESENT must CONFLICT, got %+v", res.Counts)
+	if res.Counts.Added != 1 || res.Counts.Conflict != 0 || res.Counts.Renamed != 0 || res.Counts.Moved != 0 {
+		t.Fatalf("identical content at a new path must ADD a separate copy, got %+v", res.Counts)
 	}
 }
 

@@ -44,6 +44,12 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
+**Issue117 implementation in progress (2026-10-18).** The user authorized fixing
+the four real source-present files suppressed by R3 content-copy conflicts.
+[ADR-004](docs/decisions/ADR-004-DISTINCT-CONTENT-COPIES.md) resolves the original
+copy-case contradiction without changing tombstones, absence authority or APIs.
+Deployment and actual public inventory recovery are not yet claimed.
+
 **2026-10-18 Issue115 mitigated / guard accepted; full parity remains open#117.**
 At08:06Z OpenList returned HTTP/API success with only a virtual alias while the
 underlying provider listing failed;749 unrelated rows were marked REMOVED at

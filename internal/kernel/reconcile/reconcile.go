@@ -20,6 +20,7 @@ func Reconcile(prior []PriorResource, entries []domain.SnapshotEntry, acceptance
 	}
 	observed := make(map[string]bool, len(prior))
 	ix := BuildPriorIndex(prior)
+	ix.indexObservation(entries)
 
 	for i := range entries {
 		e := entries[i]

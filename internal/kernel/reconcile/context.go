@@ -26,6 +26,7 @@ func RemovalDecisionContext(prior []PriorResource, entries []domain.SnapshotEntr
 	observed := make(map[string]bool, len(prior))
 	reset := make(map[string]bool)
 	ix := BuildPriorIndex(prior)
+	ix.indexObservation(entries)
 	for i := range entries {
 		status, p, _ := ix.resolve(entries[i], cfg, now)
 		if status == ResolutionMatched {
