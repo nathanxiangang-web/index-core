@@ -1,5 +1,17 @@
 # ADR: opt-in source presence mirror
 
+## Oct19 follow-up (implementation / rollout pending)
+
+See [ADR-005](decisions/ADR-005-TRUSTED-MIRROR-RECOVERY.md). The deployed guard
+was intentionally additive-only without topology credentials; an INTERNAL root
+item then stalled successful observations while watch signals continued. Add
+renewable, separately scoped topology authentication and a two-recovery cap for
+explicit source-mirror root watches. Never auto-retry ordinary INTERNAL work.
+An audited empty, unreferenced owned legacy Alias may be reversibly disabled;
+other mounts/physical files stay unchanged. Only after before/after topology,
+namespace and fresh complete direct-child checks pass can deletion converge.
+Old acceptance/count records below are historical, not current rollout proof.
+
 ## Issue115 correction: virtual-overlay success is not completeness
 
 The initial live acceptance below was insufficient. A later successful root list

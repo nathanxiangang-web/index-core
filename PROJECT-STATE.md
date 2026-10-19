@@ -44,7 +44,26 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
-**Issue117 implementation in progress (2026-10-18).** The user authorized fixing
+**Issue115 deletion recovery in progress (2026-10-19).** User explicitly requested
+repair after a source-deleted legacy-alias file remained PRESENT. The root's HOT
+watch still emits signals, but its last successful observation is13:29Z Oct18;
+INTERNAL/RETRY_WAIT is outside generic automatic promotion. No original INTERNAL
+trigger is established from retained logs. [ADR-005](docs/decisions/ADR-005-TRUSTED-MIRROR-RECOVERY.md)
+adds renewable isolated topology login and at most two due mirror-root INTERNAL
+recoveries through the existing CAS. Ordinary roots/failures remain protected.
+The legacy Alias is source-empty and has no Copy references; its full dependency
+audit, backup and reversible retirement are rollout gates, not yet claimed done.
+Focused PostgreSQL/HTTP/runtime tests and vet/build PASS; exact-head CI and actual
+deletion/continued scanning/public inventory evidence remain required.
+
+Issue117 / PR118 is now accepted and merged (5d4ee561e709). Runtime be9f5af
+was reverified Oct19 at13:24Z: all4 missing paths have fresh unambiguous PRESENT
+IDs, one added Journal event each, old tombstones unchanged, public277 files
+(library275/downloads2). This identity acceptance did NOT restore deletion sync.
+
+### Prior incident stages (historical)
+
+**Issue117 implementation (2026-10-18).** The user authorized fixing
 the four real source-present files suppressed by R3 content-copy conflicts.
 [ADR-004](docs/decisions/ADR-004-DISTINCT-CONTENT-COPIES.md) resolves the original
 copy-case contradiction without changing tombstones, absence authority or APIs.
