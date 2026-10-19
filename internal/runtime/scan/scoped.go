@@ -113,6 +113,8 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 		}
 		col.ExpectedBasePath = ac.ExpectedBasePath
 		col.TopologyToken = os.Getenv(ac.TopologyTokenEnv)
+		col.TopologyUsername = os.Getenv(ac.TopologyUsernameEnv)
+		col.TopologyPassword = os.Getenv(ac.TopologyPasswordEnv)
 	}
 	raw, err := col.ScanScope(ctx, target, maxEntries)
 	if err != nil {

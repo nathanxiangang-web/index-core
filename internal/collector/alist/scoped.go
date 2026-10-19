@@ -72,6 +72,16 @@ func (a Adapter) ScanScope(ctx context.Context, scope string, maxEntries int) (a
 	}
 
 	dir := normalizePath(scope)
+	// Resolve a short-lived topology session once per observation. Never reuse
+	// source credentials implicitly or send this token to content/list endpoints.
+	if a.TopologyToken == "" && a.TopologyUsername != "" && a.TopologyPassword != "" {
+		topology := Adapter{BaseURL: a.BaseURL, Username: a.TopologyUsername, Password: a.TopologyPassword, HTTP: a.HTTP, Timeout: a.Timeout}
+		if t, loginErr := topology.loginScoped(ctx); loginErr == nil {
+			a.TopologyToken = t
+		}
+		// Authentication failure leaves positive observations available, but
+		// cannot mint absence authority. No secret-bearing error is logged.
+	}
 	// HTTP/API success is NOT completeness: OpenList can suppress a failed
 	// backend List and return only virtual mounts. Independently fence topology.
 	topologyBefore := a.directoryTopology(ctx, dir)
