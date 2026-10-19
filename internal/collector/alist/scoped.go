@@ -75,7 +75,7 @@ func (a Adapter) ScanScope(ctx context.Context, scope string, maxEntries int) (a
 	// Resolve a short-lived topology session once per observation. Never reuse
 	// source credentials implicitly or send this token to content/list endpoints.
 	if a.TopologyToken == "" && a.TopologyUsername != "" && a.TopologyPassword != "" {
-		topology := Adapter{BaseURL: a.BaseURL, Username: a.TopologyUsername, Password: a.TopologyPassword, HTTP: a.HTTP, Timeout: a.Timeout}
+		topology := Adapter{BaseURL: a.BaseURL, Username: a.TopologyUsername, Password: a.TopologyPassword, HTTP: topologyHTTPClient(a.HTTP), Timeout: a.Timeout}
 		if t, loginErr := topology.loginScoped(ctx); loginErr == nil {
 			a.TopologyToken = t
 		}

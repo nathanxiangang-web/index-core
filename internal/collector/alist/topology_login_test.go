@@ -12,7 +12,7 @@ import (
 )
 
 func TestMirrorTopologyRenewableLoginIsIsolatedAndFailClosed(t *testing.T) {
-	for _, scenario := range []string{"renew", "denied", "partial-credential"} {
+	for _, scenario := range []string{"renew", "denied", "partial-credential", "login-redirect", "topology-redirect"} {
 		t.Run(scenario, func(t *testing.T) {
 			logins, topologyCalls := 0, 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,6 +24,10 @@ func TestMirrorTopologyRenewableLoginIsIsolatedAndFailClosed(t *testing.T) {
 						t.Error("topology login leaked source token or changed credentials")
 					}
 					logins++
+					if scenario == "login-redirect" {
+						http.Redirect(w, r, "/unexpected", http.StatusTemporaryRedirect)
+						return
+					}
 					if scenario == "denied" {
 						fmt.Fprint(w, `{"code":403}`)
 						return
@@ -31,6 +35,10 @@ func TestMirrorTopologyRenewableLoginIsIsolatedAndFailClosed(t *testing.T) {
 					fmt.Fprintf(w, `{"code":200,"data":{"token":"topology-%d"}}`, logins)
 				case "/api/admin/storage/list":
 					topologyCalls++
+					if scenario == "topology-redirect" {
+						http.Redirect(w, r, "/unexpected", http.StatusTemporaryRedirect)
+						return
+					}
 					if r.Method != "GET" || r.Header.Get("Authorization") != fmt.Sprintf("topology-%d", logins) {
 						t.Error("wrong topology token or method")
 					}
@@ -63,7 +71,7 @@ func TestMirrorTopologyRenewableLoginIsIsolatedAndFailClosed(t *testing.T) {
 			if scenario == "renew" && (logins != 2 || topologyCalls != 4) {
 				t.Fatalf("session not renewed per observation: logins=%d topology=%d", logins, topologyCalls)
 			}
-			if scenario != "renew" && topologyCalls != 0 {
+			if scenario != "renew" && scenario != "topology-redirect" && topologyCalls != 0 {
 				t.Fatal("failed credentials minted topology requests")
 			}
 			if scenario == "partial-credential" && logins != 0 {
