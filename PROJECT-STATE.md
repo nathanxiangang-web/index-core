@@ -45,18 +45,24 @@ The experimental subagent topology is retired.
 ## Current phase
 
 **P0 Reliability (distinct from historical Scoped Refresh P0): R1 bounded
-Architect-accepted; R2 Issue121 test/evidence work IN PROGRESS.** Baseline
-`a9e2f9875fb86c33c54a525b924ddfad12a878d7` (PR119 merged); exact-head and merge
-CI39358009232/39358272828 SUCCESS. R1 acceptance is recorded in Issue120
-comment6281974853 and is not whole-P0 reliability certification. R2 adds only
-isolated PG18/fake-OpenList adversarial tests and evidence, executing on the
-operator-designated192.168.178.50; no core/schema/product/runtime change or
-production mutation.49 focused scenarios and implementation-head full PG18/race
-CI39361865998 pass; final report-head CI/Architect review still required.
-See docs/p0/P0-R2-VERIFICATION.md for16 inherited opt-in/dependency skips, not
-silently treated as passes. No self-merge; parent
-Issue120 remains open and R3/R4/R5 are unstarted. Older incident snapshots below
-remain historical evidence, not fixed production counts or universal SLAs.
+Architect-accepted; R2 BOUNDED ARCHITECT_ACCEPTED; R3 Issue123 IN PROGRESS.**
+R1 acceptance: Issue120 comment6281974853. R2 PR122 reviewed HEAD
+`0ad1aed98a72affddd5f1222e0936917032084fc`, review5580396348; squash merge
+`54b15e988aee714d84d6b82d681b9f71ee8140bd`. Reviewed-head CI39362445591 and
+merged-main CI39366941874 SUCCESS. Issue121 closed; acceptance receipt is
+Issue120 comment6283052837. R2's49 isolated scenarios do not certify real provider
+mutation, OS/DB crash, production rollback, scale or soak. The16 inherited skips
+remain disclosed in docs/p0/P0-R2-VERIFICATION.md.
+
+R3 adds operator-only `root diagnose`: one-shot bounded read-only PostgreSQL
+evidence, no provider calls, repair, public endpoint, migration or deployment.
+Absent live-source/consumer evidence stays UNKNOWN/NOT_TRACKED. Compile/test on
+operator-designated192.168.178.50 in isolated PostgreSQL18. See
+docs/p0/P0-R3-DIAGNOSTICS.md for module boundaries, output contract and limits.
+Implementation is not acceptance; one focused unmerged PR and completed
+exact-head CI await Architect review. Parent Issue120 stays OPEN; R4/R5 and
+whole-P0 acceptance are not authorized. Older snapshots below are historical,
+not fixed production counts or universal SLAs.
 
 **Issue115 deletion recovery live-verified (2026-10-20,02:15Z).** PR119 runtime
 2d9068e, binary a6c2a397504e, restores renewable separate topology authentication

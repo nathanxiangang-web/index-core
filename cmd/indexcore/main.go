@@ -44,6 +44,14 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Operator diagnosis must not parse unrelated serve/provider settings (or
+	// echo a malformed secret-bearing env value from that configuration).
+	if cmd == "root" && len(rest) > 0 && rest[0] == "diagnose" {
+		base := config.Defaults()
+		base.DatabaseURL = os.Getenv("INDEXCORE_DATABASE_URL")
+		return app.Root(ctx, base, newLogger(base), rest)
+	}
+
 	// Subcommand-bearing commands parse their own config flags after the
 	// subcommand (e.g. `root create --database-url ...`), so they receive the
 	// env-based config as a base and parse the remaining args themselves.
@@ -140,6 +148,9 @@ Commands:
   help           print this help
 
 Configuration is env + flags; see --help on each command.
+
+  indexcore root diagnose --root-id <UUID> [--timeout 5s] [--row-limit 1000]
+One-shot read-only JSON evidence only; never scans, retries or repairs.
 
 `+"`"+`indexcore incremental run`+"`"+` is one-shot/manual only: it calls the accepted P6
 orchestration exactly once under the existing single-writer advisory lock (an

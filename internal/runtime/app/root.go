@@ -26,6 +26,8 @@ func Root(ctx context.Context, base config.Config, logger *slog.Logger, args []s
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
+	case "diagnose":
+		return rootDiagnose(ctx, base, rest)
 	case "create":
 		return rootCreate(ctx, base, logger, rest)
 	case "list":
