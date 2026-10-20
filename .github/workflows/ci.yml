@@ -66,3 +66,6 @@ jobs:
 
       - name: P0-R2 adversarial matrix race (PostgreSQL 18)
         run: go test -race -p 1 -count=1 -run '^TestP0R2' ./internal/runtime/scan ./internal/store/postgres
+
+      - name: P0-R3 read-only diagnostics race (PostgreSQL 18)
+        run: go test -race -p 1 -count=1 -run '^TestP0R3' ./internal/diagnostic ./internal/store/postgres ./internal/runtime/app ./cmd/indexcore

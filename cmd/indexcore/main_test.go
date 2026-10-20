@@ -6,6 +6,15 @@ import (
 	"testing"
 )
 
+func TestP0R3DispatchIgnoresUnrelatedRuntimeSecrets(t *testing.T) {
+	t.Setenv("INDEXCORE_SCAN_TIMEOUT", "SECRET_DO_NOT_EMIT")
+	t.Setenv("INDEXCORE_DATABASE_URL", "SECRET_DO_NOT_EMIT")
+	err := run([]string{"root", "diagnose", "--root-id", "invalid"})
+	if err == nil || strings.Contains(err.Error(), "SECRET_DO_NOT_EMIT") || strings.Contains(err.Error(), "unknown subcommand") {
+		t.Fatal("diagnostic parsed unrelated runtime settings or missed dispatch")
+	}
+}
+
 func TestP7TopLevelHelpListsIncremental(t *testing.T) {
 	var buf bytes.Buffer
 	printUsage(&buf)

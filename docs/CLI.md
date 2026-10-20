@@ -23,6 +23,13 @@ Configuration is environment variables plus flags. Flags override environment va
 
 ## Runtime flags / environment
 
+Operator-only `indexcore root diagnose --root-id <UUID>` emits one bounded,
+read-only JSON evidence report. It never scans, retries, repairs or probes a
+provider. It accepts only DSN/root/timeout/row-limit/stale-after flags, not general
+serve flags. Unknown live-source health and downstream projection lag stay
+explicit; UNKNOWN exits1 even if persisted checks pass. See
+[P0-R3 operator contract](p0/P0-R3-DIAGNOSTICS.md) for limits and interpretation.
+
 | Environment | Flag | Default |
 | --- | --- | --- |
 | `INDEXCORE_DATABASE_URL` | `--database-url` | required |
