@@ -65,7 +65,8 @@ var DueRetryClasses = []state.ErrorClass{state.ErrorTransientProvider, state.Err
 
 // ListDueRetryWork selects up to limit ACTIVE-root RETRY_WAIT rows that are due
 // (pending_not_before <= now) and whose last_error_class is one of the
-// P10-approved transient provider classes. It is strictly read-only and returns
+// P10-approved transient provider classes, or a bounded SOURCE_MIRROR root
+// recovery (ADR-005). Ordinary INTERNAL failures remain excluded. It returns
 // the current row version, so the caller must win RetryReady's CAS. CAS conflict
 // is stale operational state and must not be retried in the same pass.
 //
@@ -85,7 +86,24 @@ func (s *Store) ListDueRetryWork(ctx context.Context, now time.Time, limit int) 
 		          AND w.work_state = 'RETRY_WAIT'
 		          AND w.pending_not_before IS NOT NULL
 		          AND w.pending_not_before <= $1
-		          AND w.last_error_class IN ('TRANSIENT_PROVIDER','THROTTLED')
+		          AND (w.last_error_class IN ('TRANSIENT_PROVIDER','THROTTLED')
+		            OR (w.last_error_class = 'INTERNAL'
+		                AND w.scope_key = '/'
+		                AND w.consecutive_failures BETWEEN 1 AND 2
+		                AND EXISTS (
+		                  SELECT 1 FROM index_scope_watch_state sw
+		                  WHERE sw.root_id=w.root_id AND sw.scope_key=w.scope_key
+		                    AND sw.watch_state IN ('HOT','WARM')
+		                    AND sw.cadence_class='SOURCE_MIRROR'
+		                    AND 'OPERATOR_POLICY'=ANY(sw.source_set))
+		                AND EXISTS (
+		                  SELECT 1 FROM index_root_adapter_config ac
+		                  WHERE ac.root_id=w.root_id
+		                    AND ac.collector_kind IN ('alist','openlist')
+		                    AND ac.config->'mirror_presence'='true'::jsonb
+		                    AND (coalesce(ac.config->>'topology_token_env','')<>''
+		                      OR (coalesce(ac.config->>'topology_username_env','')<>''
+		                        AND coalesce(ac.config->>'topology_password_env','')<>'')))))
 		        ORDER BY w.pending_not_before ASC, w.root_id ASC, w.scope_key ASC
 		        LIMIT $2)
 		 ORDER BY pending_not_before ASC, root_id ASC, scope_key ASC`, now, limit)

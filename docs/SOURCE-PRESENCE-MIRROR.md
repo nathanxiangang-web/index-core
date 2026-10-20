@@ -1,5 +1,27 @@
 # ADR: opt-in source presence mirror
 
+## Oct20 follow-up (live verified)
+
+At02:15Z the owned deployment passed Q5/Q8 and authenticated public verification:
+three fresh trusted root observations, six confirmed removals across two
+generations,274 surviving files and zero unrelated identity changes. The second
+removed subtree was independently confirmed absent by a forced complete source
+listing. All4 earlier copy-conflict paths survive; gallery remains absent.
+Runtime2d9068e/CI39261677931, docs4e35cd7/CI39357578299; no source mutations or
+new downloads. The retired empty Alias is disabled only, with private DB/config/
+binary backups. Its unreferenced directory Copy and disabled historical Binding
+are retained. This is current evidence, not a universal30s deletion SLA.
+
+See [ADR-005](decisions/ADR-005-TRUSTED-MIRROR-RECOVERY.md). The deployed guard
+was intentionally additive-only without topology credentials; an INTERNAL root
+item then stalled successful observations while watch signals continued. Add
+renewable, separately scoped topology authentication and a two-recovery cap for
+explicit source-mirror root watches. Never auto-retry ordinary INTERNAL work.
+An audited empty owned legacy Alias with no file/business dependencies may be reversibly disabled;
+other mounts/physical files stay unchanged. Only after before/after topology,
+namespace and fresh complete direct-child checks pass can deletion converge.
+Old acceptance/count records below are historical, not current rollout proof.
+
 ## Issue115 correction: virtual-overlay success is not completeness
 
 The initial live acceptance below was insufficient. A later successful root list

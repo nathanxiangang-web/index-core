@@ -44,7 +44,37 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
-**Issue117 implementation in progress (2026-10-18).** The user authorized fixing
+**Issue115 deletion recovery live-verified (2026-10-20,02:15Z).** PR119 runtime
+2d9068e, binary a6c2a397504e, restores renewable separate topology authentication
+and bounded due INTERNAL mirror-root retries through existing CAS. Full exact
+runtime CI39261677931 and docs-head4e35cd7 CI39357578299 SUCCESS; focused PG18,
+HTTP/runtime tests and vet/build passed. The original INTERNAL trigger remains
+unestablished; do not invent one. [ADR-005](docs/decisions/ADR-005-TRUSTED-MIRROR-RECOVERY.md)
+retains the topology, namespace, generation and completeness deletion fences.
+
+Only the owned source-empty legacy Alias was disabled, not deleted. An inert
+DISABLED historical Binding and the sole unclassified virtual-root directory
+Copy remain unchanged; neither has acquisition references. Binary/config/DB
+backups are private. Three fresh root observations02:13:24/02:13:56/02:14:29Z
+carry coverage authority; work is VERIFIED, consecutive failures0. Six records
+(three files/three directories) converged through six Q8 removals in two
+generations. Besides the legacy subtree, forced real-source listing confirmed
+the other removed cloud-download directory absent. No unrelated PRESENT identity
+changed; all4 prior copy-conflict paths remain PRESENT. Public274=library274/
+downloads0; deleted gallery and legacy file absent from Q5/public API. Sample
+attachment302 verified without following CDN. Product preview fix is also live;
+60 Node tests pass, served asset matches reviewed source. No browser playback
+acceptance is claimed. Eight frozen reservations, other containers/mounts/source
+credentials unchanged; no operator StartDownload, physical deletion or migration.
+
+Issue117 / PR118 is now accepted and merged (5d4ee561e709). Runtime be9f5af
+was reverified Oct19 at13:24Z: all4 missing paths have fresh unambiguous PRESENT
+IDs, one added Journal event each, old tombstones unchanged, public277 files
+(library275/downloads2). This identity acceptance did NOT restore deletion sync.
+
+### Prior incident stages (historical)
+
+**Issue117 implementation (2026-10-18).** The user authorized fixing
 the four real source-present files suppressed by R3 content-copy conflicts.
 [ADR-004](docs/decisions/ADR-004-DISTINCT-CONTENT-COPIES.md) resolves the original
 copy-case contradiction without changing tombstones, absence authority or APIs.

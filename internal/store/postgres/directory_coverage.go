@@ -57,12 +57,14 @@ func (s *Store) directoryCoverage(ctx context.Context, tx pgx.Tx, snap domain.Sn
 		return nil, err
 	}
 	var ac struct {
-		Mirror   bool   `json:"mirror_presence"`
-		Path     string `json:"path"`
-		Base     string `json:"expected_base_path"`
-		Topology string `json:"topology_token_env"`
+		Mirror           bool   `json:"mirror_presence"`
+		Path             string `json:"path"`
+		Base             string `json:"expected_base_path"`
+		Topology         string `json:"topology_token_env"`
+		TopologyUsername string `json:"topology_username_env"`
+		TopologyPassword string `json:"topology_password_env"`
 	}
-	if json.Unmarshal(a.Config, &ac) != nil || !ac.Mirror || ac.Base == "" || ac.Topology == "" || (a.CollectorKind != "alist" && a.CollectorKind != "openlist") || p.AdapterDigest != AdapterConfigDigest(a) {
+	if json.Unmarshal(a.Config, &ac) != nil || !ac.Mirror || ac.Base == "" || (ac.Topology == "" && (ac.TopologyUsername == "" || ac.TopologyPassword == "")) || (a.CollectorKind != "alist" && a.CollectorKind != "openlist") || p.AdapterDigest != AdapterConfigDigest(a) {
 		return nil, invalid
 	}
 	base := path.Clean("/" + strings.Trim(ac.Path, "/"))

@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-// Only this GET endpoint uses the optional topology credential. Do not log the
+// Only this GET endpoint uses the optional topology token. Do not log the
 // response: OpenList's admin envelope may contain unrelated provider secrets.
 // Decode and retain only routing facts, never addition/password/token fields.
 func (a Adapter) directoryTopology(ctx context.Context, scope string) string {
@@ -24,10 +24,7 @@ func (a Adapter) directoryTopology(ctx context.Context, scope string) string {
 		return ""
 	}
 	req.Header.Set("Authorization", a.TopologyToken)
-	client := a.HTTP
-	if client == nil {
-		client = http.DefaultClient
-	}
+	client := topologyHTTPClient(a.HTTP)
 	response, err := client.Do(req)
 	if err != nil {
 		return ""
@@ -94,4 +91,15 @@ func (a Adapter) directoryTopology(ctx context.Context, scope string) string {
 	normalized, _ := json.Marshal(reply.Data.Content)
 	digest := sha256.Sum256(normalized)
 	return hex.EncodeToString(digest[:])
+}
+
+// Topology authority must never follow a redirect, even on the same host.
+// Copy the client rather than changing the ordinary source request policy.
+func topologyHTTPClient(base *http.Client) *http.Client {
+	if base == nil {
+		base = http.DefaultClient
+	}
+	copy := *base
+	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &copy
 }

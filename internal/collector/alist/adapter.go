@@ -30,6 +30,8 @@ type Adapter struct {
 	HTTP             *http.Client
 	ExpectedBasePath string // namespace fence for opt-in source mirror
 	TopologyToken    string // optional protected topology-read credential; never persisted
+	TopologyUsername string // optional renewable topology login, distinct from source login
+	TopologyPassword string
 }
 
 // Scan walks the AList tree under subPath (BFS) and returns normalized evidence.

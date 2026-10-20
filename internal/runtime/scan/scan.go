@@ -40,15 +40,17 @@ func New(store *postgres.Store, rclonePath, rcloneConfig string, timeout time.Du
 // resolved at runtime; plaintext provider secrets are never persisted into
 // index_root_adapter_config (G3-R2.8).
 type adapterConfig struct {
-	Remote           string `json:"remote"` // rclone
-	Path             string `json:"path"`   // shared
-	BaseURL          string `json:"base_url"`
-	UsernameEnv      string `json:"username_env"`
-	PasswordEnv      string `json:"password_env"`
-	TokenEnv         string `json:"token_env"`
-	MirrorPresence   bool   `json:"mirror_presence"`
-	ExpectedBasePath string `json:"expected_base_path"`
-	TopologyTokenEnv string `json:"topology_token_env"`
+	Remote              string `json:"remote"` // rclone
+	Path                string `json:"path"`   // shared
+	BaseURL             string `json:"base_url"`
+	UsernameEnv         string `json:"username_env"`
+	PasswordEnv         string `json:"password_env"`
+	TokenEnv            string `json:"token_env"`
+	MirrorPresence      bool   `json:"mirror_presence"`
+	ExpectedBasePath    string `json:"expected_base_path"`
+	TopologyTokenEnv    string `json:"topology_token_env"`
+	TopologyUsernameEnv string `json:"topology_username_env"`
+	TopologyPasswordEnv string `json:"topology_password_env"`
 }
 
 // collector builds the provider-neutral Collector for a root's adapter kind.
