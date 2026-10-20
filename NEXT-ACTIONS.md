@@ -1,6 +1,20 @@
 # Index Core — Next Actions
 
-## Current state
+## Current P0 Reliability execution (2026-10-20)
+
+Issue120 tracks a new production-reliability program, NOT the earlier accepted
+P0 Scoped Refresh prototype. R1 has bounded Architect acceptance at Issue120
+comment6281974853; verified baseline is main a9e2f987 (PR119). Current executable
+packet is Issue121 / R2: isolated PG18 and fake OpenList adversarial tests plus
+docs/p0/P0-R2-VERIFICATION.md, one non-merged PR for Architect review. Compile/test
+on192.168.178.50, not the public runtime. No production source/mount/credential/
+Canonical edits, new downloads, deployment, schema or runtime code changes.
+If a genuine core defect appears, stop and open a narrow follow-up Issue with
+evidence, not a fix inside this testing branch. R3/R4/R5 remain unstarted; P0
+reliability is NOT accepted. Prior incremental foundation records below are
+retained history and do not override this current bounded task.
+
+## Historical incremental foundation
 
 Architecture / acceptance owner: **ChatGPT Architect**
 

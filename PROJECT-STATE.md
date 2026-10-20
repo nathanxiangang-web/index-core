@@ -4,7 +4,7 @@
 
 ## Last updated
 
-2026-09-25
+2026-10-20
 
 ## Main branch
 
@@ -43,6 +43,20 @@ The previous GLM Foreman + Worker A/B/C/D topology is retired.
 The experimental subagent topology is retired.
 
 ## Current phase
+
+**P0 Reliability (distinct from historical Scoped Refresh P0): R1 bounded
+Architect-accepted; R2 Issue121 test/evidence work IN PROGRESS.** Baseline
+`a9e2f9875fb86c33c54a525b924ddfad12a878d7` (PR119 merged); exact-head and merge
+CI39358009232/39358272828 SUCCESS. R1 acceptance is recorded in Issue120
+comment6281974853 and is not whole-P0 reliability certification. R2 adds only
+isolated PG18/fake-OpenList adversarial tests and evidence, executing on the
+operator-designated192.168.178.50; no core/schema/product/runtime change or
+production mutation.49 focused scenarios and implementation-head full PG18/race
+CI39361865998 pass; final report-head CI/Architect review still required.
+See docs/p0/P0-R2-VERIFICATION.md for16 inherited opt-in/dependency skips, not
+silently treated as passes. No self-merge; parent
+Issue120 remains open and R3/R4/R5 are unstarted. Older incident snapshots below
+remain historical evidence, not fixed production counts or universal SLAs.
 
 **Issue115 deletion recovery live-verified (2026-10-20,02:15Z).** PR119 runtime
 2d9068e, binary a6c2a397504e, restores renewable separate topology authentication
