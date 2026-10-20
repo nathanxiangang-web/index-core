@@ -69,3 +69,35 @@ jobs:
 
       - name: P0-R3 read-only diagnostics race (PostgreSQL 18)
         run: go test -race -p 1 -count=1 -run '^TestP0R3' ./internal/diagnostic ./internal/store/postgres ./internal/runtime/app ./cmd/indexcore
+
+  r4-smoke:
+    name: P0-R4 guarded nested correctness smoke / race
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Offline command identity, redaction and optimization guard regressions
+        run: python3 -m unittest discover -s scripts/p0-r4 -p test_runner.py -v
+      - name: Prepare owned isolated PostgreSQL 18 (no published ports)
+        run: python3 scripts/p0-r4/run-isolated.py prepare --workspace /tmp/indexcore-r4-125-ci
+      - name: Compile guarded R4 race binary
+        run: python3 scripts/p0-r4/run-isolated.py compile --workspace /tmp/indexcore-r4-125-ci --race
+      - name: Bounded 200-resource nested correctness smoke under race detector
+        run: python3 scripts/p0-r4/run-isolated.py smoke --workspace /tmp/indexcore-r4-125-ci --ci-smoke --race
+      - name: Stop only owned database (retain evidence)
+        if: always()
+        run: |
+          if test -f /tmp/indexcore-r4-125-ci/attestation.json; then
+            python3 scripts/p0-r4/run-isolated.py stop --workspace /tmp/indexcore-r4-125-ci
+          fi
+      - name: Upload redacted bounded smoke receipts, not data or credentials
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-r4-bounded-smoke
+          path: |
+            /tmp/indexcore-r4-125-ci/*-result.json
+            /tmp/indexcore-r4-125-ci/*.log
+          if-no-files-found: ignore
