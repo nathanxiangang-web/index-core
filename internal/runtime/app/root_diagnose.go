@@ -41,7 +41,7 @@ func runRootDiagnose(ctx context.Context, base config.Config, args []string, out
 		// No connection hook can mutate data. Startup parameters only, and the
 		// reader also explicitly requests READ ONLY for every transaction.
 		cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
-		cfg.ConnConfig.RuntimeParams["search_path"] = "public,pg_catalog"
+		cfg.ConnConfig.RuntimeParams["search_path"] = "pg_catalog,public"
 	}
 	var r diagnostic.Report
 	if err != nil || *dsn == "" {

@@ -46,8 +46,9 @@ type Work struct {
 	Exact            bool           `json:"counts_exact"`
 	OldestDueAt      *time.Time     `json:"oldest_due_at"`
 	OldestInflightAt *time.Time     `json:"oldest_inflight_at"`
-	SourceFailures   int            `json:"source_failure_records"`
-	InternalRetryCap int            `json:"mirror_internal_retry_cap_records"`
+	// Counts of qualifying work rows, never sums of attempts or failure events.
+	SourceFailures   int `json:"work_items_with_source_failures"`
+	InternalRetryCap int `json:"mirror_internal_retry_cap_work_items"`
 }
 type Observation struct {
 	At                   time.Time `json:"observed_at"`

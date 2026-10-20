@@ -23,6 +23,8 @@ root diagnose (CLI; dedicated non-provider flag set)
 - `internal/runtime/app/root_diagnose.go`: total deadline, one-connection pool
   with read-only startup default, one sanitized report. Does not initialize
   Serve/Scan or validate unrelated provider/runtime flags.
+  Startup search_path is `pg_catalog,public`: built-in functions resolve before
+  same-named public functions. Tables remain explicitly public-schema qualified.
 - `cmd/indexcore`: dispatches without unrelated configuration. Existing doctor,
   serve, /readyz, Q1-Q9 and all write behavior stay unchanged.
 
@@ -56,6 +58,11 @@ consistency; protected env injection avoids a process-list-visible DSN.
   identical facts; map keys sorted. Database `as_of` naturally changes each run.
 
 Inspect query_complete, overall, checks and each complete/counts_exact flag.
+`work_items_with_source_failures` and `mirror_internal_retry_cap_work_items`
+count qualifying dirty-scope work rows, not individual failures or attempts.
+One item with three retained failures contributes one, not three. Like state
+counts, these are lower bounds when counts_exact=false. The ambiguous pre-review
+`*_records` names were removed before acceptance of the JSON v1 contract.
 Exit0 is reserved for fully green evidence. Exit1 means invalid arguments,
 incomplete query, DEGRADED or UNKNOWN. In R3 otherwise healthy persisted state
 still reports UNKNOWN/exit1: live-source and downstream acknowledgements are not
@@ -119,8 +126,8 @@ Invalid flags are rejected without echoing values.
 Run on192.168.178.50 in dedicated internal-network disposable PostgreSQL18; no
 host DB ports or production credentials/services mounted. No new skips permitted;
 the16 inherited optional/dependency skips remain disclosed in the R2 report.
-The focused suite contains66 leaf tests (31 pure classifications,24 PG18 state
-cases,6 PG18 failure boundaries,5 standalone bounds/accepted-data/CLI tests),
+The focused suite contains67 leaf tests (31 pure classifications,24 PG18 state
+cases,6 PG18 failure boundaries,6 standalone bounds/accepted-data/CLI tests),
 all executed with zero new skips. Local full-suite/race and exact-head CI
 receipts are recorded in the PR review packet, avoiding a self-referential HEAD
 claim in this file. Evidence is same-executor operation, not independent review.
@@ -129,6 +136,11 @@ Tests cover pure classifications, PG18 state/query/deadline failures and limits,
 read-only transaction trace/database-enforced read-only defaults, fixture table
 fingerprints, zero HTTP calls while daemon writer lock stays held, secret-free
 CLI/config failures and deterministic JSON.
+The review regression installs four exact-signature public function shadows in
+the isolated PG18 fixture. An unsafe-order control proves all four intercept;
+the actual CLI must still report real transaction time, compatible schema and
+the correct conflict count. Work-count assertions distinguish one row carrying
+three failures from three separate failure events. No production DDL is run.
 
 First focused run failed because new fixtures used forbidden plaintext adapter
 keys; fixtures now use environment references, without weakening validation.

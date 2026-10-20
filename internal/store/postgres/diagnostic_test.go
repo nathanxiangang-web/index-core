@@ -109,7 +109,7 @@ func TestP0R3PostgresStatesAndNoWrites(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if kind == "retry-cap" || kind == "ordinary-internal" {
+				if kind == "retry-cap" || kind == "ordinary-internal" || kind == "auth" {
 					if _, err = st.Pool().Exec(ctx, `UPDATE index_dirty_scope_work SET consecutive_failures=3 WHERE root_id=$1`, p3RootActive); err != nil {
 						t.Fatal(err)
 					}
@@ -200,6 +200,15 @@ func TestP0R3PostgresStatesAndNoWrites(t *testing.T) {
 				t.Fatal("invented source/consumer health")
 			}
 			b, _ := json.Marshal(r)
+			if kind == "auth" && (r.Work.SourceFailures != 1 || !strings.Contains(string(b), `"work_items_with_source_failures":1`)) {
+				t.Fatal("three retained failures on one work item must count as one work item")
+			}
+			if kind == "retry-cap" && (r.Work.InternalRetryCap != 1 || !strings.Contains(string(b), `"mirror_internal_retry_cap_work_items":1`)) {
+				t.Fatal("one exhausted work item must not count its three failure events")
+			}
+			if strings.Contains(string(b), `"source_failure_records"`) || strings.Contains(string(b), `"mirror_internal_retry_cap_records"`) {
+				t.Fatal("ambiguous pre-review counter fields retained")
+			}
 			for _, secret := range []string{"SECRET_DO_NOT_EMIT", "secret.invalid", "secret-password-path", "private-child"} {
 				if strings.Contains(string(b), secret) {
 					t.Fatal("secret leakage")
