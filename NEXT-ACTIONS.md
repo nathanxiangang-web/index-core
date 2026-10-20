@@ -20,8 +20,11 @@ ingestion or normal CI).2k/20k and actual process/DB crash probes passed.
 Review5583387609/comment6288120356 now authorize one follow-up50k attempt:
 fresh attested lab,2k/20k prerequisites, capacity50-only120min hard maximum
 (<=5min cleanup), unchanged resources/isolation/assertions and other budgets.
-Record actual result/new exact-head CI on the same Draft PR126; stop on failure,
-do not auto-retry, merge, self-accept or start R5. Require exact-head CI before any
+Fresh2k/20k passed; the user stopped the50k follow-up at877.184s to prioritize
+reviewed-main deployment. Follow-up status USER_INTERRUPTED_NOT_PASS/raw exit143;
+remaining50k scenarios NOT_RUN. Owned test runner/DB stopped, artifacts retained.
+Record new exact-head CI on the same Draft PR126; no further capacity retry,
+merge, self-acceptance or R5 is inferred. Require exact-head CI before any
 merge; merged-main CI and explicit acceptance are
 separate gates. Do not self-merge or close Issue125/120. R5 is unstarted and
 whole-P0 reliability is NOT accepted. Prior records below remain history, not

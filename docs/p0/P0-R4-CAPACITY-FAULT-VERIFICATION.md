@@ -1,7 +1,8 @@
 # P0-R4 isolated capacity and real crash verification (Issue125)
 
-Status: **PARTIAL /first50k matrix timed out; one follow-up AUTHORIZED, not yet
-completed**. This is NOT Architect acceptance or permission to merge. Review
+Status: **PARTIAL /first50k matrix timed out; follow-up USER_INTERRUPTED_NOT_PASS**.
+The user explicitly ended long capacity testing to deploy reviewed main instead.
+This is NOT Architect acceptance or permission to merge. Review
 5583387609 /Issue125 comment6288120356 authorize exactly one new isolated50k
 attempt with a capacity50-only120min hard execution budget and <=5min controlled
 cleanup. CPU/RAM/PID/disk/isolation and all correctness checks stay unchanged.
@@ -405,5 +406,57 @@ No Go source, safety guard, CPU/RAM/PID/disk configuration or public runtime
 changes. Offline runner suite now verifies5 methods (including owned/foreign
 cleanup cases); this is not50k execution evidence.
 
-New lab preflight/exact candidate/source fingerprints/prerequisite and actual50k
-results will be recorded here after execution. No new50k PASS is implied yet.
+Candidate `4054ab2e40b654a158939c79f3a50e9f3fe48335` (parent reviewed dfedf87).
+New owned lab `indexcore-r4-125-run02` was prepared on the designated.50 host.
+Preflight:4 CPUs; available RAM6,743,805,952 bytes; free disk17,810,440,192 bytes;
+no other R4 runner. Existing services were left running. Same runner2CPU/2GiB/
+PIDs256 and PG1CPU/768MiB/PIDs128, internal network/no host ports,4GiB DB disk
+stop budget and32MiB log budget. Build image unchanged:
+`sha256:a0d9851bc0031edd71c37420cff4d681f2f2894764c72346b40e601910785fd0`.
+Go1.27.1; archive SHA256:
+`33ad9280a78b87ba2a1f92a3747b91200244f37e1845fcd16130e6c27e6af228`.
+New non-Markdown source fingerprint:
+`f5bd8b7bc8dc1b712e1cf6511805afcfd915b9490300aba0182333897294ee74`.
+Every Go/guard blob remains unchanged from reviewed dfedf87.
+
+| Fresh same-source prerequisite | Result | Redacted log SHA256 |
+| --- | --- | --- |
+| Guard tests + compilation | PASS19.683s | `cc698d6fb652db1cc16695bfd83a46d867946f78159adc8beda11eab2324b0f7` |
+| Full nested2k | PASS36.957s /0 mismatches | `f88aa67aa8675e21967c1e52ac2e56ea311b8286380a9e8d6449426424e3d198` |
+| Full nested20k | PASS1001.947s /0 mismatches | `3b71610e20a10041cefd3be77cffebf4b99d0285bfbeb5c88a35c4578bc9d6bc` |
+
+All prerequisites retain the original budgets/assertions.20k final canonical and
+Journal identities again matched (PRESENT20001/all IDs20002/events20223/gen18).
+Fresh20k Q5 n580011 p50/p95/p99=1.604214/1.798969/2.062614ms; OS peak RSS133760KiB,
+user/system CPU4.947087/193.224118s, DB85,694,143 bytes. These are this run's
+observations, not replacements for the earlier run or a performance SLA.
+
+Exactly one follow-up50k was started. The user explicitly requested stopping
+long capacity testing and deploying the reviewed-main binary instead. The owned
+runner was stopped after877.184s; runner raw exit143/status FAIL, accompanied by
+the separate fsynced `user-interruption.json` receipt: **USER_INTERRUPTED_NOT_PASS**.
+This was an operator-requested interruption, NOT a new timeout, OOM or observed
+consistency assertion failure. Cold/before-repeat/one NOOP checkpoints reported
+50000 PRESENT/50000 all IDs/50000 events/gen1/mismatch0. The remaining matrix,
+later deltas/deletion/reappearance/copy/scope checks and final OS/query metrics
+remain NOT_RUN/UNKNOWN for this follow-up. No result is inferred from20k.
+
+Follow-up50k redacted log `capacity50-1792506521992421833.log`, SHA256
+`8a3cf6c3f2947b1a22db2bb14a6b1379c7155a6608c7476bbae6cc919947c3fe`.
+Runner286 samples: peak249770803.2/mean150663689.3090909 bytes, CPU mean10.6754895%.
+These are container samples, not missing final OS metrics. A separate early
+point sample showed runner121MiB/2GiB and PG123.5MiB/768MiB at101.46% CPU under
+its1CPU limit; it is NOT a peak or mean. Both the owned test runner and database
+are stopped, with private source/log/data/attestation artifacts retained. No retry
+was started. PR126 stays Draft/unmerged; Issues125/120 OPEN; R5 not started.
+
+Candidate CI39436595791 is SUCCESS after one failed-job rerun. Initial attempt
+failed during Docker preparation before any R4 test, with only a sanitized
+command failure (no underlying Docker cause established). Same-HEAD rerun
+passed cold preparation, guard tests, all5 offline methods and200-entry race
+smoke; ordinary PG18/race job passed. No source change or50k retry was used to
+clear CI. Final reporting HEAD will require its own exact-head CI receipt.
+
+The user's subsequent production-deployment instruction is separate from R4
+acceptance. Only already-reviewed main f5df97e is selected for a traceable GitHub
+prerelease artifact; this unmerged test branch is not deployed or merged.

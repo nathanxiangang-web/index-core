@@ -77,7 +77,10 @@ Architect review5583387609 confirms completed evidence but not merge authority.
 Issue125 comment6288120356 authorizes one new50k follow-up on the same PR126,
 fresh isolated lab and2k/20k prerequisites, capacity50-only120min maximum.
 Original resource/isolation/assertion limits and other phase budgets remain;
-follow-up execution is pending, not a new PASS. PR126 stays Draft/unmerged;
+fresh2k/20k passed, but the user ended the50k follow-up at877.184s to prioritize
+reviewed-main deployment. It is USER_INTERRUPTED_NOT_PASS (raw exit143), not
+capacity acceptance. Test runner/DB stopped; private evidence retained; no retry.
+PR126 stays Draft/unmerged;
 implementation/test completion is not acceptance. Parent Issue120 remains OPEN;
 R5 and whole-P0 acceptance remain unauthorized. Older snapshots below are
 historical, not fixed production counts or universal SLAs.
