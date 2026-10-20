@@ -275,11 +275,25 @@ func (h *r2Harness) check(label string, want []string) map[string]string {
 		intra = e.IntraGenerationSeq
 		counts[e.EventType]++
 		if e.ResourceID != nil {
-			presence := domain.ResourcePresent
-			if e.EventType == domain.EventResourceRemoved {
-				presence = domain.ResourceRemoved
+			prior, exists := lastState[*e.ResourceID]
+			switch e.EventType {
+			case domain.EventResourceAdded:
+				if exists {
+					h.t.Fatal("Q8 duplicated ADD or resurrected a tombstone identity")
+				}
+				lastState[*e.ResourceID] = domain.ResourcePresent
+			case domain.EventResourceRemoved:
+				if !exists || prior != domain.ResourcePresent {
+					h.t.Fatal("Q8 removed an unknown/already removed identity")
+				}
+				lastState[*e.ResourceID] = domain.ResourceRemoved
+			case domain.EventResourceUpdated, domain.EventResourceMoved, domain.EventResourceRenamed:
+				if !exists || prior != domain.ResourcePresent {
+					h.t.Fatal("Q8 updated an unknown/removed identity")
+				}
+			default:
+				h.t.Fatal("unexpected resource event")
 			}
-			lastState[*e.ResourceID] = presence
 		}
 	}
 	for id, presence := range lastState {

@@ -63,3 +63,6 @@ jobs:
 
       - name: Targeted race suite (hybrid runtime + app lifecycle)
         run: go test -race -count=1 ./internal/runtime/incrementalruntime ./internal/runtime/app
+
+      - name: P0-R2 adversarial matrix race (PostgreSQL 18)
+        run: go test -race -p 1 -count=1 -run '^TestP0R2' ./internal/runtime/scan ./internal/store/postgres
