@@ -23,7 +23,10 @@ assert not W.is_symlink()
 assert not W.is_relative_to(SRC),'workspace must be outside source'
 
 def run(args,timeout=60,input=None):
- result=subprocess.run(args,input=input,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=timeout)
+ # Docker cold-image pull progress goes to stderr. Never combine it with the
+ # stdout-only container identity used by ownership checks. Retain neither raw
+ # error stream nor command arguments in exception messages.
+ result=subprocess.run(args,input=input,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout)
  if result.returncode: raise RuntimeError('owned runner command failed: '+args[0])
  return result.stdout.decode().strip()
 def emit(obj): print(json.dumps(obj,sort_keys=True),flush=True)
@@ -34,7 +37,7 @@ def inspect(name): return json.loads(run(['docker','inspect',name]))[0]
 def state(): return json.loads((W/'owner.json').read_text())
 def owned(s):
  info=inspect(s['db'])
- assert info['Id']==s['container'] and info['Config']['Labels'].get('indexcore.issue')=='125'
+ assert info['Id']==s['container'] and info['Config']['Labels'].get('indexcore.issue')=='125','owned database identity mismatch'
  assert info['Config']['Labels'].get('indexcore.r4.nonce')==s['nonce']
  assert not info['HostConfig']['PortBindings'] and list(info['NetworkSettings']['Networks'])==[s['network']]
  assert info['HostConfig']['Memory']==768*1024*1024 and info['HostConfig']['PidsLimit']==128
@@ -137,6 +140,7 @@ if a.phase=='prepare':
  run(['docker','run','--rm','--memory','512m','-v',str(W/'src')+':/src:ro','-v',str(W/'modules')+':/go/pkg/mod','-w','/src','-e','GOTOOLCHAIN=local',a.image,'go','mod','download'],timeout=240)
  run(['docker','network','create','--internal','--label','indexcore.issue=125','--label','indexcore.r4.nonce='+nonce,network])
  cid=run(['docker','create','--name',db,'--label','indexcore.issue=125','--label','indexcore.r4.nonce='+nonce,'--network',network,'--memory','768m','--cpus','1','--pids-limit','128','-e','POSTGRES_USER=r4','-e','POSTGRES_PASSWORD=r4-disposable-only','-e','POSTGRES_DB=indexcore_r4_125_test','--mount','type=bind,src='+str(W/'pgdata')+',dst=/var/lib/postgresql','postgres:18-alpine','-c','shared_buffers=64MB','-c','max_connections=40','-c','indexcore.r4_nonce='+nonce])
+ assert re.fullmatch('[0-9a-f]{64}',cid),'Docker create did not return one container ID'
  s['container']=cid;persist(W/'owner.json',s);owned(s);run(['docker','start',db]);ready(s)
  metadata=run(['docker','exec',db,'psql','-U','r4','-d','indexcore_r4_125_test','-Atc',"SELECT system_identifier,(SELECT oid FROM pg_database WHERE datname=current_database()) FROM pg_control_system()"])
  system,oid=metadata.split('|');assert system.isdigit() and oid.isdigit()

@@ -78,14 +78,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Refuse optimized Python before any workspace or Docker access
-        run: |
-          python3 - <<'PY'
-          import subprocess
-          p = subprocess.run(['python3', '-O', 'scripts/p0-r4/run-isolated.py', 'status', '--workspace', '/'], capture_output=True, text=True)
-          if p.returncode != 2 or p.stderr.strip() != 'REFUSED: R4 safety requires non-optimized Python':
-              raise SystemExit('R4 optimization refusal regression')
-          PY
+      - name: Offline command identity, redaction and optimization guard regressions
+        run: python3 -m unittest discover -s scripts/p0-r4 -p test_runner.py -v
       - name: Prepare owned isolated PostgreSQL 18 (no published ports)
         run: python3 scripts/p0-r4/run-isolated.py prepare --workspace /tmp/indexcore-r4-125-ci
       - name: Compile guarded R4 race binary

@@ -220,10 +220,11 @@ Source-tree fingerprint for completed2k/fault/20k/50k/legacy and first regressio
 This includes non-Markdown copied source; final report/CI hook changes do not
 retroactively change an old receipt. Final review HEAD/CI is recorded separately.
 Test image ID: `sha256:a0d9851bc0031edd71c37420cff4d681f2f2894764c72346b40e601910785fd0`.
-The final runner adds only the early optimized-Python refusal after this heavy
-checkpoint; normal phase logic and every tested Go blob stay byte-identical.
-Final full regression/guard/race smoke is repeated with that refusal and final
-CI hook. Heavy results retain their original fingerprint, not a rewritten HEAD.
+The runner adds early optimized-Python refusal after this heavy checkpoint;
+normal phase logic and every tested Go blob stay byte-identical. Full
+regression/guard/race smoke was repeated with that refusal and CI hook.
+The subsequent cold-CI command-framing fix is recorded below. Heavy results
+retain their original fingerprint, not a rewritten HEAD.
 
 Completed early receipts (whole R4 still pending):
 
@@ -367,3 +368,19 @@ expected fixed message before any workspace/Docker access. All Go blobs are
 unchanged from the heavy-tested implementation checkpoint. This final repeat
 does NOT rerun or clear the50k incomplete matrix. Dedicated PG18 is stopped
 after validation; private source/log/data/dump artifacts are retained.
+
+Cold CI attempt39399141402 failed its new R4 preparation job before any R4
+test, with an initially unlabelled ownership assertion. The helper combined
+stdout/stderr, so a cold Docker image pull's stderr progress can contaminate
+the stdout container ID. This helper defect is independently reproduced by an
+offline regression emitting simulated pull progress on stderr and a64-hex ID
+on stdout; the old helper fails that regression. Raw failing-CI owner metadata
+was not exported, so no unseen exact stderr/ID value is invented here.
+
+Narrow remediation separates stdout/stderr for metadata commands, validates a
+single64-hex create ID before persistence and labels the ownership error. It
+does not relax ownership, resources, query assertions or50k budget. Three
+offline tests (cold-pull identity, redacted command failure, optimized refusal)
+pass on Windows and.50 without Docker/DB calls. Final CI repeats the real cold
+prepare/guard/race smoke. No heavy scenario was repeated. Every Go test/runtime
+blob remains unchanged from the recorded140.050s full.50 validation.
