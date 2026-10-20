@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -528,6 +529,19 @@ func (s *Store) CompleteSuccess(ctx context.Context, rootID, scopeKey string, cl
 // observed child directories using the existing durable work table. Root-first
 // locking serializes all work mutations for this root, including concurrent hints.
 func (s *Store) CompleteSuccessWithChildren(ctx context.Context, rootID, scopeKey string, claimedSignalSeq int64, children []string, now time.Time) (state.DirtyScopeWork, error) {
+	return s.CompleteSuccessWithPrioritizedChildren(ctx, rootID, scopeKey, claimedSignalSeq, children, "", now)
+}
+
+// CompleteSuccessWithPrioritizedChildren keeps one explicitly configured subtree
+// ahead of background discovery. It changes scheduling only, never scan evidence.
+// Empty/root-wide configuration retains NORMAL; a root mirror must not promote
+// the whole library. Parent completion and child priority merges remain atomic.
+func (s *Store) CompleteSuccessWithPrioritizedChildren(ctx context.Context, rootID, scopeKey string, claimedSignalSeq int64, children []string, priorityScope string, now time.Time) (state.DirtyScopeWork, error) {
+	if priorityScope != "" {
+		if err := state.ValidateScopeKey(priorityScope); err != nil {
+			return state.DirtyScopeWork{}, err
+		}
+	}
 	if err := state.ValidateScopeKey(scopeKey); err != nil {
 		return state.DirtyScopeWork{}, err
 	}
@@ -568,12 +582,16 @@ func (s *Store) CompleteSuccessWithChildren(ctx context.Context, rootID, scopeKe
 	}
 	claimedSources := wk.ClaimedSourceSet
 	for _, child := range children {
+		priority := state.PriorityNormal
+		if priorityScope != "" && priorityScope != "/" && (child == priorityScope || strings.HasPrefix(child, priorityScope+"/")) {
+			priority = state.PriorityHigh
+		}
 		if _, _, err := lockWatchForUpdate(ctx, tx, rootID, child); err != nil {
 			return state.DirtyScopeWork{}, err
 		}
 		if _, err := mergeSignalTx(ctx, tx, state.DirtySignal{RootID: rootID, ScopeKey: child,
 			Source: state.SourceRecovery, Reason: state.ReasonPossibleChange,
-			Priority: state.PriorityNormal, SeenAt: now}, true); err != nil {
+			Priority: priority, SeenAt: now}, true); err != nil {
 			return state.DirtyScopeWork{}, err
 		}
 	}
