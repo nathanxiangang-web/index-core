@@ -53,7 +53,9 @@ func (p RetryPolicy) Validate() error {
 type Config struct {
 	MaxEntriesPerScope int
 	// Empty disables child discovery. Otherwise only this subtree is expanded;
-	// each one-shot still performs exactly one provider refresh.
+	// each one-shot still performs exactly one provider refresh. Source mirrors
+	// also discover outside this subtree, but only this explicit non-root subtree
+	// receives HIGH follow-up priority; other discovery stays NORMAL.
 	DiscoveryScope string
 	Retry          RetryPolicy
 }

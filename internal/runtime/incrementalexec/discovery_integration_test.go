@@ -2,12 +2,55 @@ package incrementalexec_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/nathanxiangang-web/index-core/internal/incremental/state"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/incrementalexec"
 )
+
+func TestDiscoveryPriorityReachesFilesBeforeBackground(t *testing.T) {
+	st, mock, root := p4SetupRootPath(t, "/library")
+	ctx := context.Background()
+	scanner := p4RealScanner(st)
+	mock.set("/library", p4Dir("cloud"))
+	if _, err := scanner.ScanScope(ctx, root, "/", 1000); err != nil {
+		t.Fatal(err)
+	}
+	mock.set("/library/cloud", p4Dir("new"))
+	mock.set("/library/cloud/new", p4File("document.txt", 5, "aaa"))
+	now := p4Now
+	for i := 0; i < 40; i++ {
+		if _, err := st.MergeSignal(ctx, state.DirtySignal{RootID: root, ScopeKey: fmt.Sprintf("/background/%03d", i), Source: state.SourceRecovery, Reason: state.ReasonPossibleChange, Priority: state.PriorityNormal, SeenAt: now.Add(-time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.MergeSignal(ctx, state.DirtySignal{RootID: root, ScopeKey: "/cloud", Source: state.SourceMutationHint, Reason: state.ReasonPossibleChange, Priority: state.PriorityHigh, SeenAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := p4Config()
+	cfg.DiscoveryScope = "/cloud"
+	ex, err := incrementalexec.New(st, scanner, cfg, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := mock.refreshCount()
+	for _, scope := range []string{"/cloud", "/cloud/new"} {
+		result, err := ex.ExecuteOne(ctx)
+		if err != nil || result.ScopeKey != scope {
+			t.Fatalf("download discovery delayed behind backlog: %+v %v", result, err)
+		}
+	}
+	if mock.refreshCount() != before+2 {
+		t.Fatal("more than one source refresh per claim")
+	}
+	p4AssertPresent(t, st, "/library/cloud/new/document.txt")
+	selected, found, err := st.NextEligiblePendingWork(ctx, now)
+	if err != nil || !found || selected.ScopeKey != "/background/000" {
+		t.Fatalf("background work lost: %+v %v", selected, err)
+	}
+}
 
 func TestDiscoveryNestedFoldersExistingReplayAndNamespace(t *testing.T) {
 	st, mock, root := p4SetupRootPath(t, "/library")

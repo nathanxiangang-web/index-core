@@ -33,7 +33,7 @@ type ScopedScanner interface {
 // DiscoveryStore commits follow-up scopes and the parent's verified prefix in
 // one transaction. A crash cannot strand a verified parent without its children.
 type DiscoveryStore interface {
-	CompleteSuccessWithChildren(context.Context, string, string, int64, []string, time.Time) (state.DirtyScopeWork, error)
+	CompleteSuccessWithPrioritizedChildren(context.Context, string, string, int64, []string, string, time.Time) (state.DirtyScopeWork, error)
 }
 
 // Result exposes the durable transitions of one ExecuteOne invocation.
@@ -153,7 +153,7 @@ func (e *Executor) ExecuteOne(ctx context.Context) (Result, error) {
 		if !ok {
 			return res, errors.New("source mirror requires atomic discovery store")
 		}
-		done, err = discoveryStore.CompleteSuccessWithChildren(ctx, claimed.RootID, claimed.ScopeKey, *claimed.ClaimedSignalSeq, children, completionNow)
+		done, err = discoveryStore.CompleteSuccessWithPrioritizedChildren(ctx, claimed.RootID, claimed.ScopeKey, *claimed.ClaimedSignalSeq, children, e.cfg.DiscoveryScope, completionNow)
 	} else {
 		done, err = e.store.CompleteSuccess(ctx, claimed.RootID, claimed.ScopeKey, *claimed.ClaimedSignalSeq, completionNow)
 	}

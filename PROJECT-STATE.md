@@ -44,6 +44,16 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
+**2026-10-20 user-authorized download visibility latency repair IN VALIDATION.**
+The explicit non-root DiscoveryScope now selects HIGH child work atomically;
+other mirror discovery stays NORMAL. This addresses a measured 462.899-second
+child queue wait, not provider download time. No schema, deletion or trust change.
+See docs/decisions/ADR-006-PRIORITY-DISCOVERY-SUBTREE.md. Isolated PostgreSQL18
+focused tests pass (10 methods/subcases); the full isolated suite plus vet,
+build and targeted race completed successfully (633 passing test events,152.459s).
+Exact-head CI/deployment/live timing are still pending. This does
+not accept R4/R5 or certify any new real download completion.
+
 **P0 Reliability (distinct from historical Scoped Refresh P0): R1 bounded
 Architect-accepted; R2 BOUNDED ARCHITECT_ACCEPTED; R3 Issue123 IN PROGRESS.**
 R1 acceptance: Issue120 comment6281974853. R2 PR122 reviewed HEAD
