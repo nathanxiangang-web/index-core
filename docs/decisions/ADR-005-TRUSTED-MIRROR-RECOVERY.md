@@ -1,7 +1,10 @@
 # ADR-005: renewable topology authority and bounded root recovery
 
 Status: accepted for the user-authorized deletion-sync repair, 2026-10-19.
-Implementation/deployment acceptance still requires tests and live evidence.
+Live verification completed2026-10-20 at02:15Z: three fresh trusted root scans,
+Q5/public absence, six atomic Journal removals and274 surviving files. Full
+runtime CI39261677931 and docs-head CI39357578299 passed. No physical deletion,
+new provider starts or manual canonical writes. See PROJECT-STATE.md for scope.
 
 ## Incident and boundaries
 
