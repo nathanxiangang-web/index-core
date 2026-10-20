@@ -34,7 +34,14 @@ new Job Engine, migration or weakening of the virtual-overlay guard is allowed.
    invalid scope/config, disabled watches and ordinary P10 roots remain excluded.
    These are metadata scan retries, never Provider StartDownload retries.
 3. Deployment may retire ONLY the owned legacy Alias after verifying its actual
-   source is empty and there are zero Copy/Manifest/Binding dependencies. Preserve
+   source is empty and there are zero file-Copy/Manifest/ACTIVE legacy-Binding dependencies.
+   The sole pre-existing projector Copy of the virtual root directory may remain
+   only after exact Root/resource/Binding identity checks, no Variant and no
+   acquisition result references. Retain this metadata row and let ordinary
+   Journal projection converge availability; never delete or retarget it manually.
+   A DISABLED orphan Binding in a different historical Root may remain unchanged
+   only when it has zero Copy and Manifest references; retain its row for rollback,
+   never reactivate, retarget or silently delete it. Preserve
    its exact configuration and a private OpenList DB backup; disable, do not
    delete. No other mount/account/session or physical directory is changed.
    If that audit fails, do not bypass topology protection. Once no active nested
