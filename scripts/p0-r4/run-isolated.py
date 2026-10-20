@@ -69,6 +69,10 @@ def clean(line):
 def safe_exception(kind,value,tb):
  emit({'status':'FAIL_OR_BLOCKED','error_type':kind.__name__,'detail':clean(str(value))[:300]})
 sys.excepthook=safe_exception
+def phase_budget(phase):
+ # Review5583387609/comment6288120356: only capacity50 gets120min.
+ return ('120m',7200) if phase=='capacity50' else ('20m',1500)
+
 def measure(s,command,extra,phase,timeout=1500):
  owned(s);name=s['network']+'-runner';log=W/(phase+'-'+str(time.time_ns())+'.log')
  started=time.monotonic();next_sample=started;last_notice=started;memory=[];cpu=[];q=queue.Queue();db_stops=0;db_starts=0
@@ -109,12 +113,26 @@ def measure(s,command,extra,phase,timeout=1500):
     if now-last_notice>=25:emit({'phase':phase,'state':'RUNNING','elapsed_s':round(now-started,1)});last_notice=now
   code=proc.wait(timeout=15);status='PASS' if code==0 else 'FAIL'
   if phase=='fault' and status=='PASS':assert db_stops==db_starts==1,'real DB restart not observed'
- except BaseException:
+ except BaseException as failure:
   # Exact owned runner only, never a host PID or another service.
-  r=subprocess.run(['docker','inspect',name],capture_output=True,text=True)
-  if r.returncode==0:
-   target=json.loads(r.stdout)[0]
-   if target['Config']['Labels'].get('indexcore.r4.nonce')==s['nonce']:subprocess.run(['docker','stop','--time','0',name],stdout=subprocess.DEVNULL)
+  cleanup_started=time.monotonic();cleanup_ok=False
+  try:
+   #60s inspect +60s stop +15s wait fit the separate300s cleanup ceiling;
+   # this grants no additional capacity50 test execution time.
+   cleanup_timeout=60 if phase=='capacity50' else None
+   r=subprocess.run(['docker','inspect',name],capture_output=True,text=True,timeout=cleanup_timeout)
+   if r.returncode==0:
+    target=json.loads(r.stdout)[0]
+    if target['Config']['Labels'].get('indexcore.r4.nonce')==s['nonce']:
+     stopped=subprocess.run(['docker','stop','--time','0',name],stdout=subprocess.DEVNULL,timeout=cleanup_timeout)
+     cleanup_ok=stopped.returncode==0
+   else:cleanup_ok=proc.poll() is not None
+   if phase=='capacity50':proc.wait(timeout=15)
+  except (subprocess.TimeoutExpired,ValueError,OSError):
+   cleanup_ok=False
+  if phase=='capacity50':
+   result={'phase':phase,'status':'FAIL_OR_BLOCKED','exit_code':proc.poll(),'seconds':round(time.monotonic()-started,3),'wall_budget_seconds':timeout,'cleanup_seconds':round(time.monotonic()-cleanup_started,3),'cleanup_confirmed':cleanup_ok,'error_type':type(failure).__name__,'detail':clean(str(failure))[:300],'source_fingerprint':source_digest(),'log':log.name,'sha256':hashlib.sha256(log.read_bytes()).hexdigest(),'container_memory_samples':len(memory),'container_peak_sampled_bytes':max(memory) if memory else None,'container_mean_sampled_bytes':sum(memory)/len(memory) if memory else None,'container_cpu_mean_pct':sum(cpu)/len(cpu) if cpu else None}
+   persist(W/(phase+'-result.json'),result);emit(result)
   raise
  result={'phase':phase,'status':status,'exit_code':code,'seconds':round(time.monotonic()-started,3),'source_fingerprint':source_digest(),'log':log.name,'sha256':hashlib.sha256(log.read_bytes()).hexdigest(),'container_memory_samples':len(memory),'container_peak_sampled_bytes':max(memory) if memory else None,'container_mean_sampled_bytes':sum(memory)/len(memory) if memory else None,'container_cpu_mean_pct':sum(cpu)/len(cpu) if cpu else None,'db_stops':db_stops,'db_restarts':db_starts}
  persist(W/(phase+'-result.json'),result);emit(result)
@@ -170,4 +188,5 @@ else:
   if a.ci_smoke:(W/'ci-smoke.marker').touch()
   regex='^TestP0R4(ProcessCrashes|DatabaseRestart)$' if profile=='fault' else '^TestP0R4Capacity$'
   suffix='-race' if a.race else ''
-  measure(s,['/out/scale'+suffix+'.test','-test.run='+regex,'-test.v','-test.timeout=20m'],{'INDEXCORE_R4_PROFILE':profile,'INDEXCORE_R4_N':str(n)},a.phase,1500)
+  go_timeout,wall_budget=phase_budget(a.phase)
+  measure(s,['/out/scale'+suffix+'.test','-test.run='+regex,'-test.v','-test.timeout='+go_timeout],{'INDEXCORE_R4_PROFILE':profile,'INDEXCORE_R4_N':str(n)},a.phase,wall_budget)

@@ -73,7 +73,11 @@ See docs/p0/P0-R4-CAPACITY-FAULT-VERIFICATION.md for measured results, omissions
 reproduction and module boundaries. R4 is PARTIAL: full2k/20k and actual owned
 process/DB crash probes passed;50k exhausted its20min matrix budget during Q5
 repeat validation. Later50k stages are NOT_RUN; no R4 acceptance is claimed.
-One unmerged PR awaits Architect review;
+Architect review5583387609 confirms completed evidence but not merge authority.
+Issue125 comment6288120356 authorizes one new50k follow-up on the same PR126,
+fresh isolated lab and2k/20k prerequisites, capacity50-only120min maximum.
+Original resource/isolation/assertion limits and other phase budgets remain;
+follow-up execution is pending, not a new PASS. PR126 stays Draft/unmerged;
 implementation/test completion is not acceptance. Parent Issue120 remains OPEN;
 R5 and whole-P0 acceptance remain unauthorized. Older snapshots below are
 historical, not fixed production counts or universal SLAs.

@@ -1,9 +1,12 @@
 # P0-R4 isolated capacity and real crash verification (Issue125)
 
-Status: **PARTIAL /50k matrix BLOCKED by the bounded time budget**. This is NOT
-Architect acceptance or permission to merge. Ordinary green CI cannot clear the
-missing50k results. Request an Architect-approved safer time/resource allocation
-before any heavy rerun; do not reduce correctness checks or start R5.
+Status: **PARTIAL /first50k matrix timed out; one follow-up AUTHORIZED, not yet
+completed**. This is NOT Architect acceptance or permission to merge. Review
+5583387609 /Issue125 comment6288120356 authorize exactly one new isolated50k
+attempt with a capacity50-only120min hard execution budget and <=5min controlled
+cleanup. CPU/RAM/PID/disk/isolation and all correctness checks stay unchanged.
+Use a newly attested disposable lab and pass2k/20k prerequisites first. Stop and
+retain failure if the one50k attempt fails; do not automatically retry or start R5.
 Authorized baseline: `f5df97e3f6ec5d54389da39debf0c5937a3d3d9b` (R3 accepted,
 merged-main CI39389632052). Parent120 and Issue125 remain OPEN. No R5, production
 deployment, provider writes or CloudSite change is included.
@@ -48,8 +51,13 @@ shared_buffers64MB/max_connections40. Test pool4 connections. PostgreSQL's
 default READ COMMITTED applies to normal writes; R3 uses its existing bounded
 READ ONLY REPEATABLE READ. fsync/synchronous_commit were observed ON; only
 plpgsql is installed in pg_extension. Prepare requires >=10GiB disk and >=4GiB available
-RAM. Every phase monitors DB disk against4GiB, logs against32MiB, and wall time
-against25min (compile10min); Go test deadline20min. These are stop budgets,
+RAM. Every phase monitors DB disk against4GiB and logs against32MiB. Original
+25min runner/20min Go budgets remain for2k/20k/fault/CI; compile stays10min.
+Only capacity50 uses7200s runner/120min Go hard deadlines under the new approval.
+Failed capacity50 cleanup bounds inspect/stop/wait to60+60+15s, within the
+separately allowed300s cleanup ceiling, with no extra test execution time.
+Offline regressions check phase-specific limits, actual wall-abort failure
+receipt and refusal to stop a foreign-nonce runner. These are stop budgets,
 not provider-performance guarantees. Shared services are never stop targets.
 
 ```sh
@@ -61,7 +69,7 @@ python3 "$runner" prepare --workspace "$lab" --image indexcore-p0-r2-test:go1.27
 python3 "$runner" compile --workspace "$lab"
 python3 "$runner" smoke --workspace "$lab"       # full 2k, NOT --ci-smoke
 python3 "$runner" capacity20 --workspace "$lab"  # requires same-source 2k PASS
-python3 "$runner" capacity50 --workspace "$lab"  # requires same-source 20k PASS
+python3 "$runner" capacity50 --workspace "$lab"  # one approved attempt, <=120min
 python3 "$runner" legacy20 --workspace "$lab"    # existing flat harness
 python3 "$runner" fault --workspace "$lab"       # real SIGKILL + owned DB restart
 python3 "$runner" regression --workspace "$lab"  # full enabled PG18 + race
@@ -128,7 +136,8 @@ No ordinary green suite is evidence that an opt-in probe ran.
 | --- | --- |
 | Purpose DB / nonce / physical instance / OID guard | PASS, positive and negative real-instance checks |
 | Nested2k /20k | PASS, full nested matrix |
-| Nested50k full matrix | BLOCKED: raw test FAIL/exit2 at20min, incomplete matrix |
+| Nested50k original attempt | BLOCKED: raw test FAIL/exit2 at20min, incomplete matrix |
+| Newly authorized50k follow-up | NOT_RUN yet; fresh2k/20k prerequisites required |
 | Legacy flat20k baseline | PASS40.738s, original assertions unchanged |
 | True deletion, fresh-ID reappearance, equal-content copy, siblings, three cycles | Part of each nested run |
 | PARTIAL omissions / trusted root direct-child boundary | Part of each nested run |
@@ -384,3 +393,17 @@ offline tests (cold-pull identity, redacted command failure, optimized refusal)
 pass on Windows and.50 without Docker/DB calls. Final CI repeats the real cold
 prepare/guard/race smoke. No heavy scenario was repeated. Every Go test/runtime
 blob remains unchanged from the recorded140.050s full.50 validation.
+
+## Architect-authorized50k follow-up (review5583387609)
+
+Authorization: Issue125 comment6288120356; same PR126/original branch. The first
+timeout and all original receipts above remain historical facts, not overwritten
+by a follow-up. The only execution extension is `phase_budget(capacity50)` =
+120min Go/7200s runner, with bounded cleanup and an explicit failure receipt.
+Smoke/20k/fault and ordinary CI retain their prior budgets and assertions.
+No Go source, safety guard, CPU/RAM/PID/disk configuration or public runtime
+changes. Offline runner suite now verifies5 methods (including owned/foreign
+cleanup cases); this is not50k execution evidence.
+
+New lab preflight/exact candidate/source fingerprints/prerequisite and actual50k
+results will be recorded here after execution. No new50k PASS is implied yet.

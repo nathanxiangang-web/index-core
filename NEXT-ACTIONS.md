@@ -16,9 +16,12 @@ provider credentials/writes, migrations, repair semantics or product changes.
 See docs/p0/P0-R4-CAPACITY-FAULT-VERIFICATION.md for PASS/FAIL/BLOCKED/NOT_RUN,
 resource limits, guard and reproducible commands. Review actual measured evidence
 including the50k matrix time-budget BLOCKED/PARTIAL (do not infer PASS from cold
-ingestion or normal CI).2k/20k and actual process/DB crash probes passed. Request
-an approved safer resource/time allocation before any heavy rerun; don't weaken
-the oracle or automatically proceed to R5. Require exact-head CI before any
+ingestion or normal CI).2k/20k and actual process/DB crash probes passed.
+Review5583387609/comment6288120356 now authorize one follow-up50k attempt:
+fresh attested lab,2k/20k prerequisites, capacity50-only120min hard maximum
+(<=5min cleanup), unchanged resources/isolation/assertions and other budgets.
+Record actual result/new exact-head CI on the same Draft PR126; stop on failure,
+do not auto-retry, merge, self-accept or start R5. Require exact-head CI before any
 merge; merged-main CI and explicit acceptance are
 separate gates. Do not self-merge or close Issue125/120. R5 is unstarted and
 whole-P0 reliability is NOT accepted. Prior records below remain history, not
