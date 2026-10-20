@@ -14,6 +14,7 @@ import (
 	"github.com/nathanxiangang-web/index-core/internal/query"
 	"github.com/nathanxiangang-web/index-core/internal/store/postgres"
 	"github.com/nathanxiangang-web/index-core/testutil"
+	"github.com/nathanxiangang-web/index-core/testutil/r4guard"
 )
 
 // Gate 3 P8 scale harness. Opt-in so the normal suite stays fast:
@@ -23,6 +24,11 @@ func TestScalePopulationAndDelta(t *testing.T) {
 	if os.Getenv("INDEXCORE_SCALE_TEST") != "1" {
 		t.Skip("set INDEXCORE_SCALE_TEST=1 to run the scale harness")
 	}
+	guardPool, guardErr := r4guard.Open(context.Background())
+	if guardErr != nil {
+		t.Fatal(guardErr)
+	}
+	guardPool.Close()
 	n := 20000
 	if v := os.Getenv("INDEXCORE_SCALE_N"); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {

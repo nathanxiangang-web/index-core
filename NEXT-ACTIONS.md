@@ -6,14 +6,19 @@ Issue120 tracks a new production-reliability program, NOT the earlier accepted
 P0 Scoped Refresh prototype. R1 has bounded Architect acceptance at Issue120
 comment6281974853. R2 is BOUNDED ARCHITECT_ACCEPTED: PR122 squash54b15e988aee,
 main CI39366941874 SUCCESS; Issue121 closed, receipt Issue120 comment6283052837.
-Current packet is Issue123 / R3: one-shot root-scoped read-only diagnostics and
-operator guidance, one unmerged PR for Architect review. Compile/test on
-192.168.178.50, not the public runtime. No production change, provider calls,
-schema, writer/repair/scheduler or public endpoint. Database liveness is not
-source freshness; unknown source health/projection lag must remain explicit.
-See docs/p0/P0-R3-DIAGNOSTICS.md. No self-merge or R3 self-acceptance. R4/R5 are
-unstarted and whole-P0 reliability is NOT accepted. Prior records below remain
-history, not this new program's current status.
+R3 is BOUNDED ARCHITECT_ACCEPTED: reviewed HEAD da8af1e51b22, PR124 merge
+f5df97e3f6ec5d54389da39debf0c5937a3d3d9b, main CI39389632052 SUCCESS;
+Issue123 closed, receipt Issue120 comment6286259503.
+Current packet is Issue125 / R4: isolated post-fix nested capacity, actual owned
+subprocess SIGKILL and dedicated PG18 stop/restart. One branch / one unmerged PR
+for Architect review. Compile/test on192.168.178.50 only; no public runtime,
+provider credentials/writes, migrations, repair semantics or product changes.
+See docs/p0/P0-R4-CAPACITY-FAULT-VERIFICATION.md for PASS/FAIL/BLOCKED/NOT_RUN,
+resource limits, guard and reproducible commands. Review actual measured evidence
+and exact-head CI before any merge; merged-main CI and explicit acceptance are
+separate gates. Do not self-merge or close Issue125/120. R5 is unstarted and
+whole-P0 reliability is NOT accepted. Prior records below remain history, not
+this program's current status.
 
 ## Historical incremental foundation
 

@@ -45,7 +45,7 @@ The experimental subagent topology is retired.
 ## Current phase
 
 **P0 Reliability (distinct from historical Scoped Refresh P0): R1 bounded
-Architect-accepted; R2 BOUNDED ARCHITECT_ACCEPTED; R3 Issue123 IN PROGRESS.**
+Architect-accepted; R2/R3 BOUNDED ARCHITECT_ACCEPTED; R4 Issue125 IN PROGRESS.**
 R1 acceptance: Issue120 comment6281974853. R2 PR122 reviewed HEAD
 `0ad1aed98a72affddd5f1222e0936917032084fc`, review5580396348; squash merge
 `54b15e988aee714d84d6b82d681b9f71ee8140bd`. Reviewed-head CI39362445591 and
@@ -59,10 +59,21 @@ evidence, no provider calls, repair, public endpoint, migration or deployment.
 Absent live-source/consumer evidence stays UNKNOWN/NOT_TRACKED. Compile/test on
 operator-designated192.168.178.50 in isolated PostgreSQL18. See
 docs/p0/P0-R3-DIAGNOSTICS.md for module boundaries, output contract and limits.
-Implementation is not acceptance; one focused unmerged PR and completed
-exact-head CI await Architect review. Parent Issue120 stays OPEN; R4/R5 and
-whole-P0 acceptance are not authorized. Older snapshots below are historical,
-not fixed production counts or universal SLAs.
+R3 PR124 reviewed HEAD `da8af1e51b22`, merged as
+`f5df97e3f6ec5d54389da39debf0c5937a3d3d9b`; merged-main CI39389632052 SUCCESS.
+Issue123 is closed; bounded acceptance receipt: Issue120 comment6286259503.
+This receipt supersedes implementation-era wording in the R3 runbook.
+
+Issue125 authorizes isolated R4 capacity and actual process/database crash
+validation from that baseline, not production deployment or new runtime behavior.
+New test-only safety guard attests an owned purpose-named PG18 instance before
+any R4/legacy scale schema reset. Compile/test stays on192.168.178.50; no live
+provider credentials, host DB ports, CloudSite changes or second active writer.
+See docs/p0/P0-R4-CAPACITY-FAULT-VERIFICATION.md for measured results, omissions,
+reproduction and module boundaries. One unmerged PR awaits Architect review;
+implementation/test completion is not acceptance. Parent Issue120 remains OPEN;
+R5 and whole-P0 acceptance remain unauthorized. Older snapshots below are
+historical, not fixed production counts or universal SLAs.
 
 **Issue115 deletion recovery live-verified (2026-10-20,02:15Z).** PR119 runtime
 2d9068e, binary a6c2a397504e, restores renewable separate topology authentication
