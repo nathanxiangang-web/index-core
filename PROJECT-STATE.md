@@ -70,7 +70,10 @@ New test-only safety guard attests an owned purpose-named PG18 instance before
 any R4/legacy scale schema reset. Compile/test stays on192.168.178.50; no live
 provider credentials, host DB ports, CloudSite changes or second active writer.
 See docs/p0/P0-R4-CAPACITY-FAULT-VERIFICATION.md for measured results, omissions,
-reproduction and module boundaries. One unmerged PR awaits Architect review;
+reproduction and module boundaries. R4 is PARTIAL: full2k/20k and actual owned
+process/DB crash probes passed;50k exhausted its20min matrix budget during Q5
+repeat validation. Later50k stages are NOT_RUN; no R4 acceptance is claimed.
+One unmerged PR awaits Architect review;
 implementation/test completion is not acceptance. Parent Issue120 remains OPEN;
 R5 and whole-P0 acceptance remain unauthorized. Older snapshots below are
 historical, not fixed production counts or universal SLAs.

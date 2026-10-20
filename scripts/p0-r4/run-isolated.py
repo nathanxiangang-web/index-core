@@ -5,6 +5,12 @@ No delete/reset of host paths. Stop retains DB, source, receipts and logs.
 import argparse,hashlib,json,os,queue,re,secrets,shutil,subprocess,sys,tarfile,threading,time
 from pathlib import Path
 
+# Safety assertions must never be removed by -O or PYTHONOPTIMIZE. Refuse before
+# argument parsing, reading any owner file or executing any Docker command.
+if sys.flags.optimize:
+ print('REFUSED: R4 safety requires non-optimized Python',file=sys.stderr)
+ raise SystemExit(2)
+
 p=argparse.ArgumentParser()
 p.add_argument('phase',choices=['prepare','compile','smoke','capacity20','capacity50','legacy20','fault','regression','stop','status'])
 p.add_argument('--workspace',required=True)

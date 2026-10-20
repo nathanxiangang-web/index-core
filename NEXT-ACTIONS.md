@@ -15,7 +15,11 @@ for Architect review. Compile/test on192.168.178.50 only; no public runtime,
 provider credentials/writes, migrations, repair semantics or product changes.
 See docs/p0/P0-R4-CAPACITY-FAULT-VERIFICATION.md for PASS/FAIL/BLOCKED/NOT_RUN,
 resource limits, guard and reproducible commands. Review actual measured evidence
-and exact-head CI before any merge; merged-main CI and explicit acceptance are
+including the50k matrix time-budget BLOCKED/PARTIAL (do not infer PASS from cold
+ingestion or normal CI).2k/20k and actual process/DB crash probes passed. Request
+an approved safer resource/time allocation before any heavy rerun; don't weaken
+the oracle or automatically proceed to R5. Require exact-head CI before any
+merge; merged-main CI and explicit acceptance are
 separate gates. Do not self-merge or close Issue125/120. R5 is unstarted and
 whole-P0 reliability is NOT accepted. Prior records below remain history, not
 this program's current status.
