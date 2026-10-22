@@ -1,5 +1,15 @@
 # Index Core — Next Actions
 
+## Current Issue130 P0-D1 candidate (2026-10-22)
+
+Review the exact-terminal Store/Coordinator repair and real isolated PG18
+regressions in [the module evidence](docs/p0/P0-D1-TERMINAL-HANDOFF.md).
+One focused PR; do not merge/deploy without Architect acceptance/exact-head CI.
+No production repair/retry,123 INTERNAL records unchanged. D2 sustained live
+observation and CloudSite153 release remain separate. R4 PR126 is untouched.
+
+### Historical pointers below
+
 ## Current P0 Reliability execution (2026-10-20)
 
 Issue120 tracks a new production-reliability program, NOT the earlier accepted

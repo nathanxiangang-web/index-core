@@ -44,6 +44,17 @@ The experimental subagent topology is retired.
 
 ## Current phase
 
+**2026-10-22 Issue130 / P0-D1 terminal handoff repair: CANDIDATE FOR REVIEW.**
+Base1a02cdc9238d; exact committed Root/Snapshot/admission receipts under the
+existing Root lock address both same-process Worker/scanner race windows.
+See [module/evidence contract](docs/p0/P0-D1-TERMINAL-HANDOFF.md). Isolated PG18
+full suite683 pass/16 inherited optional skips; new PG18 race50 pass; existing
+runtime/R2/R3 race and vet/build pass. No migration/deployment or recovery of123
+INTERNAL Work records; production cause/stability and D2 remain unaccepted.
+CloudSite153 stays a separate release gate. R4 PR126 remains untouched.
+
+### Earlier snapshots (historical, not current execution or live counts)
+
 **2026-10-20 user-authorized download visibility latency repair IN VALIDATION.**
 The explicit non-root DiscoveryScope now selects HIGH child work atomically;
 other mirror discovery stays NORMAL. This addresses a measured 462.899-second
