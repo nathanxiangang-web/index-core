@@ -36,12 +36,13 @@ func NewCoordinator(store *Store, cfg reconcile.Config) *Coordinator {
 	return &Coordinator{store: store, cfg: cfg}
 }
 
-// ProcessSnapshot runs the full safe pipeline for one SUBMITTED snapshot.
+// ProcessSnapshot runs the pipeline, or returns a positively verified committed
+// receipt when the same-process admission worker already completed this input.
 func (c *Coordinator) ProcessSnapshot(ctx context.Context, rootID, snapshotID string) (ReconcileOutcome, error) {
 	if err := c.cfg.Validate(); err != nil {
 		return ReconcileOutcome{}, err
 	}
-	seq, _, err := c.store.AdmitOrResumeSnapshot(ctx, rootID, snapshotID)
+	seq, _, err := c.store.admitOrResumeSnapshot(ctx, rootID, snapshotID, true)
 	if err != nil {
 		return ReconcileOutcome{}, err
 	}
@@ -78,14 +79,21 @@ func (c *Coordinator) ProcessHead(ctx context.Context, rootID string) (Reconcile
 // otherwise a new seq is allocated. Retrying a stranded input must never allocate
 // another sequence for the same input (R4-1, frozen G10 / RC1-RC7).
 func (s *Store) AdmitOrResumeSnapshot(ctx context.Context, rootID, snapshotID string) (int64, bool, error) {
+	return s.admitOrResumeSnapshot(ctx, rootID, snapshotID, false)
+}
+
+// Terminal handoff is opt-in for the Coordinator, not a relaxation of the
+// public admission primitive's SUBMITTED-only contract.
+func (s *Store) admitOrResumeSnapshot(ctx context.Context, rootID, snapshotID string, terminalHandoff bool) (int64, bool, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return 0, false, err
 	}
 	defer tx.Rollback(ctx)
 
+	var currentGen int64
 	if err := tx.QueryRow(ctx,
-		`SELECT 1 FROM index_root WHERE root_id = $1::uuid FOR UPDATE`, rootID).Scan(new(int)); err != nil {
+		`SELECT current_generation FROM index_root WHERE root_id = $1::uuid FOR UPDATE`, rootID).Scan(&currentGen); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, false, ErrNotFound
 		}
@@ -107,6 +115,16 @@ func (s *Store) AdmitOrResumeSnapshot(ctx context.Context, rootID, snapshotID st
 		return 0, false, ErrBindingMismatch
 	}
 	if snapLc != string(domain.SnapshotSubmitted) {
+		if terminalHandoff && snapLc == string(domain.SnapshotReconciled) {
+			seq, _, err := s.terminalSnapshotReceipt(ctx, tx, rootID, snapshotID, 0, currentGen)
+			if err != nil {
+				return 0, false, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return 0, false, err
+			}
+			return seq, true, nil
+		}
 		return 0, false, ErrNotSubmitted
 	}
 
@@ -123,6 +141,17 @@ func (s *Store) AdmitOrResumeSnapshot(ctx context.Context, rootID, snapshotID st
 		return *existing, true, nil
 	case err != nil && !errors.Is(err, pgx.ErrNoRows):
 		return 0, false, err
+	}
+	if terminalHandoff {
+		// A terminal/failed admission paired with a SUBMITTED Snapshot is not
+		// permission to allocate a replacement sequence.
+		var hasHistory bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM index_admission WHERE snapshot_id=$1::uuid)`, snapshotID).Scan(&hasHistory); err != nil {
+			return 0, false, err
+		}
+		if hasHistory {
+			return 0, false, ErrTerminalSnapshot
+		}
 	}
 
 	var seq int64
@@ -202,6 +231,9 @@ func (s *Store) AdmitSnapshot(ctx context.Context, rootID, snapshotID string) (i
 // generation actually being reconciled (R3-3). It also verifies the head
 // admission binding (R3-4) and preserves the distinct STALE_INPUT path (R3-5).
 func (s *Store) reconcileHeadSafe(ctx context.Context, rootID string, seq int64, snapshotID string, cfg reconcile.Config) (ReconcileOutcome, error) {
+	if seq <= 0 {
+		return ReconcileOutcome{}, ErrBindingMismatch
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return ReconcileOutcome{}, err
@@ -216,6 +248,30 @@ func (s *Store) reconcileHeadSafe(ctx context.Context, rootID string, seq int64,
 		`SELECT current_generation, lifecycle_state FROM index_root WHERE root_id = $1::uuid FOR UPDATE`,
 		rootID).Scan(&currentGen, &rootLc); err != nil {
 		return ReconcileOutcome{}, err
+	}
+
+	// The worker may have won either before admission lookup or after its short
+	// transaction. Resolve the exact receipt under this same root lock, before
+	// inspecting a newer/different pending head. No reconcile writes are replayed.
+	var snapshotLifecycle, snapshotRoot string
+	if err := tx.QueryRow(ctx, `SELECT root_id::text, lifecycle_state FROM index_snapshot WHERE snapshot_id=$1::uuid`, snapshotID).Scan(&snapshotRoot, &snapshotLifecycle); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ReconcileOutcome{}, ErrBindingMismatch
+		}
+		return ReconcileOutcome{}, err
+	}
+	if snapshotRoot != rootID {
+		return ReconcileOutcome{}, ErrBindingMismatch
+	}
+	if snapshotLifecycle == string(domain.SnapshotReconciled) {
+		_, out, err := s.terminalSnapshotReceipt(ctx, tx, rootID, snapshotID, seq, currentGen)
+		if err != nil {
+			return ReconcileOutcome{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return ReconcileOutcome{}, err
+		}
+		return out, nil
 	}
 
 	// Verify the head admission binding: the PENDING head must be this admission
