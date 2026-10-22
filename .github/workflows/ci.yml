@@ -32,6 +32,8 @@ jobs:
 
     env:
       INDEXCORE_TEST_DATABASE_URL: postgres://indexcore:indexcore@127.0.0.1:5432/indexcore?sslmode=disable
+      INDEXCORE_ISSUE130_DATABASE_URL: postgres://indexcore:indexcore@127.0.0.1:5432/indexcore_issue130_test?sslmode=disable
+      INDEXCORE_ISSUE130_DISPOSABLE: owned-disposable-only
 
     steps:
       - name: Checkout
@@ -52,6 +54,13 @@ jobs:
             exit 1
           fi
 
+      - name: Provision separate purpose-marked Issue130 database
+        env:
+          PGPASSWORD: indexcore
+        run: |
+          psql -h 127.0.0.1 -U indexcore -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE indexcore_issue130_test OWNER indexcore'
+          psql -h 127.0.0.1 -U indexcore -d postgres -v ON_ERROR_STOP=1 -c "COMMENT ON DATABASE indexcore_issue130_test IS 'indexcore-issue130-owned-disposable'"
+
       - name: go vet
         run: go vet ./...
 
@@ -69,3 +78,6 @@ jobs:
 
       - name: P0-R3 read-only diagnostics race (PostgreSQL 18)
         run: go test -race -p 1 -count=1 -run '^TestP0R3' ./internal/diagnostic ./internal/store/postgres ./internal/runtime/app ./cmd/indexcore
+
+      - name: Issue130 terminal handoff race (owned PostgreSQL 18)
+        run: go test -race -p 1 -count=1 -run '^TestIssue130' ./testutil ./internal/store/postgres ./internal/runtime/scan
