@@ -102,6 +102,15 @@ func (r *CycleRunner) Run(ctx context.Context, cfg CycleConfig) (CycleResult, er
 	res := CycleResult{StartedAt: time.Now()}
 	cycleCtx, cancel := context.WithTimeout(ctx, cfg.MaxWallTime)
 	defer cancel()
+	if planner, ok := r.one.(interface {
+		PrepareCycle(context.Context, CycleConfig) (context.Context, error)
+	}); ok {
+		var err error
+		cycleCtx, err = planner.PrepareCycle(cycleCtx, cfg)
+		if err != nil {
+			return res.stop(StopSystemicError), err
+		}
+	}
 
 	for {
 		// Deterministic boundary precedence before every new item:

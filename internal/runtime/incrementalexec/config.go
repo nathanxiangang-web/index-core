@@ -57,7 +57,9 @@ type Config struct {
 	// also discover outside this subtree, but only this explicit non-root subtree
 	// receives HIGH follow-up priority; other discovery stays NORMAL.
 	DiscoveryScope string
-	Retry          RetryPolicy
+	// Opt-in bounded first-discovery scheduling. No default or priority rewrite.
+	FirstDiscoveryEnabled bool
+	Retry                 RetryPolicy
 }
 
 // Validate fails before any selection or claim when the configuration is
