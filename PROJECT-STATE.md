@@ -501,3 +501,17 @@ Active Worker task: none
 
 Next action requires an explicit new Architect/user decision. No runtime default-on, native delta, network Hint, second writer, migration, destructive removal, direct 115, or Gate 5 work is authorized.
 Gate 5 remains unauthorized; no successor-product implementation is authorized.
+
+## 2026-10-23 Issue134 performance work (latest scoped update)
+
+The historical gate ledger above is retained; the newly authorized Worker task
+is Issue134 F1, not Gate5 or a runtime-default change. D0 production read-only
+evidence is recorded in docs/p0/P0-134-D0-FIRST-DISCOVERY.md. A default-off,
+bounded first-discovery/aged-background scheduling candidate and its isolated
+PostgreSQL18 tests are ready for PR review (ADR007 proposal / F1 evidence).
+
+Status: F1 IMPLEMENTATION CANDIDATE, awaiting exact-head CI and Architect review.
+Not merged, not deployed, not ARCHITECT_ACCEPTED. F2 requeue suppression and F3
+capacity/prefetch remain NOT_RUN. Existing P0-R4 and Issue129 D2 acceptance are
+not inferred or superseded by these tests. No production configuration, schema,
+provider downloads or Canonical/Journal/deletion write rules changed.

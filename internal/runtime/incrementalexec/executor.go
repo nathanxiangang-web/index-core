@@ -38,6 +38,7 @@ type DiscoveryStore interface {
 
 // Result exposes the durable transitions of one ExecuteOne invocation.
 type Result struct {
+	SelectionClass   string
 	Selected         bool
 	RootID           string
 	ScopeKey         string
@@ -73,6 +74,11 @@ func New(store WorkStore, scanner ScopedScanner, cfg Config, now func() time.Tim
 			return nil, errors.New("incrementalexec: discovery requires atomic completion store")
 		}
 	}
+	if cfg.FirstDiscoveryEnabled {
+		if _, ok := store.(FirstDiscoveryStore); !ok {
+			return nil, errors.New("first discovery requires planning store")
+		}
+	}
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
@@ -80,14 +86,16 @@ func New(store WorkStore, scanner ScopedScanner, cfg Config, now func() time.Tim
 }
 
 // ExecuteOne processes zero or one eligible PENDING item and calls ScanScope at
-// most once. There is no loop, sleep, second selection, or provider retry.
+// most once. Opt-in cycle planning may read up to three bounded candidate
+// cohorts, but there is only one claim and no re-selection after a stale claim,
+// loop, sleep or provider retry.
 func (e *Executor) ExecuteOne(ctx context.Context) (Result, error) {
 	if err := e.cfg.Validate(); err != nil {
 		return Result{}, err
 	}
 
 	now := e.now()
-	work, found, err := e.store.NextEligiblePendingWork(ctx, now)
+	work, found, class, err := e.selectWork(ctx, now)
 	if err != nil {
 		return Result{}, fmt.Errorf("select eligible work: %w", err)
 	}
@@ -95,6 +103,7 @@ func (e *Executor) ExecuteOne(ctx context.Context) (Result, error) {
 		return Result{}, ErrNoEligibleWork
 	}
 	res := Result{
+		SelectionClass:  class,
 		Selected:        true,
 		RootID:          work.RootID,
 		ScopeKey:        work.ScopeKey,
@@ -113,6 +122,7 @@ func (e *Executor) ExecuteOne(ctx context.Context) (Result, error) {
 		return res, fmt.Errorf("claim work: missing claimed signal sequence")
 	}
 	res.ClaimedSignalSeq = *claimed.ClaimedSignalSeq
+	e.recordSelection(ctx, claimed.RootID, class)
 
 	// Exactly one scoped refresh per invocation.
 	scanRes, scanErr := e.scanner.ScanScope(ctx, claimed.RootID, claimed.ScopeKey, e.cfg.MaxEntriesPerScope)

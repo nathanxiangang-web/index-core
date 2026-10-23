@@ -39,6 +39,7 @@ type Config struct {
 	IncrementalRuntimeEnabled bool          `json:"incremental_runtime_enabled"`
 	IncrementalWakeInterval   time.Duration `json:"incremental_wake_interval"`
 	IncrementalDiscoveryScope string        `json:"incremental_discovery_scope,omitempty"`
+	IncrementalFirstDiscovery bool          `json:"incremental_first_discovery"`
 }
 
 // Defaults returns the default configuration (loopback HTTP, safe limits).
@@ -97,6 +98,13 @@ func Load() (Config, error) {
 	c.HintAddr = os.Getenv("INDEXCORE_HINT_ADDR")
 	c.HintToken = os.Getenv("INDEXCORE_HINT_TOKEN")
 	c.IncrementalDiscoveryScope = os.Getenv("INDEXCORE_INCREMENTAL_DISCOVERY_SCOPE")
+	if v := os.Getenv("INDEXCORE_INCREMENTAL_FIRST_DISCOVERY_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("INDEXCORE_INCREMENTAL_FIRST_DISCOVERY_ENABLED: %w", err)
+		}
+		c.IncrementalFirstDiscovery = b
+	}
 	if v := os.Getenv("INDEXCORE_INCREMENTAL_RUNTIME_ENABLED"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
@@ -128,6 +136,7 @@ func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 	// P9: the hint token is deliberately env-only (no --hint-token flag).
 	fs.StringVar(&c.HintAddr, "hint-addr", c.HintAddr, "loopback address for the trusted hint transport (disabled when empty)")
 	fs.BoolVar(&c.IncrementalRuntimeEnabled, "incremental-runtime", c.IncrementalRuntimeEnabled, "enable the in-process P10 hybrid incremental runtime (default disabled)")
+	fs.BoolVar(&c.IncrementalFirstDiscovery, "incremental-first-discovery", c.IncrementalFirstDiscovery, "bounded first-discovery/fairness selection (default disabled)")
 	fs.DurationVar(&c.IncrementalWakeInterval, "incremental-wake-interval", c.IncrementalWakeInterval, "P10 scheduler wake interval (1s..60s)")
 }
 

@@ -19,3 +19,19 @@ Directory results do not imply descendant files have been indexed. Consumers mus
 ## Tests
 
 `TestDiscoveryNestedFoldersExistingReplayAndNamespace` covers nested file discovery with a non-root provider prefix, one refresh per invocation, replay of existing folders, omission safety, and subtree exclusion. `TestDiscoveryCompletionAtomicRollbackAndStaleClaim` injects a PostgreSQL trigger failure after child insertion and checks total rollback, stale claims, wrong-parent rejection and durable success. `TestDiscoveryScopeBoundaries` covers opt-out, alias-prefix attacks, duplicates, depth and count limits.
+
+## Issue134 F1 candidate: bounded first-scan service order
+
+The existing explicit non-root discovery subtree keeps its HIGH priority. A
+separate, default-off option `INDEXCORE_INCREMENTAL_FIRST_DISCOVERY_ENABLED=true`
+(or `--incremental-first-discovery`) proposes finite first-discovery and aged
+background slots within the existing serial runtime cycle. It does not change
+child publication, deletion rules, the normal source refresh or one-shot CLI
+selection outside a cycle. Disabling the option restores legacy priority/FIFO
+without resetting any durable state.
+
+See [ADR007 proposal](decisions/ADR-007-BOUNDED-FIRST-DISCOVERY.md) for proof,
+quotas, modular extension constraints and rollback; see the [D0 observation](p0/P0-134-D0-FIRST-DISCOVERY.md)
+and [isolated F1 evidence](p0/P0-134-F1-ISOLATED-RESULTS.md) for measured results
+and limitations. This is not production acceptance or duplicate-requeue
+suppression. F2/F3 require separate review under Issue134.
