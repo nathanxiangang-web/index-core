@@ -586,3 +586,14 @@ separate, not silently implemented. Same-root ordering, a runtime Worker Pool
 and provider request limits require subsequent bounded review and implementation.
 Issues134/138 stay OPEN; production flags/services unchanged, no real provider
 calls or deployment.
+
+## 2026-10-24 Issue138 validation prerequisite: owned parent shutdown
+
+PR140 is accepted/merged as main562a852; merge CI40081586002 SUCCESS verified.
+Its cross-root proof remains unwired, not single-root or production acceleration.
+An inherited Race handoff failure reproduced on unchanged main: parent cancel
+interrupting retry maintenance was classified as fatal Store failure. This
+narrow candidate recognizes ONLY matching parent cancellation; real errors remain
+fatal. See docs/p0/P0-138-MAINTENANCE-SHUTDOWN.md and the PR's exact-head receipt.
+Not Architect accepted or deployed. Same-root PR-A remains separate; PR-B/runtime
+pool and production enablement are not authorized by this prerequisite.

@@ -284,6 +284,9 @@ func (r *Runtime) runOnce(ctx context.Context) (backlog bool, contention bool, e
 	now := r.now()
 	promo, err := r.promoteDueRetries(ctx, now)
 	if err != nil {
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			return false, false, nil // confirmed parent shutdown, not a Store failure
+		}
 		return false, false, &runtimeFatalError{phase: phaseRetryMaintenance, errorClass: "store", cause: err}
 	}
 	if promo.attempted > 0 || promo.more {
