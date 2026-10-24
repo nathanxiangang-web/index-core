@@ -311,6 +311,12 @@ func (s *Store) reconcileHeadSafe(ctx context.Context, rootID string, seq int64,
 	if snap.LifecycleState != domain.SnapshotSubmitted {
 		return ReconcileOutcome{}, ErrNotSubmitted
 	}
+	if err := s.validateScopedFetch(ctx, tx, snap, &seq); err != nil {
+		if errors.Is(err, ErrScopedFetchStale) {
+			return s.staleInput(ctx, tx, in, currentGen)
+		}
+		return ReconcileOutcome{}, err
+	}
 
 	// Evaluate under the lock: load prior + entries, then finalize acceptance and
 	// the Kernel-owned IO3 identity against this generation (R3-3).

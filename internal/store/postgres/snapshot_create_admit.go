@@ -70,13 +70,9 @@ func (s *Store) SubmitAndAdmitSnapshot(ctx context.Context, rootID, snapshotID s
 		return 0, err
 	}
 
-	var (
-		snapRoot string
-		snapLc   string
-	)
-	if err := tx.QueryRow(ctx,
-		`SELECT root_id::text, lifecycle_state FROM index_snapshot WHERE snapshot_id = $1::uuid`,
-		snapshotID).Scan(&snapRoot, &snapLc); err != nil {
+	var snapRoot, snapLc string
+	var hasFetchFence bool
+	if err := tx.QueryRow(ctx, `SELECT root_id::text,lifecycle_state,provenance ? 'scoped_fetch_fence' FROM index_snapshot WHERE snapshot_id=$1::uuid`, snapshotID).Scan(&snapRoot, &snapLc, &hasFetchFence); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, ErrNotFound
 		}
@@ -87,6 +83,15 @@ func (s *Store) SubmitAndAdmitSnapshot(ctx context.Context, rootID, snapshotID s
 	}
 	if snapLc != string(domain.SnapshotDraft) {
 		return 0, ErrNotDraft
+	}
+	if hasFetchFence {
+		snap, err := s.GetSnapshot(ctx, tx, snapshotID)
+		if err != nil {
+			return 0, err
+		}
+		if err := s.validateScopedFetch(ctx, tx, snap, nil); err != nil {
+			return 0, err
+		}
 	}
 
 	if err := s.MarkSnapshotSubmitted(ctx, tx, snapshotID); err != nil {

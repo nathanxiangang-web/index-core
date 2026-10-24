@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nathanxiangang-web/index-core/internal/collector/adapter"
 	"github.com/nathanxiangang-web/index-core/internal/collector/alist"
 	"github.com/nathanxiangang-web/index-core/internal/domain"
 	"github.com/nathanxiangang-web/index-core/internal/kernel/reconcile"
@@ -29,18 +30,40 @@ import (
 // interface, or any frozen contract. No scheduler, polling, public API, or
 // production CLI is added.
 func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntries int) (Result, error) {
+	obs, err := s.readScope(ctx, rootID, scope, maxEntries)
+	if err != nil {
+		return Result{}, err
+	}
+	return s.commitScope(ctx, obs, nil)
+}
+
+// scopeObservation is private: callers cannot mutate Collector facts after fetch.
+type scopeObservation struct {
+	root                  domain.ResourceRoot
+	binding               postgres.AdapterConfig
+	config                adapterConfig
+	raw                   adapter.RawScan
+	rel, target, parentID string
+	maxEntries            int
+	started, observedAt   time.Time
+}
+
+func (s *Service) readScope(ctx context.Context, rootID, scope string, maxEntries int) (*scopeObservation, error) {
 	start := time.Now()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	root, err := s.store.GetRoot(ctx, s.store.Pool(), rootID)
 	if err != nil {
-		return Result{}, scopeWrap(ScopeFailureInternal, fmt.Errorf("load root: %w", err))
+		return nil, scopeWrap(ScopeFailureInternal, fmt.Errorf("load root: %w", err))
 	}
 	// P2/P3/P4 operational rule: routine scoped execution is only valid for an
 	// ACTIVE root. The selector/ClaimWork proved ACTIVE at claim time, but the
 	// root can transition before this read; fail closed for any non-ACTIVE
 	// lifecycle (NEW / DEPRECATED / DELETED).
 	if root.LifecycleState != domain.RootActive {
-		return Result{}, scopeErrorf(ScopeFailureRootInactive,
+		return nil, scopeErrorf(ScopeFailureRootInactive,
 			"root %s lifecycle %s does not allow scoped execution", rootID, root.LifecycleState)
 	}
 
@@ -50,41 +73,41 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 		// other error is a transient storage failure and must not permanently
 		// BLOCK the item.
 		if errors.Is(err, postgres.ErrNotFound) {
-			return Result{}, scopeWrap(ScopeFailureConfigInvalid, fmt.Errorf("load adapter config: %w", err))
+			return nil, scopeWrap(ScopeFailureConfigInvalid, fmt.Errorf("load adapter config: %w", err))
 		}
-		return Result{}, scopeWrap(ScopeFailureInternal, fmt.Errorf("load adapter config: %w", err))
+		return nil, scopeWrap(ScopeFailureInternal, fmt.Errorf("load adapter config: %w", err))
 	}
 	var ac adapterConfig
 	if err := json.Unmarshal(acfg.Config, &ac); err != nil {
-		return Result{}, scopeWrap(ScopeFailureConfigInvalid, fmt.Errorf("parse adapter config: %w", err))
+		return nil, scopeWrap(ScopeFailureConfigInvalid, fmt.Errorf("parse adapter config: %w", err))
 	}
 
 	// P0 scoped refresh is defined only for AList/OpenList single-response
 	// refresh semantics. Any other collector kind fails closed.
 	if acfg.CollectorKind != "alist" && acfg.CollectorKind != "openlist" {
-		return Result{}, scopeErrorf(ScopeFailureConfigInvalid,
+		return nil, scopeErrorf(ScopeFailureConfigInvalid,
 			"scoped refresh is not supported for collector kind %q (P0: alist/openlist only)", acfg.CollectorKind)
 	}
 	// P0 hard cap: the caller must never be able to widen a scoped observation.
 	if maxEntries < 0 || maxEntries > alist.MaxScopedEntries {
-		return Result{}, scopeErrorf(ScopeFailureConfigInvalid,
+		return nil, scopeErrorf(ScopeFailureConfigInvalid,
 			"scoped refresh max_entries must be within [0, %d], got %d", alist.MaxScopedEntries, maxEntries)
 	}
 	// A bad configured provider root path is adapter configuration, not the
 	// persisted DirtyScopeWork scope: it must not be reported as INVALID_SCOPE.
 	if err := validateRootProviderPath(ac.Path); err != nil {
-		return Result{}, scopeWrap(ScopeFailureConfigInvalid, err)
+		return nil, scopeWrap(ScopeFailureConfigInvalid, err)
 	}
 
 	// Normalize the root-relative scope, reject "." / ".." components, and
 	// guarantee the resolved provider path stays inside the root.
 	rel, err := canonicalScopePath(scope)
 	if err != nil {
-		return Result{}, scopeWrap(ScopeFailureInvalidScope, err)
+		return nil, scopeWrap(ScopeFailureInvalidScope, err)
 	}
 	target, err := scopeAPIPath(ac.Path, rel)
 	if err != nil {
-		return Result{}, scopeWrap(ScopeFailureInvalidScope, err)
+		return nil, scopeWrap(ScopeFailureInvalidScope, err)
 	}
 	// A non-root scope MUST already be an unambiguous PRESENT canonical
 	// directory; otherwise a scoped observation would produce orphan resources
@@ -94,9 +117,12 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 	// records (EntryLocalID is the provider path, e.g. "/library/sub"), NOT the
 	// root-relative scope. Using rel here would wrongly fail whenever the
 	// configured root path is not "/".
+	parentID := ""
 	if rel != "" {
-		if serr := s.requirePresentDirectory(ctx, rootID, target); serr != nil {
-			return Result{}, serr
+		var serr *ScopeError
+		parentID, serr = s.requirePresentDirectory(ctx, rootID, target)
+		if serr != nil {
+			return nil, serr
 		}
 	}
 
@@ -109,7 +135,7 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 	}
 	if ac.MirrorPresence {
 		if ac.ExpectedBasePath == "" {
-			return Result{}, scopeErrorf(ScopeFailureConfigInvalid, "mirror requires expected_base_path")
+			return nil, scopeErrorf(ScopeFailureConfigInvalid, "mirror requires expected_base_path")
 		}
 		col.ExpectedBasePath = ac.ExpectedBasePath
 		col.TopologyToken = os.Getenv(ac.TopologyTokenEnv)
@@ -121,13 +147,26 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 		// Fail closed: no Snapshot is created on any refresh/permission/
 		// truncation/overflow error. The classification is typed, never string
 		// parsed.
-		return Result{}, mapAListScopedError(err)
+		return nil, mapAListScopedError(err)
 	}
 	if raw.TraversalStatus != domain.TraversalPartial {
-		return Result{}, scopeErrorf(ScopeFailureInternal,
+		return nil, scopeErrorf(ScopeFailureInternal,
 			"internal: scoped observation must be PARTIAL, got %s", raw.TraversalStatus)
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return &scopeObservation{root: root, binding: acfg, config: ac, raw: raw, rel: rel, target: target,
+		parentID: parentID, maxEntries: maxEntries, started: start, observedAt: time.Now().UTC().Truncate(time.Microsecond)}, nil
+}
+
+func (s *Service) commitScope(ctx context.Context, obs *scopeObservation, fence *postgres.ScopedFetchFence) (Result, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
+	root, acfg, ac, raw := obs.root, obs.binding, obs.config, obs.raw
+	rootID, rel, target, maxEntries, start := root.RootID, obs.rel, obs.target, obs.maxEntries, obs.started
 	snapID := reconcile.NewUUID()
 	metadata := map[string]any{
 		"collector_kind": acfg.CollectorKind, "path": ac.Path, "scope": target,
@@ -136,12 +175,15 @@ func (s *Service) ScanScope(ctx context.Context, rootID, scope string, maxEntrie
 	if ac.MirrorPresence && raw.DirectoryTopologyDigest != "" {
 		metadata["directory_coverage"] = domain.DirectoryCoverage{Version: 2, Path: target, Generation: root.CurrentGeneration, AdapterDigest: postgres.AdapterConfigDigest(acfg), EntryCount: len(raw.Entries), TopologyDigest: raw.DirectoryTopologyDigest}
 	}
+	if fence != nil {
+		metadata["scoped_fetch_fence"] = fence
+	}
 	provenance, _ := json.Marshal(metadata)
 	freshness := raw.Freshness
 	assurance := raw.Assurance
 	entryCount := int64(len(raw.Entries))
 	snap := domain.Snapshot{
-		SnapshotID: snapID, RootID: rootID, Provenance: provenance, ObservedAt: time.Now().UTC(),
+		SnapshotID: snapID, RootID: rootID, Provenance: provenance, ObservedAt: obs.observedAt,
 		TraversalStatus: raw.TraversalStatus, ErrorSummary: raw.ErrorSummary,
 		SkippedScopes: raw.SkippedScopes, SkippedScopesKnownEmpty: raw.SkippedKnownEmpty,
 		FreshnessEvidence: &freshness, CollectorCompletenessAssurance: &assurance,
@@ -331,19 +373,19 @@ func pathWithin(base, p string) bool {
 // PRESENT canonical directory for the root. A scope-semantics failure is
 // INVALID_SCOPE; a storage/query failure is INTERNAL (never a permanent scope
 // defect).
-func (s *Service) requirePresentDirectory(ctx context.Context, rootID, rel string) *ScopeError {
+func (s *Service) requirePresentDirectory(ctx context.Context, rootID, rel string) (string, *ScopeError) {
 	rows, err := s.store.PresentResourcesAtPath(ctx, s.store.Pool(), rootID, rel)
 	if err != nil {
-		return scopeWrap(ScopeFailureInternal, fmt.Errorf("load scoped parent %q: %w", rel, err))
+		return "", scopeWrap(ScopeFailureInternal, fmt.Errorf("load scoped parent %q: %w", rel, err))
 	}
 	if len(rows) != 1 {
-		return scopeErrorf(ScopeFailureInvalidScope,
+		return "", scopeErrorf(ScopeFailureInvalidScope,
 			"scoped refresh requires exactly one PRESENT canonical directory at %q, found %d", rel, len(rows))
 	}
 	if rows[0].IsDir == nil || !*rows[0].IsDir {
-		return scopeErrorf(ScopeFailureInvalidScope, "scoped refresh parent %q is not a directory", rel)
+		return "", scopeErrorf(ScopeFailureInvalidScope, "scoped refresh parent %q is not a directory", rel)
 	}
-	return nil
+	return rows[0].ResourceID, nil
 }
 
 // validateRootProviderPath rejects an adapter root path that can never be a
