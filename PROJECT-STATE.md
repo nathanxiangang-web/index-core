@@ -546,3 +546,22 @@ documented, not silently repaired. See docs/p0/P0-134-F3-CAPACITY-INVESTIGATION.
 Await F3 PR exact-head CI and Architect review. No automatic retirement, runtime
 adaptation, concurrent readers, production canary, full20k/50k soak, PR126/#133
 work or Issue134 closure is authorized by this investigation.
+
+## 2026-10-24 Issue138 read/commit extraction candidate (latest scoped update)
+
+F3 merged main c5bb6a68; CI40070457955 attempt2 SUCCESS after one same-SHA rerun.
+Attempt1 failure remains retained and its Hint startup cause is UNKNOWN. Separate
+test-only PR139 head5f8a55d CI40072203409 SUCCESS, not self-merged by this task.
+
+Issue138 and Issue134 comment6381017272 supersede the research-only deferral of
+concurrent source reads. This candidate extracts shared read/commit code and adds
+an unwired opaque bounded FetchPrototype with serial, DB-fenced admission/reconcile.
+It is NOT a runtime pool or production rollout. Same-root outstanding reads stay
+limited to1; measured cross-root speedup cannot be called single-root acceleration.
+See docs/decisions/ADR-010-BOUNDED-FETCH-SEAM.md and
+docs/p0/P0-138-FETCH-PROTOTYPE.md for constraints, evidence and NOT_RUN gates.
+
+No schema, Kernel identity/trust/deletion rule or public transport changed. Final
+exact-head CI and Architect review remain required. F4-A budget/scheduling and
+F4-B Watch lifecycle are separate, not silently implemented. Issues134/138 stay
+OPEN, production flags/services unchanged, no real provider calls or deployment.

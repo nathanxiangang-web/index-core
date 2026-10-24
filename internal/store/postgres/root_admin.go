@@ -183,6 +183,7 @@ func (s *Store) RootReconcileConfig(ctx context.Context, rootID string) (reconci
 type AdapterConfig struct {
 	CollectorKind string
 	Config        []byte // jsonb
+	Revision      string // read-only PostgreSQL tuple revision; never supplied by caller
 }
 
 // UpsertAdapterConfig persists the root's collector adapter binding. It enforces
@@ -208,8 +209,8 @@ func (s *Store) GetAdapterConfig(ctx context.Context, rootID string) (AdapterCon
 		cfg []byte
 	)
 	err := s.pool.QueryRow(ctx,
-		`SELECT collector_kind, config FROM index_root_adapter_config WHERE root_id = $1::uuid`,
-		rootID).Scan(&a.CollectorKind, &cfg)
+		`SELECT collector_kind, config, xmin::text FROM index_root_adapter_config WHERE root_id = $1::uuid`,
+		rootID).Scan(&a.CollectorKind, &cfg, &a.Revision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AdapterConfig{}, ErrNotFound
 	}
