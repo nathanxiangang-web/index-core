@@ -3,7 +3,8 @@
 Status: F1 code integration accepted in PR135 at6dea288; merged main f9bbc4e,
 Architect comment6368555436. Exact-head CI39976674601 and merged-main
 CI39979311690 passed. Not production-enabled and not a replacement for
-ADR004/005/006 or P2 state rules. F2 remains a separate candidate under ADR008.
+ADR004/005/006 or P2 state rules. F2 default-OFF integration is accepted under
+ADR008; F3 capacity remains a separate investigation under ADR009.
 
 ## Motivation and scope
 

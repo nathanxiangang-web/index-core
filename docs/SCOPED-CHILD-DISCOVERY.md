@@ -36,10 +36,10 @@ and [isolated F1 evidence](p0/P0-134-F1-ISOLATED-RESULTS.md) for measured result
 and limitations. This is not production acceptance or duplicate-requeue
 suppression. F2/F3 require separate review under Issue134.
 
-## Issue134 F2 candidate: coalesced parent intents and rolling revisit
+## Issue134 F2 accepted default-OFF integration: coalesced parent intents
 
 `INDEXCORE_INCREMENTAL_MIRROR_REVISIT=2m` (or
-`--incremental-mirror-revisit=2m`) opts into the proposed F2 policy. Default0s
+`--incremental-mirror-revisit=2m`) opts into the integrated F2 policy. Default0s
 preserves legacy parent-child merges. Valid positive intervals are whole seconds
 30s..1h. Only positively known ordinary mirror children are eligible; the explicit
 HIGH subtree remains unchanged. Canonical directory mtime never proves contents
@@ -54,6 +54,14 @@ managed rolling checks, retaining the existing per-cycle limits and CAS. No
 second queue or writer is added. Disabling F2 does not erase enrolled watches;
 retire exact owned watch policies through the accepted CAS API when required.
 
-See [ADR008 proposal](decisions/ADR-008-MIRROR-ROLLING-REVISIT.md) and
+See [ADR008](decisions/ADR-008-MIRROR-ROLLING-REVISIT.md) and
 [isolated F2 evidence](p0/P0-134-F2-ISOLATED-RESULTS.md). Production
 enablement and large20k/50k F3 capacity acceptance remain separate gates.
+
+## Issue134 F3 design and capacity investigation
+
+[ADR009 proposal](decisions/ADR-009-CAPACITY-BUDGET-INVESTIGATION.md) and
+[bounded capacity evidence](p0/P0-134-F3-CAPACITY-INVESTIGATION.md) distinguish
+preloaded2k/20k/50k directory populations from actual31-scan samples. Due Watch
+age/debt remains high despite small PENDING counts. No runtime budget controller,
+automatic Watch retirement, prefetch or production rollout is implemented here.
