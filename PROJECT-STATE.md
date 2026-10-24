@@ -546,3 +546,19 @@ documented, not silently repaired. See docs/p0/P0-134-F3-CAPACITY-INVESTIGATION.
 Await F3 PR exact-head CI and Architect review. No automatic retirement, runtime
 adaptation, concurrent readers, production canary, full20k/50k soak, PR126/#133
 work or Issue134 closure is authorized by this investigation.
+
+## 2026-10-24 Issue138 prerequisite (latest scoped update)
+
+F3 was merged at c5bb6a68. Issue138 and Issue134 comment6381017272 now prioritize
+bounded concurrent source reads with ordered serial committed admission; the
+earlier research-only deferral of concurrency does not override that packet.
+Merged-main CI40070457955 attempt1 failed the P9 Hint readiness test, not a
+reported race-detector finding. Historical startup cause remains UNKNOWN;
+unchanged-main isolated race repetitions40 + two-package repetitions5 passed.
+One same-SHA CI rerun retains the failed first attempt as evidence.
+
+This candidate only removes the released-Hint-port race from two P9 test
+fixtures, observes startup exit errors, and joins test actors before cleanup.
+See docs/p0/P0-138-MAIN-CI-READINESS.md and its PR CI receipt. It does not implement
+or accept concurrent fetching, F4 scheduling/retirement or a production canary.
+Issues134/138 stay OPEN. No runtime source/schema/production configuration changed.
