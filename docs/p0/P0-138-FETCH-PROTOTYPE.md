@@ -4,15 +4,35 @@ Status: IMPLEMENTATION CANDIDATE / isolated proof, not Architect acceptance.
 Runtime pool, production canary and whole-Issue138 completion: NOT DONE.
 Proposal: [ADR010](../decisions/ADR-010-BOUNDED-FETCH-SEAM.md).
 
-## Baseline and prerequisites
+## Original extraction baseline and prerequisites
 
 Baseline main c5bb6a68c5f4b8b98d28d348a604f4b2f82c361a. Main CI40070457955
 attempt2 SUCCESS, after one controlled failed-job rerun. Failed attempt1 stays
 retained; original Hint startup cause UNKNOWN. Independent test-only PR139 head
-5f8a55daadbea8455322fec931797c052b6c8b1a CI40072203409 SUCCESS is separate;
-this branch does not merge or cherry-pick that PR, PR126, or Issue133 work.
+5f8a55daadbea8455322fec931797c052b6c8b1a CI40072203409 SUCCESS was separate
+from the initial extraction head0da97cd6. After PR139 was accepted and merged,
+this branch incorporated main07492838128f through merge commitbb6c866, without
+rewriting published history. No PR126 or Issue133 work is incorporated.
 Task: Issue138, superseding the earlier research-only deferral of read concurrency
 in Issue134 comment6381017272. F4 scheduling and Watch lifecycle remain separate.
+
+### Post-PR139 synchronization boundary
+
+The original prototype CI40076090617 SUCCESS is verified, but is not acceptance
+of the synchronized HEAD. The only merge conflict was the appended project-state
+ledger: both prerequisite and extraction records are retained. The imported Go
+changes are exactly PR139's test fixtures; no additional runtime implementation
+changes were made during synchronization. Validation is rerun on the synchronized
+code in an owned PG18 environment, with fresh logs separate from the original
+extraction evidence below. Updated exact-head CI and independent Architect review
+remain gates. PR140 stays Draft, unmerged and undeployed.
+
+The source/transaction review reconfirms: provider I/O ends before commit locks;
+the handle is opaque with shared single-consumption state; both Stage1 and Stage2
+validate captured root/config/parent/claim and original source time; the legacy
+unfenced path and trusted deletion rules remain unchanged. Constructor references
+outside its definition remain test-only. This is a scoped executor cross-check,
+not independent Architect acceptance or certification of same-root concurrency.
 
 ## Modules and dependency direction
 
