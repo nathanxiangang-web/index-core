@@ -25,6 +25,7 @@ var buildIncrementalCycle = func(st *postgres.Store, cfg config.Config, logger *
 		MaxEntriesPerScope:    1000,
 		DiscoveryScope:        cfg.IncrementalDiscoveryScope,
 		FirstDiscoveryEnabled: cfg.IncrementalFirstDiscovery,
+		MirrorRevisitInterval: cfg.IncrementalMirrorRevisit,
 		Retry: incrementalexec.RetryPolicy{
 			TransientProvider: 30 * time.Second,
 			Throttled:         45 * time.Second,
@@ -56,10 +57,12 @@ var newIncrementalRuntime = func(store incrementalruntime.MaintenanceStore, cycl
 
 // runtimeConfig builds the P10 runtime config from the global config.
 func runtimeConfig(cfg config.Config) incrementalruntime.Config {
+	cycle := incrementalruntime.DefaultCycleConfig()
+	cycle.MirrorRevisitEnabled = cfg.IncrementalMirrorRevisit > 0
 	return incrementalruntime.Config{
 		WakeInterval:       cfg.IncrementalWakeInterval,
 		MaxRetryPromotions: incrementalruntime.MaxRetryPromotionsCap,
-		Cycle:              incrementalruntime.DefaultCycleConfig(),
+		Cycle:              cycle,
 	}
 }
 

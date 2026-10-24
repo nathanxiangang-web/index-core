@@ -36,8 +36,15 @@ type DiscoveryStore interface {
 	CompleteSuccessWithPrioritizedChildren(context.Context, string, string, int64, []string, string, time.Time) (state.DirtyScopeWork, error)
 }
 
+// MirrorDiscoveryStore adds periodic-watch proof and duplicate coalescing to the
+// SAME child-publication/parent-completion transaction. Legacy callers unchanged.
+type MirrorDiscoveryStore interface {
+	CompleteSuccessWithMirrorChildren(context.Context, string, string, int64, []string, string, time.Time, time.Duration) (state.DirtyScopeWork, state.MirrorDiscoveryStats, error)
+}
+
 // Result exposes the durable transitions of one ExecuteOne invocation.
 type Result struct {
+	Discovery        state.MirrorDiscoveryStats
 	SelectionClass   string
 	Selected         bool
 	RootID           string
@@ -77,6 +84,11 @@ func New(store WorkStore, scanner ScopedScanner, cfg Config, now func() time.Tim
 	if cfg.FirstDiscoveryEnabled {
 		if _, ok := store.(FirstDiscoveryStore); !ok {
 			return nil, errors.New("first discovery requires planning store")
+		}
+	}
+	if cfg.MirrorRevisitInterval > 0 {
+		if _, ok := store.(MirrorDiscoveryStore); !ok {
+			return nil, errors.New("mirror revisit requires atomic mirror completion store")
 		}
 	}
 	if now == nil {
@@ -158,7 +170,9 @@ func (e *Executor) ExecuteOne(ctx context.Context) (Result, error) {
 		return e.completeFailure(ctx, res, claimed, state.ErrorInternal, childErr)
 	}
 	var done state.DirtyScopeWork
-	if len(children) > 0 {
+	if len(children) > 0 && scanRes.MirrorPresence && e.cfg.MirrorRevisitInterval > 0 {
+		done, res.Discovery, err = e.store.(MirrorDiscoveryStore).CompleteSuccessWithMirrorChildren(ctx, claimed.RootID, claimed.ScopeKey, *claimed.ClaimedSignalSeq, children, e.cfg.DiscoveryScope, completionNow, e.cfg.MirrorRevisitInterval)
+	} else if len(children) > 0 {
 		discoveryStore, ok := e.store.(DiscoveryStore)
 		if !ok {
 			return res, errors.New("source mirror requires atomic discovery store")

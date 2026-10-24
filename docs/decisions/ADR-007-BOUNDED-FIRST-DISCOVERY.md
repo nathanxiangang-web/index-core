@@ -1,7 +1,9 @@
-# ADR007 proposal: finite first-discovery and aging slots (Issue134 F1)
+# ADR007: finite first-discovery and aging slots (Issue134 F1)
 
-Status: implementation candidate. Requires exact-head CI and Architect acceptance;
-not production-enabled and not a replacement for ADR004/005/006 or P2 state rules.
+Status: F1 code integration accepted in PR135 at6dea288; merged main f9bbc4e,
+Architect comment6368555436. Exact-head CI39976674601 and merged-main
+CI39979311690 passed. Not production-enabled and not a replacement for
+ADR004/005/006 or P2 state rules. F2 remains a separate candidate under ADR008.
 
 ## Motivation and scope
 

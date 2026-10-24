@@ -515,3 +515,16 @@ Not merged, not deployed, not ARCHITECT_ACCEPTED. F2 requeue suppression and F3
 capacity/prefetch remain NOT_RUN. Existing P0-R4 and Issue129 D2 acceptance are
 not inferred or superseded by these tests. No production configuration, schema,
 provider downloads or Canonical/Journal/deletion write rules changed.
+
+## 2026-10-24 Issue134 F2 candidate (latest scoped update)
+
+F1 is code-integrated / Architect accepted in PR135, main f9bbc4e; exact-head
+CI39976674601 and merged-main CI39979311690 are SUCCESS. This supersedes the
+historical candidate status above, not its measured-production limitations.
+
+F2 is an isolated implementation candidate: redundant ordinary mirror child
+intent coalescing with persistent periodic revalidation, formal Hint preservation
+and bounded due-watch fairness. ADR008 is proposed, not accepted. Both F1 and F2
+remain default-off. No production restart/configuration change, real provider
+request, canonical repair, migration or unrelated PR integration is performed.
+Await F2 PR exact-head CI and Architect review; do not merge or start F3 yet.

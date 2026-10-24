@@ -20,14 +20,18 @@ const (
 
 // Config is the finite budget for one manual orchestration cycle.
 type Config struct {
-	MaxDueWatchAttempts int
-	MaxExecuteItems     int
-	MaxWallTime         time.Duration
+	MirrorRevisitEnabled bool
+	MaxDueWatchAttempts  int
+	MaxExecuteItems      int
+	MaxWallTime          time.Duration
 }
 
 // Validate enforces the prototype hard caps. An invalid config fails before any
 // Store due-watch query, EmitDuePoll, or P5 execution.
 func (c Config) Validate() error {
+	if c.MirrorRevisitEnabled && c.MaxDueWatchAttempts < 2 {
+		return fmt.Errorf("mirror revisit fairness requires at least two due-watch attempts")
+	}
 	if c.MaxDueWatchAttempts < 1 || c.MaxDueWatchAttempts > MaxDueWatchAttemptsCap {
 		return fmt.Errorf("orchestration: max_due_watch_attempts must be within [1, %d], got %d",
 			MaxDueWatchAttemptsCap, c.MaxDueWatchAttempts)

@@ -40,6 +40,7 @@ type Config struct {
 	IncrementalWakeInterval   time.Duration `json:"incremental_wake_interval"`
 	IncrementalDiscoveryScope string        `json:"incremental_discovery_scope,omitempty"`
 	IncrementalFirstDiscovery bool          `json:"incremental_first_discovery"`
+	IncrementalMirrorRevisit  time.Duration `json:"incremental_mirror_revisit"`
 }
 
 // Defaults returns the default configuration (loopback HTTP, safe limits).
@@ -98,6 +99,13 @@ func Load() (Config, error) {
 	c.HintAddr = os.Getenv("INDEXCORE_HINT_ADDR")
 	c.HintToken = os.Getenv("INDEXCORE_HINT_TOKEN")
 	c.IncrementalDiscoveryScope = os.Getenv("INDEXCORE_INCREMENTAL_DISCOVERY_SCOPE")
+	if v := os.Getenv("INDEXCORE_INCREMENTAL_MIRROR_REVISIT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("INDEXCORE_INCREMENTAL_MIRROR_REVISIT: %w", err)
+		}
+		c.IncrementalMirrorRevisit = d
+	}
 	if v := os.Getenv("INDEXCORE_INCREMENTAL_FIRST_DISCOVERY_ENABLED"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
@@ -137,6 +145,7 @@ func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.HintAddr, "hint-addr", c.HintAddr, "loopback address for the trusted hint transport (disabled when empty)")
 	fs.BoolVar(&c.IncrementalRuntimeEnabled, "incremental-runtime", c.IncrementalRuntimeEnabled, "enable the in-process P10 hybrid incremental runtime (default disabled)")
 	fs.BoolVar(&c.IncrementalFirstDiscovery, "incremental-first-discovery", c.IncrementalFirstDiscovery, "bounded first-discovery/fairness selection (default disabled)")
+	fs.DurationVar(&c.IncrementalMirrorRevisit, "incremental-mirror-revisit", c.IncrementalMirrorRevisit, "mirror child coalescing with durable rolling checks (0 disabled; 30s..1h)")
 	fs.DurationVar(&c.IncrementalWakeInterval, "incremental-wake-interval", c.IncrementalWakeInterval, "P10 scheduler wake interval (1s..60s)")
 }
 
@@ -157,6 +166,9 @@ func (c Config) LoopbackOnly() bool {
 
 // Validate rejects an invalid configuration before any background work starts.
 func (c Config) Validate() error {
+	if err := state.ValidateMirrorRevisit(c.IncrementalMirrorRevisit); err != nil {
+		return err
+	}
 	if c.IncrementalDiscoveryScope != "" {
 		if err := state.ValidateScopeKey(c.IncrementalDiscoveryScope); err != nil {
 			return fmt.Errorf("INDEXCORE_INCREMENTAL_DISCOVERY_SCOPE: %w", err)
