@@ -12,8 +12,13 @@ import (
 // IdentityEvidence observation, using the caller's Querier so reconcile runs in
 // the same consistency domain as canonical inventory (B3, doc A C-E6).
 func (s *Store) LoadPriorResources(ctx context.Context, q Querier, rootID string) ([]reconcile.PriorResource, error) {
-	rows, err := q.Query(ctx,
-		`SELECT c.resource_id::text, c.root_id::text, c.introduced_at_generation, c.last_confirmed_generation,
+	return s.loadPriorWhere(ctx, q, "c.root_id=$1::uuid", rootID)
+}
+
+// Only package-owned constant predicates reach this builder. Values stay bound.
+// Kernel's public LoadPriorResources still loads the COMPLETE canonical prior.
+func priorQuery(where string) string {
+	return `SELECT c.resource_id::text, c.root_id::text, c.introduced_at_generation, c.last_confirmed_generation,
 		        c.resource_presence, c.removal_evidence_state, c.missing_since, c.consecutive_complete_missing,
 		        c.missing_first_snapshot_id::text, c.missing_last_snapshot_id::text, c.canonical_path,
 		        c.parent_resource_id::text, c.name, c.is_dir, c.size, c.mtime,
@@ -27,8 +32,11 @@ func (s *Store) LoadPriorResources(ctx context.Context, q Querier, rootID string
 		        WHERE resource_id = c.resource_id
 		        ORDER BY observation_id DESC LIMIT 1
 		   ) o ON true
-		  WHERE c.root_id = $1::uuid
-		  ORDER BY c.resource_id`, rootID)
+		  WHERE ` + where + ` ORDER BY c.resource_id`
+}
+
+func (s *Store) loadPriorWhere(ctx context.Context, q Querier, where string, args ...any) ([]reconcile.PriorResource, error) {
+	rows, err := q.Query(ctx, priorQuery(where), args...)
 	if err != nil {
 		return nil, err
 	}

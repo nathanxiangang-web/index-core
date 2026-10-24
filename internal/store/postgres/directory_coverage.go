@@ -38,8 +38,32 @@ func (s *Store) directoryCoverage(ctx context.Context, tx pgx.Tx, snap domain.Sn
 		return nil, ErrDirectoryCoverage
 	}
 	invalid := ErrDirectoryCoverage
+	generationOK := p.Generation == generation && p.Version == 2
+	if p.Version == 3 {
+		// Explicit same-root lineage contract, NEVER a synthetic current generation.
+		// Preserve the captured base; establish its committed prefix/dependencies.
+		_, f, ferr := readFence(snap)
+		if ferr != nil || f.Version != 2 || f.Generation != p.Generation {
+			return nil, invalid
+		}
+		var n int
+		var seq *int64
+		if err := tx.QueryRow(ctx, `SELECT count(*),min(admission_seq) FROM index_admission WHERE root_id=$1::uuid AND snapshot_id=$2::uuid`, snap.RootID, snap.SnapshotID).Scan(&n, &seq); err != nil {
+			return nil, err
+		}
+		if n != 1 || seq == nil {
+			return nil, invalid
+		}
+		if err := s.validateScopedFetch(ctx, tx, snap, seq); err != nil {
+			if errors.Is(err, ErrScopedFetchStale) {
+				return nil, invalid
+			}
+			return nil, err
+		}
+		generationOK = true
+	}
 	decoded, decodeErr := hex.DecodeString(p.TopologyDigest)
-	if p.Version != 2 || decodeErr != nil || len(decoded) != sha256.Size || p.Generation != generation || p.EntryCount != len(entries) || p.Path == "" || !strings.HasPrefix(p.Path, "/") || path.Clean(p.Path) != p.Path || strings.ContainsAny(p.Path, "\\\x00") || p.EntryCount > 10000 {
+	if !generationOK || decodeErr != nil || len(decoded) != sha256.Size || p.EntryCount != len(entries) || p.Path == "" || !strings.HasPrefix(p.Path, "/") || path.Clean(p.Path) != p.Path || strings.ContainsAny(p.Path, "\\\x00") || p.EntryCount > 10000 {
 		return nil, invalid
 	}
 	if snap.TraversalStatus != domain.TraversalPartial || snap.CompletenessFlag != domain.CompletenessFlagPartial || snap.FreshnessEvidence == nil || *snap.FreshnessEvidence != domain.FreshRefreshed || len(snap.ErrorSummary) != 0 || len(snap.SkippedScopes) != 0 {

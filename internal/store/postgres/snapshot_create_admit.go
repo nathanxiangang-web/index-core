@@ -51,9 +51,10 @@ func (s *Store) CreateDraftSnapshot(ctx context.Context, snap domain.Snapshot, e
 // SubmitAndAdmitSnapshot is the SHORT Stage-1 transaction (G3-R2.1): lock the
 // root, verify the Snapshot is DRAFT and bound to that root, move DRAFT ->
 // SUBMITTED, allocate the authoritative admission_seq, and INSERT the PENDING
-// admission. It performs only O(1) work under the root FOR UPDATE lock and never
-// writes entries, so admission order stays authoritative without being coupled to
-// scan size.
+// admission. The legacy path performs O(1) work under the root FOR UPDATE lock
+// and never writes entries. Experimental same-root lineage additionally hashes
+// canonical dependencies (currently O(root inventory)); this explicit prototype
+// cost is measured separately and is not an O(1) admission claim.
 func (s *Store) SubmitAndAdmitSnapshot(ctx context.Context, rootID, snapshotID string) (int64, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
