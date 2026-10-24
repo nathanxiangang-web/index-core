@@ -217,12 +217,10 @@ func TestP9HintIngestPersistsWithoutExecution(t *testing.T) {
 	ctx := context.Background()
 	p9SeedRoot(t, st, ctx)
 
-	addr := p9FreeAddr(t)
-	gctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- runServe(gctx, p9Cfg(addr), p9Logger(), pool, st, p9BlockingWorker) }()
-	p9WaitHint(t, addr)
+	run, addr, err := p9LaunchObservedHint(t, pool, p9Cfg("127.0.0.1:0"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	body := p9ValidHintBody()
 	for i := 0; i < 2; i++ {
@@ -256,14 +254,9 @@ func TestP9HintIngestPersistsWithoutExecution(t *testing.T) {
 		t.Fatalf("202 must not mutate Canonical, got %d resources", canon)
 	}
 
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("serve shutdown: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("serve did not shut down")
+	run.cancel()
+	if err := run.wait(); err != nil {
+		t.Fatalf("serve shutdown: %v", err)
 	}
 }
 
@@ -274,16 +267,17 @@ func TestP9ShutdownHoldsWriterLockUntilHandlersFinish(t *testing.T) {
 	p9SeedRoot(t, st, ctx)
 
 	ing := &p9BlockingIngester{entered: make(chan struct{}), release: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(ing.release) })
 	prevIng := newHintIngester
 	newHintIngester = func(*postgres.Store) (hintapi.Ingester, error) { return ing, nil }
 	t.Cleanup(func() { newHintIngester = prevIng })
 
-	addr := p9FreeAddr(t)
-	gctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- runServe(gctx, p9Cfg(addr), p9Logger(), pool, st, p9BlockingWorker) }()
-	p9WaitHint(t, addr)
+	run, addr, err := p9LaunchObservedHint(t, pool, p9Cfg("127.0.0.1:0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Release before the helper's shutdown join, even on a failed assertion.
+	t.Cleanup(release)
 
 	reqDone := make(chan int, 1)
 	go func() {
@@ -293,7 +287,7 @@ func TestP9ShutdownHoldsWriterLockUntilHandlersFinish(t *testing.T) {
 	<-ing.entered
 
 	// Trigger shutdown while the hint handler is still active.
-	cancel()
+	run.cancel()
 	time.Sleep(100 * time.Millisecond)
 
 	// The writer lock must still be held while a hint handler may call P8.
@@ -304,17 +298,12 @@ func TestP9ShutdownHoldsWriterLockUntilHandlersFinish(t *testing.T) {
 		t.Fatalf("unexpected lock error: %v", err)
 	}
 
-	close(ing.release)
+	release()
 	if code := <-reqDone; code != http.StatusAccepted {
 		t.Fatalf("blocked hint request status = %d", code)
 	}
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("serve shutdown: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("serve did not finish shutdown after the handler returned")
+	if err := run.wait(); err != nil {
+		t.Fatalf("serve shutdown: %v", err)
 	}
 
 	l, err := postgres.New(testutil.Pool(t)).AcquireWriterLock(ctx)

@@ -3,7 +3,10 @@
 Status: Issue138 FIRST-PR PROTOTYPE, pending independent Architect review.
 Prerequisite: exact c5bb6a68 main CI40070457955 attempt2 SUCCESS; failed attempt1
 is retained, historical Hint startup cause UNKNOWN. PR139 independently hardens
-that test fixture. Nothing in this decision authorizes production enablement.
+that test fixture and is merged as main07492838128f, now included in this branch.
+Original prototype head0da97cd6 CI40076090617 SUCCESS does not certify the merged
+branch HEAD: new exact-head CI and independent review remain required. Nothing
+in this decision authorizes production enablement.
 
 ## Module contract
 

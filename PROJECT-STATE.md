@@ -547,11 +547,29 @@ Await F3 PR exact-head CI and Architect review. No automatic retirement, runtime
 adaptation, concurrent readers, production canary, full20k/50k soak, PR126/#133
 work or Issue134 closure is authorized by this investigation.
 
+## 2026-10-24 Issue138 prerequisite (latest scoped update)
+
+F3 was merged at c5bb6a68. Issue138 and Issue134 comment6381017272 now prioritize
+bounded concurrent source reads with ordered serial committed admission; the
+earlier research-only deferral of concurrency does not override that packet.
+Merged-main CI40070457955 attempt1 failed the P9 Hint readiness test, not a
+reported race-detector finding. Historical startup cause remains UNKNOWN;
+unchanged-main isolated race repetitions40 + two-package repetitions5 passed.
+One same-SHA CI rerun retains the failed first attempt as evidence.
+
+This candidate only removes the released-Hint-port race from two P9 test
+fixtures, observes startup exit errors, and joins test actors before cleanup.
+See docs/p0/P0-138-MAIN-CI-READINESS.md and its PR CI receipt. It does not implement
+or accept concurrent fetching, F4 scheduling/retirement or a production canary.
+Issues134/138 stay OPEN. No runtime source/schema/production configuration changed.
+
 ## 2026-10-24 Issue138 read/commit extraction candidate (latest scoped update)
 
-F3 merged main c5bb6a68; CI40070457955 attempt2 SUCCESS after one same-SHA rerun.
-Attempt1 failure remains retained and its Hint startup cause is UNKNOWN. Separate
-test-only PR139 head5f8a55d CI40072203409 SUCCESS, not self-merged by this task.
+PR139 is merged as main07492838128fe06e8a5a69fd19edb980878a723c. Its test-only
+readiness changes and historical evidence above are preserved by merging main
+into the existing PR140 branch, without rewriting its published commits.
+Original PR140 head0da97cd6 exact-head CI40076090617 SUCCESS was verified before
+this synchronization; it does not certify the new merged branch HEAD.
 
 Issue138 and Issue134 comment6381017272 supersede the research-only deferral of
 concurrent source reads. This candidate extracts shared read/commit code and adds
@@ -561,7 +579,10 @@ limited to1; measured cross-root speedup cannot be called single-root accelerati
 See docs/decisions/ADR-010-BOUNDED-FETCH-SEAM.md and
 docs/p0/P0-138-FETCH-PROTOTYPE.md for constraints, evidence and NOT_RUN gates.
 
-No schema, Kernel identity/trust/deletion rule or public transport changed. Final
-exact-head CI and Architect review remain required. F4-A budget/scheduling and
-F4-B Watch lifecycle are separate, not silently implemented. Issues134/138 stay
-OPEN, production flags/services unchanged, no real provider calls or deployment.
+No schema, Kernel identity/trust/deletion rule or public transport changed. New
+exact-head CI and independent Architect safety/ADR review remain required. PR140
+stays Draft and unmerged. F4-A budget/scheduling and F4-B Watch lifecycle are
+separate, not silently implemented. Same-root ordering, a runtime Worker Pool
+and provider request limits require subsequent bounded review and implementation.
+Issues134/138 stay OPEN; production flags/services unchanged, no real provider
+calls or deployment.
