@@ -59,6 +59,7 @@ type Config struct {
 	DiscoveryScope string
 	// Opt-in bounded first-discovery scheduling. No default or priority rewrite.
 	FirstDiscoveryEnabled bool
+	MirrorRevisitInterval time.Duration
 	Retry                 RetryPolicy
 }
 
@@ -66,6 +67,9 @@ type Config struct {
 // invalid: max_entries must be inside the accepted P0 hard cap and every retry
 // delay strictly positive.
 func (c Config) Validate() error {
+	if err := state.ValidateMirrorRevisit(c.MirrorRevisitInterval); err != nil {
+		return err
+	}
 	if c.DiscoveryScope != "" {
 		if err := state.ValidateScopeKey(c.DiscoveryScope); err != nil {
 			return fmt.Errorf("discovery_scope: %w", err)

@@ -537,6 +537,10 @@ func (s *Store) CompleteSuccessWithChildren(ctx context.Context, rootID, scopeKe
 // Empty/root-wide configuration retains NORMAL; a root mirror must not promote
 // the whole library. Parent completion and child priority merges remain atomic.
 func (s *Store) CompleteSuccessWithPrioritizedChildren(ctx context.Context, rootID, scopeKey string, claimedSignalSeq int64, children []string, priorityScope string, now time.Time) (state.DirtyScopeWork, error) {
+	return s.completeDiscovery(ctx, rootID, scopeKey, claimedSignalSeq, children, priorityScope, now, nil)
+}
+
+func (s *Store) completeDiscovery(ctx context.Context, rootID, scopeKey string, claimedSignalSeq int64, children []string, priorityScope string, now time.Time, policy *mirrorCompletion) (state.DirtyScopeWork, error) {
 	if priorityScope != "" {
 		if err := state.ValidateScopeKey(priorityScope); err != nil {
 			return state.DirtyScopeWork{}, err
@@ -581,13 +585,29 @@ func (s *Store) CompleteSuccessWithPrioritizedChildren(ctx context.Context, root
 		return state.DirtyScopeWork{}, ErrStaleClaim
 	}
 	claimedSources := wk.ClaimedSourceSet
+	if policy != nil {
+		policy.proofs, err = mirrorProofs(ctx, tx, rootID, scopeKey, children)
+		if err != nil {
+			return state.DirtyScopeWork{}, err
+		}
+	}
 	for _, child := range children {
 		priority := state.PriorityNormal
 		if priorityScope != "" && priorityScope != "/" && (child == priorityScope || strings.HasPrefix(child, priorityScope+"/")) {
 			priority = state.PriorityHigh
 		}
-		if _, _, err := lockWatchForUpdate(ctx, tx, rootID, child); err != nil {
+		watch, hasWatch, err := lockWatchForUpdate(ctx, tx, rootID, child)
+		if err != nil {
 			return state.DirtyScopeWork{}, err
+		}
+		if policy != nil {
+			skip, err := policy.child(ctx, tx, rootID, child, priority, watch, hasWatch, now)
+			if err != nil {
+				return state.DirtyScopeWork{}, err
+			}
+			if skip {
+				continue
+			}
 		}
 		if _, err := mergeSignalTx(ctx, tx, state.DirtySignal{RootID: rootID, ScopeKey: child,
 			Source: state.SourceRecovery, Reason: state.ReasonPossibleChange,

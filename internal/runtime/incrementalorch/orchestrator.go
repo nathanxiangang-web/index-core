@@ -104,7 +104,19 @@ func (r *Runner) RunCycle(ctx context.Context, cfg Config) (Result, error) {
 	}
 
 	limit := cfg.MaxDueWatchAttempts + 1
-	watches, err := r.store.ListDueWatches(orchCtx, res.ObservedAt, limit)
+	var watches []state.ScopeWatchState
+	var err error
+	if cfg.MirrorRevisitEnabled {
+		fair, ok := r.store.(interface {
+			ListDueWatchesWithMirrorFairness(context.Context, time.Time, int) ([]state.ScopeWatchState, error)
+		})
+		if !ok {
+			return r.stop(res, StopMaterializationError), errors.New("mirror revisit requires fair due-watch store")
+		}
+		watches, err = fair.ListDueWatchesWithMirrorFairness(orchCtx, res.ObservedAt, limit)
+	} else {
+		watches, err = r.store.ListDueWatches(orchCtx, res.ObservedAt, limit)
+	}
 	if err != nil {
 		if perr := ctx.Err(); perr != nil {
 			return r.stop(res, StopContextCancelled), perr
