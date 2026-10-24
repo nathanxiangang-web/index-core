@@ -115,7 +115,7 @@ jobs:
         run: |
           psql -h 127.0.0.1 -U indexcore -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE index138_test OWNER indexcore'
           psql -h 127.0.0.1 -U indexcore -d postgres -v ON_ERROR_STOP=1 -c "COMMENT ON DATABASE index138_test IS 'indexcore-issue138-owned-disposable'"
-          go test -race -p 1 -count=3 -timeout=3m -run '^TestIssue138' ./internal/runtime/scan
+          go test -race -p 1 -count=3 -timeout=3m -run '^TestIssue138' ./internal/runtime/scan ./internal/store/postgres
 
       - name: Issue138 2k eight-root delayed fetch proof (owned PostgreSQL 18)
         env:
@@ -123,3 +123,18 @@ jobs:
           INDEXCORE_ISSUE138_DISPOSABLE: owned-disposable-only
           INDEXCORE_ISSUE138_SCALE: '2000'
         run: go test -race -p 1 -count=1 -timeout=5m -run '^TestIssue138CapacityReadPrototype$' ./internal/runtime/scan
+
+      - name: Issue138 same-root ordered sibling delayed proof (owned PostgreSQL 18)
+        env:
+          INDEXCORE_TEST_DATABASE_URL: postgres://indexcore:indexcore@127.0.0.1:5432/index138_test?sslmode=disable
+          INDEXCORE_ISSUE138_DISPOSABLE: owned-disposable-only
+          INDEXCORE_ISSUE138_SAME_ROOT_POPULATION: '2000'
+          INDEXCORE_ISSUE138_SAME_ROOT_FETCHES: '16'
+        run: go test -race -p 1 -count=1 -timeout=5m -run '^TestIssue138SameRootCapacity$' ./internal/runtime/scan
+
+      - name: Issue138 50k dependency query projection (owned PostgreSQL 18)
+        env:
+          INDEXCORE_TEST_DATABASE_URL: postgres://indexcore:indexcore@127.0.0.1:5432/index138_test?sslmode=disable
+          INDEXCORE_ISSUE138_DISPOSABLE: owned-disposable-only
+          INDEXCORE_ISSUE138_DEPENDENCY_PLAN: '50000'
+        run: go test -race -p 1 -count=1 -timeout=3m -run '^TestIssue138DependencyQueryPlan$' ./internal/store/postgres

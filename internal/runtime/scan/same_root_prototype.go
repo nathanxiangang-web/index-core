@@ -169,7 +169,7 @@ func (p *SameRootPrototype) FetchBatch(ctx context.Context, claims []state.Dirty
 	for i, o := range obs {
 		c := claims[i]
 		f := postgres.ScopedFetchFence{Version: 2, Generation: o.root.CurrentGeneration, AdmissionFrontier: o.root.LatestAdmissionSeq, AdapterDigest: postgres.AdapterConfigDigest(o.binding), AdapterRevision: o.binding.Revision, ScopeKey: c.ScopeKey, TargetPath: o.target, ParentID: o.parentID, ClaimedSequence: *c.ClaimedSignalSeq, Attempt: c.AttemptCount, AttemptStartedAt: *c.LastAttemptStartedAt, Lineage: &postgres.ScopedReadLineage{Snapshots: ids, Rank: i}}
-		meta := map[string]any{"collector_kind": o.binding.CollectorKind, "path": o.config.Path, "scope": o.target, "mode": "scoped_refresh", "scoped_fetch_fence": f}
+		meta := map[string]any{"collector_kind": o.binding.CollectorKind, "path": o.config.Path, "scope": o.target, "mode": "scoped_refresh", "mirror_presence": o.config.MirrorPresence, "scoped_fetch_fence": f}
 		if o.config.MirrorPresence && o.raw.DirectoryTopologyDigest != "" {
 			meta["directory_coverage"] = domain.DirectoryCoverage{Version: 3, Path: o.target, Generation: o.root.CurrentGeneration, AdapterDigest: f.AdapterDigest, EntryCount: len(o.raw.Entries), TopologyDigest: o.raw.DirectoryTopologyDigest}
 		}
@@ -291,8 +291,9 @@ func (p *SameRootPrototype) Commit(ctx context.Context, b *SameRootBatch, rank i
 		return fail(postgres.ErrScopedFetchStale)
 	}
 	var meta struct {
-		Fence    postgres.ScopedFetchFence `json:"scoped_fetch_fence"`
-		Coverage *domain.DirectoryCoverage `json:"directory_coverage"`
+		Fence          postgres.ScopedFetchFence `json:"scoped_fetch_fence"`
+		Coverage       *domain.DirectoryCoverage `json:"directory_coverage"`
+		MirrorPresence bool                      `json:"mirror_presence"`
 	}
 	if err := json.Unmarshal(snap.Provenance, &meta); err != nil {
 		return fail(err)
@@ -301,7 +302,7 @@ func (p *SameRootPrototype) Commit(ctx context.Context, b *SameRootBatch, rank i
 	if err != nil {
 		return fail(err)
 	}
-	result := Result{SnapshotID: id, Outcome: out, MirrorPresence: meta.Coverage != nil}
+	result := Result{SnapshotID: id, Outcome: out, MirrorPresence: meta.MirrorPresence}
 	for _, e := range entries {
 		if e.IsDir {
 			result.ChildScopes = append(result.ChildScopes, strings.TrimSuffix(meta.Fence.ScopeKey, "/")+"/"+e.Name)

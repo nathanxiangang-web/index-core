@@ -597,3 +597,17 @@ narrow candidate recognizes ONLY matching parent cancellation; real errors remai
 fatal. See docs/p0/P0-138-MAINTENANCE-SHUTDOWN.md and the PR's exact-head receipt.
 Not Architect accepted or deployed. Same-root PR-A remains separate; PR-B/runtime
 pool and production enablement are not authorized by this prerequisite.
+
+## 2026-10-24 Issue138 PR-A same-root candidate
+
+Independent PR141/a49bbfec has exact-head CI40085684901 SUCCESS, but still needs
+Architect acceptance. This candidate is stacked on that branch for verification;
+its status is not silently promoted to merged main. No runtime pool is wired.
+ADR011 proposes immutable frozen DRAFT rosters with ordered same-root sibling
+reads, explicit prefix/dependency validation and unchanged source generation/time.
+See docs/p0/P0-138-SAME-ROOT-PROOF.md for contracts, reproduction and limits.
+Per-HEAD test/actual16/64/400 timing receipts belong to the associated PR, not
+an earlier green branch. Initial50k performance NO-GO is retained; filtered
+dependency queries must match the full-root reference, not weaken trust for speed.
+Candidate only, not Architect accepted, merged or deployed. Keep134/138 OPEN.
+PR-B runtime pool/rate/fallback/fairness and F4 remain separate acceptance gates.

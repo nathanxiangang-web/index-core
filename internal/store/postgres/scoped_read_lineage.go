@@ -150,10 +150,41 @@ func (s *Store) FreezeScopedReadBatch(ctx context.Context, inputs []FrozenScopeI
 // Read authoritative latest observations via LoadPriorResources, not its cache.
 // This intentionally rejects some independent work; it never weakens matching.
 func (s *Store) scopedDependencyDigest(ctx context.Context, q Querier, root, target string, entries []domain.SnapshotEntry) (string, error) {
-	prior, err := s.LoadPriorResources(ctx, q, root)
+	where, args := dependencyQuery(root, target, entries)
+	prior, err := s.loadPriorWhere(ctx, q, where, args...)
 	if err != nil {
 		return "", err
 	}
+	return dependencyDigest(prior, target, entries)
+}
+
+// Exactly the reference Go predicate below, pushed down before row transfer.
+// Separate no-ID SQL prevents a generic plan from retaining an unnecessary
+// global latest-provider-ID branch for the usual OpenList input.
+func dependencyQuery(root, target string, entries []domain.SnapshotEntry) (string, []any) {
+	hashes, ids, sizes := []string{}, []string{}, []int64{}
+	for _, e := range entries {
+		if e.ContentHash != nil {
+			hashes = append(hashes, *e.ContentHash)
+		}
+		if e.ProviderObjectID != nil {
+			ids = append(ids, *e.ProviderObjectID)
+		}
+		if e.Size != nil {
+			sizes = append(sizes, *e.Size)
+		}
+	}
+	canonical := `(c.canonical_path=$2::text OR pg_catalog.starts_with(c.canonical_path,$2::text||'/') OR pg_catalog.starts_with($2::text,c.canonical_path||'/') OR c.content_hash=ANY($3::text[]) OR c.size=ANY($4::bigint[]) OR c.removal_evidence_state<>'NONE')`
+	where := "c.root_id=$1::uuid AND " + canonical
+	args := []any{root, target, hashes, sizes}
+	if len(ids) > 0 {
+		where = "c.root_id=$1::uuid AND (" + canonical + " OR o.provider_object_id=ANY($5::text[]))"
+		args = append(args, ids)
+	}
+	return where, args
+}
+
+func dependencyDigest(prior []reconcile.PriorResource, target string, entries []domain.SnapshotEntry) (string, error) {
 	hashes, ids, sizes := map[string]bool{}, map[string]bool{}, map[int64]bool{}
 	for _, e := range entries {
 		if e.ContentHash != nil {

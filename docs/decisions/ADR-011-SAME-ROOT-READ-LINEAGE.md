@@ -46,9 +46,12 @@ same-hash/same-size/provider-ID candidates, and all non-NONE removal evidence.
 It uses the latest authoritative identity observation, not the mutable projection.
 Policy tuple revision is captured too. A conservative superset is intentional:
 an unchanged dependency is necessary, not a promise of maximal concurrency.
-The first implementation loads the Root prior inventory to compute each digest;
-Stage1/Stage2 validation is NOT O(1). This costs CPU, memory and Root-lock time;
-population measurements must expose it rather than promise arbitrary scalability.
+The initial full-prior digest implementation failed the50k speed gate(1.1796x).
+Predicate pushdown now transfers the SAME dependencies rather than all Root rows;
+normal/generic plans are checked against the full-root Go reference. Kernel prior
+loading is unchanged. Stage1/Stage2 are still NOT O(1): SQL may scan the inventory
+and large candidate/missing/tombstone sets remain expensive. Population evidence
+must expose CPU/memory/Root-lock costs, not promise arbitrary scalability.
 Only sibling cohorts are currently eligible; mixed parent/child trees are not
 silently represented by the flat sibling performance fixture.
 

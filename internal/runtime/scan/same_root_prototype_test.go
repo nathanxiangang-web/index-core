@@ -92,6 +92,10 @@ func s138Setup(t *testing.T, n, workers int, mirror bool) (*postgres.Store, *ali
 				}
 			}
 			if code := src.code.Load(); code != 200 {
+				if code == -1 {
+					io.WriteString(w, "invalid-json")
+					return
+				}
 				json.NewEncoder(w).Encode(map[string]any{"code": code, "data": nil})
 				return
 			}
@@ -226,7 +230,7 @@ func TestIssue138SameRootConflictingIdentityRefusesOldSibling(t *testing.T) {
 }
 
 func TestIssue138SameRootChangedStateFailsClosed(t *testing.T) {
-	for _, change := range []string{"adapter-ABA", "policy-ABA", "claim-recovery", "parent-replaced", "unexpected-admission", "expired", "stage2-dependency"} {
+	for _, change := range []string{"adapter-ABA", "policy-ABA", "claim-recovery", "claim-new-epoch", "root-deprecated", "parent-replaced", "unexpected-admission", "expired", "stage2-dependency"} {
 		t.Run(change, func(t *testing.T) {
 			st, _, root, p, claims, _ := s138Setup(t, 2, 2, true)
 			b, err := p.FetchBatch(context.Background(), claims)
@@ -247,6 +251,15 @@ func TestIssue138SameRootChangedStateFailsClosed(t *testing.T) {
 				}
 			case "claim-recovery":
 				if _, err := st.RecoverStaleInflight(context.Background(), root, time.Now().UTC()); err != nil {
+					t.Fatal(err)
+				}
+			case "claim-new-epoch":
+				if _, err := st.RecoverStaleInflight(context.Background(), root, time.Now().UTC()); err != nil {
+					t.Fatal(err)
+				}
+				f138Claim(t, st, root, claims[0].ScopeKey)
+			case "root-deprecated":
+				if _, err := st.TransitionRootLifecycle(context.Background(), root, domain.RootDeprecated); err != nil {
 					t.Fatal(err)
 				}
 			case "parent-replaced":

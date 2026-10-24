@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -28,6 +31,109 @@ func s138Roster(t *testing.T, st *postgres.Store, checkpoint string) []string {
 		t.Fatal(err)
 	}
 	return meta.Fence.Lineage.Snapshots
+}
+
+func TestIssue138SameRootNonMutatingAndNoopPrefix(t *testing.T) {
+	st, m, root, p, claims, _ := s138Setup(t, 2, 2, true)
+	for i, c := range claims {
+		m.set(c.ScopeKey, fileEntry("late.bin", int64(100+i), fmt.Sprintf("hash-%d", i)))
+		if _, err := p4ScanService(st).ScanScope(context.Background(), root, c.ScopeKey, 1000); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, _ := st.GetRoot(context.Background(), st.Pool(), root)
+	journal := f138Count(t, st, "index_journal_event")
+	for round := 0; round < 2; round++ {
+		if round > 0 {
+			for i, c := range claims {
+				claims[i] = f138Claim(t, st, root, c.ScopeKey)
+			}
+		}
+		b, err := p.FetchBatch(context.Background(), claims)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rank, c := range claims {
+			res, err := p.Commit(context.Background(), b, rank)
+			if err != nil {
+				b.Close()
+				t.Fatal(err)
+			}
+			if res.Outcome.Mutated || res.Outcome.AppliedGeneration != before.CurrentGeneration {
+				b.Close()
+				t.Fatal("invented generation for non-mutating prefix", res)
+			}
+			if round == 1 && res.Outcome.Status != domain.AdmissionNoop {
+				b.Close()
+				t.Fatal("expected exact NOOP receipt", res)
+			}
+			s138Complete(t, st, c)
+		}
+		b.Close()
+	}
+	if f138Count(t, st, "index_journal_event") != journal {
+		t.Fatal("NOOP prefix duplicated Journal")
+	}
+}
+
+func TestIssue138SameRootPeerFailureLeavesNoDraft(t *testing.T) {
+	for _, failure := range []int64{500, -1, 0} {
+		t.Run(fmt.Sprintf("mode=%d", failure), func(t *testing.T) {
+			st, _, _, _, claims, src := s138Setup(t, 2, 2, true)
+			p, err := scan.NewSameRootPrototype(scan.New(st, "", "", 200*time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil))), 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if failure == 0 {
+				src.delay.Store(int64(time.Second))
+			} else {
+				src.code.Store(failure)
+			}
+			before := f138Count(t, st, "index_snapshot")
+			if _, err := p.FetchBatch(context.Background(), claims); err == nil {
+				t.Fatal("failed peer froze input")
+			}
+			deadline := time.Now().Add(3 * time.Second)
+			for src.active.Load() != 0 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			if f138Count(t, st, "index_snapshot") != before || src.active.Load() != 0 {
+				t.Fatal("partial input or undrained peer", src.active.Load())
+			}
+		})
+	}
+}
+
+func TestIssue138SameRootCompetingBatchCannotConsumeClaimTwice(t *testing.T) {
+	st, _, _, p, claims, _ := s138Setup(t, 2, 2, true)
+	b, err := p.FetchBatch(context.Background(), claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	other, err := scan.NewSameRootPrototype(p4ScanService(st), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Commit(context.Background(), b, 0); err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := other.FetchBatch(context.Background(), claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer duplicate.Close()
+	before := f138Count(t, st, "index_journal_event")
+	admissions := f138Count(t, st, "index_admission")
+	if _, err := other.Commit(context.Background(), duplicate, 0); !errors.Is(err, postgres.ErrScopedFetchStale) {
+		t.Fatal("claim consumed twice", err)
+	}
+	if f138Count(t, st, "index_journal_event") != before {
+		t.Fatal("duplicate input wrote Q8")
+	}
+	if f138Count(t, st, "index_admission") != admissions {
+		t.Fatal("duplicate claim allocated a new admission")
+	}
 }
 
 func TestIssue138SameRootResumeUnacknowledgedCommit(t *testing.T) {
@@ -198,7 +304,7 @@ func TestIssue138SameRootVirtualEmptyCannotRemoveRealChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, c := range claims {
-		if _, err := p.Commit(context.Background(), b, i); err != nil {
+		if res, err := p.Commit(context.Background(), b, i); err != nil || !res.MirrorPresence {
 			t.Fatal(err)
 		}
 		s138Complete(t, st, c)
