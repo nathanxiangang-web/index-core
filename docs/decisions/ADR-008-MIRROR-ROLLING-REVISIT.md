@@ -1,7 +1,8 @@
-# ADR008 proposal: coalesce mirror discovery, retain durable rolling checks
+# ADR008: coalesce mirror discovery, retain durable rolling checks
 
-Status: F2 candidate under Issue134, not accepted or deployed. Base is F1 merged
-main f9bbc4e5a98965e6c7773d2453823061bd4b1355; merged-main CI39979311690 passed.
+Status: F2 default-OFF code integration accepted in PR136 at7c54a47,
+Architect comment6380413345; merged main db8f301. Exact-head CI40055775390
+and merged-main CI40066617849 SUCCESS verified. NOT production-enabled.
 ADR004/005/006/007, P2 Work merge semantics and all Kernel invariants remain.
 
 ## Responsibilities and dependency graph

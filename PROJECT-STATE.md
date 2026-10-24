@@ -528,3 +528,21 @@ and bounded due-watch fairness. ADR008 is proposed, not accepted. Both F1 and F2
 remain default-off. No production restart/configuration change, real provider
 request, canonical repair, migration or unrelated PR integration is performed.
 Await F2 PR exact-head CI and Architect review; do not merge or start F3 yet.
+
+## 2026-10-24 Issue134 F3 design and isolated capacity (latest scoped update)
+
+F2 default-OFF code integration accepted in PR136/Architect6380413345; merged
+main db8f301 and merged-main CI40066617849 SUCCESS verified before F3 branching.
+Production F1/F2 flags remain unchanged; no live binary/configuration was touched.
+
+F3 is design/measurement only (ADR009 proposal), not a scheduler implementation.
+Owned PG18+HTTP fixtures at2k/20k/50k passed bounded sampled correctness within
+fixed caps, but fixed120s all-directory capacity is NOT SATISFIED: service falls
+46.123->38.054->30.920 scopes/min and overdue Watch debt stays large. Preloaded
+directory rows are not full traversals;492/500 changed files remain unobserved
+in the50k finite trace. Watch lifecycle gaps and full-root query costs are
+documented, not silently repaired. See docs/p0/P0-134-F3-CAPACITY-INVESTIGATION.md.
+
+Await F3 PR exact-head CI and Architect review. No automatic retirement, runtime
+adaptation, concurrent readers, production canary, full20k/50k soak, PR126/#133
+work or Issue134 closure is authorized by this investigation.
