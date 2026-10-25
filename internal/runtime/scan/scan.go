@@ -18,6 +18,7 @@ import (
 	"github.com/nathanxiangang-web/index-core/internal/collector/rclone"
 	"github.com/nathanxiangang-web/index-core/internal/domain"
 	"github.com/nathanxiangang-web/index-core/internal/kernel/reconcile"
+	"github.com/nathanxiangang-web/index-core/internal/sourcebudget"
 	"github.com/nathanxiangang-web/index-core/internal/store/postgres"
 )
 
@@ -28,6 +29,38 @@ type Service struct {
 	rcloneConfig string
 	timeout      time.Duration
 	logger       *slog.Logger
+	sourceBudget *sourcebudget.Manager
+}
+
+// WithSourceBudget returns an immutable service clone before actor startup.
+func (s *Service) WithSourceBudget(b *sourcebudget.Manager) *Service {
+	c := *s
+	c.sourceBudget = b
+	return &c
+}
+
+// SourceReadyAt reads configuration only; no credential lookup or HTTP call.
+// Invalid source configuration still goes through normal typed execution failure.
+func (s *Service) SourceReadyAt(ctx context.Context, root string) (time.Time, error) {
+	if s.sourceBudget == nil {
+		return time.Time{}, nil
+	}
+	a, e := s.store.GetAdapterConfig(ctx, root)
+	if errors.Is(e, postgres.ErrNotFound) {
+		return time.Time{}, nil
+	}
+	if e != nil {
+		return time.Time{}, e
+	}
+	var c adapterConfig
+	if json.Unmarshal(a.Config, &c) != nil || (a.CollectorKind != "alist" && a.CollectorKind != "openlist") {
+		return time.Time{}, nil
+	}
+	at, e := s.sourceBudget.ReadyAt(root, c.BaseURL, c.RequestBudgetGroup)
+	if errors.Is(e, sourcebudget.ErrEndpoint) {
+		return time.Time{}, nil
+	}
+	return at, e
 }
 
 // New builds a scan service.
@@ -51,6 +84,7 @@ type adapterConfig struct {
 	TopologyTokenEnv    string `json:"topology_token_env"`
 	TopologyUsernameEnv string `json:"topology_username_env"`
 	TopologyPasswordEnv string `json:"topology_password_env"`
+	RequestBudgetGroup  string `json:"request_budget_group,omitempty"`
 }
 
 // collector builds the provider-neutral Collector for a root's adapter kind.

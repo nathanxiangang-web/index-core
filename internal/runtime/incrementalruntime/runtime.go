@@ -323,16 +323,24 @@ func (r *Runtime) runOnce(ctx context.Context) (backlog bool, contention bool, e
 		return false, false, &runtimeFatalError{phase: phaseCycle, errorClass: "executor", cause: cerr}
 	}
 
-	if res.Executor.InterruptedInFlight &&
-		res.Executor.Last.ClaimedSignalSeq > 0 &&
-		res.Executor.Last.RootID != "" {
-		n, rerr := r.store.RecoverStaleInflight(ctx, res.Executor.Last.RootID, r.now())
+	roots := res.Executor.InterruptedRoots
+	if len(roots) > 8 {
+		return false, false, &runtimeFatalError{phase: phaseInterruptedRecovery, errorClass: "invalid_root_bound", cause: errors.New("interrupted roots exceeded bound")}
+	}
+	if res.Executor.InterruptedInFlight && len(roots) == 0 && res.Executor.Last.ClaimedSignalSeq > 0 && res.Executor.Last.RootID != "" {
+		roots = []string{res.Executor.Last.RootID}
+	}
+	for _, root := range roots {
+		if !res.Executor.InterruptedInFlight || root == "" {
+			return false, false, &runtimeFatalError{phase: phaseInterruptedRecovery, errorClass: "invalid_root", cause: errors.New("invalid interrupted root")}
+		}
+		n, rerr := r.store.RecoverStaleInflight(ctx, root, r.now())
 		if rerr != nil {
 			return false, false, &runtimeFatalError{phase: phaseInterruptedRecovery, errorClass: "store", cause: rerr}
 		}
 		if n > 0 {
 			r.logger.Info("incremental_inflight_recovered",
-				"phase", "interrupted", "root_id", res.Executor.Last.RootID, "recovered", n)
+				"phase", "interrupted", "root_id", root, "recovered", n)
 		}
 	}
 

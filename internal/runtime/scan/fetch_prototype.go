@@ -15,7 +15,7 @@ import (
 var ErrFetchBusy = errors.New("fetch prototype capacity or root already reserved")
 var ErrFetchConsumed = errors.New("fetch observation is invalid, foreign or consumed")
 
-// FetchPrototype is an unwired, bounded Issue138 experiment, NOT a runtime pool.
+// FetchPrototype owns the accepted bounded immutable-observation seam, NOT a scheduler.
 // One observation per root prevents same-root speculative generation rebasing.
 // Claims/completions remain the caller's existing durable P3 responsibility.
 type FetchPrototype struct {

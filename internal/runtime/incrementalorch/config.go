@@ -20,6 +20,7 @@ const (
 
 // Config is the finite budget for one manual orchestration cycle.
 type Config struct {
+	ReadWorkers          int
 	MirrorRevisitEnabled bool
 	MaxDueWatchAttempts  int
 	MaxExecuteItems      int
@@ -36,9 +37,16 @@ func (c Config) Validate() error {
 		return fmt.Errorf("orchestration: max_due_watch_attempts must be within [1, %d], got %d",
 			MaxDueWatchAttemptsCap, c.MaxDueWatchAttempts)
 	}
-	if c.MaxExecuteItems < 1 || c.MaxExecuteItems > MaxExecuteItemsCap {
+	cap := MaxExecuteItemsCap
+	if c.ReadWorkers != 0 && c.ReadWorkers != 1 {
+		if c.ReadWorkers != 2 && c.ReadWorkers != 4 && c.ReadWorkers != 8 {
+			return fmt.Errorf("invalid pool reader count")
+		}
+		cap = 8
+	}
+	if c.MaxExecuteItems < 1 || c.MaxExecuteItems > cap {
 		return fmt.Errorf("orchestration: max_execute_items must be within [1, %d], got %d",
-			MaxExecuteItemsCap, c.MaxExecuteItems)
+			cap, c.MaxExecuteItems)
 	}
 	if c.MaxWallTime <= 0 || c.MaxWallTime > MaxWallTimeCap {
 		return fmt.Errorf("orchestration: max_wall_time must be within (0, %s], got %s",
