@@ -611,3 +611,20 @@ an earlier green branch. Initial50k performance NO-GO is retained; filtered
 dependency queries must match the full-root reference, not weaken trust for speed.
 Candidate only, not Architect accepted, merged or deployed. Keep134/138 OPEN.
 PR-B runtime pool/rate/fallback/fairness and F4 remain separate acceptance gates.
+
+## 2026-10-25 Issue138 PR-A integrated; PR-B runtime candidate
+
+Architect review6395936509 accepted PR142 for prototype integration only.
+After prerequisite merge-main CI40179782676 SUCCESS, exact-head guarded squash
+merge produced6e0a128; its merged-main CI40181118395 is also SUCCESS.
+The earlier stacked/candidate descriptions above are retained historical evidence.
+
+PR-B is a separate runtime candidate: default1/opt-in2,4,8,shared HTTP source
+budgets,typed429 cooldown/pre-claim skips,fair Root slot,claim-fenced serial
+fallback,ordered sibling commits and all-root interrupted recovery. No Kernel
+identity/removal relaxation,migration,source write or production switch.
+See ADR012 and docs/p0/P0-138-RUNTIME-READ-POOL.md for module boundaries,configuration,
+rate limitations,verification and NOT_RUN gates. Per-HEAD CI/runtime timing remains
+in the associated PR receipt; implementation is not architecture acceptance.
+134/138 remain OPEN. F4/Watch lifecycle,real upstream limits,long churn and canary
+remain independent; no production flags/deploy,real provider call or126/133 action.

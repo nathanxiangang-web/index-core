@@ -12,6 +12,7 @@ import (
 	"github.com/nathanxiangang-web/index-core/internal/runtime/incrementalorch"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/incrementalruntime"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/scan"
+	"github.com/nathanxiangang-web/index-core/internal/sourcebudget"
 	"github.com/nathanxiangang-web/index-core/internal/store/postgres"
 	"github.com/nathanxiangang-web/index-core/internal/transport/hintapi"
 )
@@ -20,8 +21,13 @@ import (
 // hybrid runtime. It is a package-level seam so tests can inject a controlled
 // cycle runner. The P4/P6 prototype caps stay at their accepted defaults.
 var buildIncrementalCycle = func(st *postgres.Store, cfg config.Config, logger *slog.Logger) (incrementalruntime.CycleRunner, error) {
+	budget, err := sourcebudget.New(cfg.SourceBudget())
+	if err != nil {
+		return nil, err
+	}
 	scanner := scan.New(st, cfg.RclonePath, cfg.RcloneConfig, cfg.ScanTimeout, logger)
-	one, err := incrementalexec.New(st, scanner, incrementalexec.Config{
+	scanner = scanner.WithSourceBudget(budget)
+	one, err := incrementalexec.New(st, scan.NewClaimedScanner(scanner), incrementalexec.Config{
 		MaxEntriesPerScope:    1000,
 		DiscoveryScope:        cfg.IncrementalDiscoveryScope,
 		FirstDiscoveryEnabled: cfg.IncrementalFirstDiscovery,
@@ -34,6 +40,15 @@ var buildIncrementalCycle = func(st *postgres.Store, cfg config.Config, logger *
 	}, nil)
 	if err != nil {
 		return nil, err
+	}
+	one = one.WithRetryFloor(budget.RootUntil)
+	one = one.WithSourceAvailability(scanner.SourceReadyAt)
+	if cfg.IncrementalReadWorkers > 1 {
+		pooled, e := incrementalexec.NewReadPoolRunner(one, scanner, cfg.IncrementalReadWorkers, logger)
+		if e != nil {
+			return nil, e
+		}
+		return incrementalorch.NewRunner(st, pooled, nil)
 	}
 	p5, err := incrementalexec.NewCycleRunner(one)
 	if err != nil {
@@ -59,6 +74,10 @@ var newIncrementalRuntime = func(store incrementalruntime.MaintenanceStore, cycl
 func runtimeConfig(cfg config.Config) incrementalruntime.Config {
 	cycle := incrementalruntime.DefaultCycleConfig()
 	cycle.MirrorRevisitEnabled = cfg.IncrementalMirrorRevisit > 0
+	if cfg.IncrementalReadWorkers > 1 {
+		cycle.ReadWorkers = cfg.IncrementalReadWorkers
+		cycle.MaxExecuteItems = 8
+	}
 	return incrementalruntime.Config{
 		WakeInterval:       cfg.IncrementalWakeInterval,
 		MaxRetryPromotions: incrementalruntime.MaxRetryPromotionsCap,

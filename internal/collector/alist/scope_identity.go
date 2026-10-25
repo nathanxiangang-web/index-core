@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/nathanxiangang-web/index-core/internal/sourcebudget"
 	"io"
 	"net/http"
 	"strings"
@@ -21,6 +23,9 @@ func (a Adapter) verifyScopedIdentity(ctx context.Context, token string) error {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		if errors.Is(err, sourcebudget.ErrDeferred) {
+			return scopedWrap(ScopedThrottled, sourcebudget.ErrDeferred)
+		}
 		if ctx.Err() != nil {
 			return scopedWrap(ScopedTransientProvider, ctx.Err())
 		}
@@ -61,6 +66,9 @@ func (a Adapter) postScoped(ctx context.Context, endpoint, token string, body []
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		if errors.Is(err, sourcebudget.ErrDeferred) {
+			return scopedWrap(ScopedThrottled, sourcebudget.ErrDeferred)
+		}
 		if ctx.Err() != nil {
 			return scopedWrap(ScopedTransientProvider, ctx.Err())
 		}

@@ -25,6 +25,7 @@ type OneShotExecutor interface {
 
 // CycleConfig is the finite budget for one bounded cycle.
 type CycleConfig struct {
+	ReadWorkers int //0/1 legacy; explicit2/4/8 allows at most8 pool items
 	MaxItems    int
 	MaxWallTime time.Duration
 }
@@ -32,8 +33,15 @@ type CycleConfig struct {
 // Validate enforces the prototype hard caps. An invalid config fails before the
 // first ExecuteOne.
 func (c CycleConfig) Validate() error {
-	if c.MaxItems < 1 || c.MaxItems > MaxCycleItems {
-		return fmt.Errorf("cycle: max_items must be within [1, %d], got %d", MaxCycleItems, c.MaxItems)
+	cap := MaxCycleItems
+	if c.ReadWorkers != 0 && c.ReadWorkers != 1 {
+		if c.ReadWorkers != 2 && c.ReadWorkers != 4 && c.ReadWorkers != 8 {
+			return errors.New("invalid pool reader count")
+		}
+		cap = 8
+	}
+	if c.MaxItems < 1 || c.MaxItems > cap {
+		return fmt.Errorf("cycle: max_items must be within [1, %d], got %d", cap, c.MaxItems)
 	}
 	if c.MaxWallTime <= 0 || c.MaxWallTime > MaxCycleWallTime {
 		return fmt.Errorf("cycle: max_wall_time must be within (0, %s], got %s", MaxCycleWallTime, c.MaxWallTime)
@@ -74,6 +82,7 @@ type CycleResult struct {
 	// potentially IN_FLIGHT. A selected-but-unclaimed item, or a budget that
 	// expires between items, reports false.
 	InterruptedInFlight bool
+	InterruptedRoots    []string //bounded pool-owned roots; only meaningful after reader join
 }
 
 // CycleRunner drains a bounded number of already-eligible items by repeatedly

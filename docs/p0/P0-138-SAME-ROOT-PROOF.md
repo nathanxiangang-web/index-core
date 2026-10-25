@@ -1,5 +1,10 @@
 # Issue138 PR-A: same-root frozen-read lineage candidate
 
+Subsequent checkpoint: PR141 merged896c180; its merge CI40179782676 SUCCESS.
+PR142 accepted for prototype integration by review6395936509, merged6e0a128;
+merge CI40181118395 SUCCESS. The stacked-branch description below is historical
+R9 evidence, not the current integration status. ADR012/runtime remains separate.
+
 This is the module contract, reproducibility guide and evidence interpretation,
 NOT Architect acceptance, runtime enablement or a production speedup claim.
 Per-HEAD CI, raw timing receipts and final execution status are recorded in the

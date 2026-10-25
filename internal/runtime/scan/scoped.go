@@ -13,6 +13,7 @@ import (
 	"github.com/nathanxiangang-web/index-core/internal/collector/alist"
 	"github.com/nathanxiangang-web/index-core/internal/domain"
 	"github.com/nathanxiangang-web/index-core/internal/kernel/reconcile"
+	"github.com/nathanxiangang-web/index-core/internal/sourcebudget"
 	"github.com/nathanxiangang-web/index-core/internal/store/postgres"
 )
 
@@ -133,6 +134,12 @@ func (s *Service) readScope(ctx context.Context, rootID, scope string, maxEntrie
 		Password: os.Getenv(ac.PasswordEnv),
 		Timeout:  s.timeout,
 	}
+	if s.sourceBudget != nil {
+		col.HTTP, err = s.sourceBudget.Client(rootID, ac.BaseURL, ac.RequestBudgetGroup)
+		if err != nil {
+			return nil, scopeWrap(ScopeFailureConfigInvalid, err)
+		}
+	}
 	if ac.MirrorPresence {
 		if ac.ExpectedBasePath == "" {
 			return nil, scopeErrorf(ScopeFailureConfigInvalid, "mirror requires expected_base_path")
@@ -144,6 +151,13 @@ func (s *Service) readScope(ctx context.Context, rootID, scope string, maxEntrie
 	}
 	raw, err := col.ScanScope(ctx, target, maxEntries)
 	if err != nil {
+		var se *alist.ScopedError
+		if s.sourceBudget != nil && errors.As(err, &se) && se.Kind == alist.ScopedThrottled {
+			group, _ := sourcebudget.Group(ac.BaseURL, ac.RequestBudgetGroup)
+			if !s.sourceBudget.RootUntil(rootID).After(time.Now()) {
+				s.sourceBudget.Penalize(rootID, group, 0)
+			}
+		}
 		// Fail closed: no Snapshot is created on any refresh/permission/
 		// truncation/overflow error. The classification is typed, never string
 		// parsed.
@@ -156,6 +170,9 @@ func (s *Service) readScope(ctx context.Context, rootID, scope string, maxEntrie
 
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if s.sourceBudget != nil {
+		s.sourceBudget.Succeeded(ac.BaseURL, ac.RequestBudgetGroup)
 	}
 	return &scopeObservation{root: root, binding: acfg, config: ac, raw: raw, rel: rel, target: target,
 		parentID: parentID, maxEntries: maxEntries, started: start, observedAt: time.Now().UTC().Truncate(time.Microsecond)}, nil

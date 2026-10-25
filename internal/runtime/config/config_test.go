@@ -25,6 +25,12 @@ func TestValidateRejectsInvalid(t *testing.T) {
 		"zero scan timeout": {DatabaseURL: "x", HTTPAddr: "127.0.0.1:1", MaxConcurrentRoots: 1, ScanTimeout: 0, ShutdownTimeout: 1, LogFormat: "text", LogLevel: "info"},
 	}
 	for name, c := range cases {
+		// Keep these legacy cases testing their intended invalid field, rather
+		// than failing earlier on a newly added, omitted source policy field.
+		c.IncrementalReadWorkers = 1
+		c.SourceGlobalInterval = Defaults().SourceGlobalInterval
+		c.SourceRootInterval = Defaults().SourceRootInterval
+		c.SourceProviderInterval = Defaults().SourceProviderInterval
 		if err := c.Validate(); err == nil {
 			t.Errorf("%s: expected validation error", name)
 		}

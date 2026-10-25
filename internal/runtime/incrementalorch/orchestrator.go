@@ -175,6 +175,7 @@ func (r *Runner) RunCycle(ctx context.Context, cfg Config) (Result, error) {
 
 	res.ExecutorRan = true
 	cycleRes, cerr := r.exec.Run(orchCtx, incrementalexec.CycleConfig{
+		ReadWorkers: cfg.ReadWorkers,
 		MaxItems:    cfg.MaxExecuteItems,
 		MaxWallTime: cfg.MaxWallTime,
 	})

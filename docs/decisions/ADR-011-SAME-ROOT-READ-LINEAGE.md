@@ -1,6 +1,8 @@
 # ADR011 proposal: frozen same-root read lineage
 
-Status: Issue138 PR-A CANDIDATE, NOT Architect accepted or runtime-enabled.
+Status: PR-A accepted for prototype integration only (review6395936509), merged
+as6e0a128. Merge CI40181118395 SUCCESS independently checked. This acceptance
+does NOT cover runtime activation, provider rates, production or ADR012.
 Baseline main562a852, merged-main CI40081586002 SUCCESS verified before coding.
 
 ## Modules and dependencies

@@ -17,8 +17,22 @@ import (
 
 var ErrReadOrder = errors.New("same-root frozen slot is not the next ordered input")
 
-// SameRootPrototype is explicitly unwired. Its bounded barrier experiment is
-// NOT the application's Worker Pool, a scheduler, or a provider request limiter.
+// BatchReadError identifies actual failures, not successfully read/canceled peers.
+// Runtime completion must never copy one bad scope's permanent class to peers.
+type BatchReadFailure struct {
+	Scope string
+	Cause error
+}
+type BatchReadError struct {
+	Failures []BatchReadFailure
+	Cause    error
+}
+
+func (e *BatchReadError) Error() string { return "same-root source cohort failed" }
+func (e *BatchReadError) Unwrap() error { return e.Cause }
+
+// SameRootPrototype owns the accepted bounded sibling barrier. The external
+// runtime cycle owns lifecycle, fair claims, budgets and serial fallback.
 type SameRootPrototype struct {
 	s       *Service
 	workers int
@@ -153,9 +167,15 @@ func (p *SameRootPrototype) FetchBatch(ctx context.Context, claims []state.Dirty
 		}()
 	}
 	wg.Wait()
+	failures := []BatchReadFailure{}
+	for i, err := range errs {
+		if err != nil && !errors.Is(err, context.Canceled) {
+			failures = append(failures, BatchReadFailure{claims[i].ScopeKey, err})
+		}
+	}
 	for _, err := range errs {
 		if err != nil && !errors.Is(err, context.Canceled) {
-			return nil, err
+			return nil, &BatchReadError{failures, err}
 		}
 	}
 	if err := ctx.Err(); err != nil {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/nathanxiangang-web/index-core/internal/incremental/state"
+	"github.com/nathanxiangang-web/index-core/internal/sourcebudget"
 )
 
 // Config is the runtime configuration for the indexcore process.
@@ -41,6 +42,10 @@ type Config struct {
 	IncrementalDiscoveryScope string        `json:"incremental_discovery_scope,omitempty"`
 	IncrementalFirstDiscovery bool          `json:"incremental_first_discovery"`
 	IncrementalMirrorRevisit  time.Duration `json:"incremental_mirror_revisit"`
+	IncrementalReadWorkers    int           `json:"incremental_read_workers"`
+	SourceGlobalInterval      time.Duration `json:"source_global_interval"`
+	SourceRootInterval        time.Duration `json:"source_root_interval"`
+	SourceProviderInterval    time.Duration `json:"source_provider_interval"`
 }
 
 // Defaults returns the default configuration (loopback HTTP, safe limits).
@@ -55,12 +60,32 @@ func Defaults() Config {
 		LogFormat:          "text",
 
 		IncrementalWakeInterval: 5 * time.Second,
+		IncrementalReadWorkers:  1,
+		SourceGlobalInterval:    100 * time.Millisecond,
+		SourceRootInterval:      100 * time.Millisecond,
+		SourceProviderInterval:  100 * time.Millisecond,
 	}
 }
 
 // Load reads configuration from the environment on top of Defaults.
 func Load() (Config, error) {
 	c := Defaults()
+	if v := os.Getenv("INDEXCORE_INCREMENTAL_READ_WORKERS"); v != "" {
+		n, e := strconv.Atoi(v)
+		if e != nil {
+			return Config{}, fmt.Errorf("INDEXCORE_INCREMENTAL_READ_WORKERS: %w", e)
+		}
+		c.IncrementalReadWorkers = n
+	}
+	for name, dest := range map[string]*time.Duration{"INDEXCORE_SOURCE_GLOBAL_INTERVAL": &c.SourceGlobalInterval, "INDEXCORE_SOURCE_ROOT_INTERVAL": &c.SourceRootInterval, "INDEXCORE_SOURCE_PROVIDER_INTERVAL": &c.SourceProviderInterval} {
+		if v := os.Getenv(name); v != "" {
+			d, e := time.ParseDuration(v)
+			if e != nil {
+				return Config{}, fmt.Errorf("%s: %w", name, e)
+			}
+			*dest = d
+		}
+	}
 	c.DatabaseURL = os.Getenv("INDEXCORE_DATABASE_URL")
 	if v := os.Getenv("INDEXCORE_HTTP_ADDR"); v != "" {
 		c.HTTPAddr = v
@@ -132,6 +157,10 @@ func Load() (Config, error) {
 
 // RegisterFlags binds the configuration onto a flag set. Flags override env.
 func (c *Config) RegisterFlags(fs *flag.FlagSet) {
+	fs.IntVar(&c.IncrementalReadWorkers, "incremental-read-workers", c.IncrementalReadWorkers, "incremental source readers:1(default serial),2,4,8 opt-in")
+	fs.DurationVar(&c.SourceGlobalInterval, "source-global-interval", c.SourceGlobalInterval, "global incremental HTTP minimum spacing")
+	fs.DurationVar(&c.SourceRootInterval, "source-root-interval", c.SourceRootInterval, "per-Root incremental HTTP minimum spacing")
+	fs.DurationVar(&c.SourceProviderInterval, "source-provider-interval", c.SourceProviderInterval, "per-source-group incremental HTTP minimum spacing")
 	fs.StringVar(&c.DatabaseURL, "database-url", c.DatabaseURL, "PostgreSQL DSN (or INDEXCORE_DATABASE_URL)")
 	fs.StringVar(&c.HTTPAddr, "http-addr", c.HTTPAddr, "HTTP listen address (loopback by default)")
 	fs.StringVar(&c.RclonePath, "rclone-path", c.RclonePath, "path to the rclone executable")
@@ -166,6 +195,12 @@ func (c Config) LoopbackOnly() bool {
 
 // Validate rejects an invalid configuration before any background work starts.
 func (c Config) Validate() error {
+	if c.IncrementalReadWorkers != 1 && c.IncrementalReadWorkers != 2 && c.IncrementalReadWorkers != 4 && c.IncrementalReadWorkers != 8 {
+		return errors.New("incremental-read-workers must be1/2/4/8")
+	}
+	if err := c.SourceBudget().Validate(); err != nil {
+		return err
+	}
 	if err := state.ValidateMirrorRevisit(c.IncrementalMirrorRevisit); err != nil {
 		return err
 	}
@@ -214,6 +249,14 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func (c Config) SourceBudget() sourcebudget.Config {
+	b := sourcebudget.Defaults()
+	b.Global = c.SourceGlobalInterval
+	b.Root = c.SourceRootInterval
+	b.Provider = c.SourceProviderInterval
+	return b
 }
 
 const (

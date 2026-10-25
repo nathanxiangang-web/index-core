@@ -30,6 +30,17 @@ type ScopedScanner interface {
 	ScanScope(ctx context.Context, rootID, scope string, maxEntries int) (scan.Result, error)
 }
 
+type ClaimedScopedScanner interface {
+	ScanClaimedScope(context.Context, state.DirtyScopeWork, int) (scan.Result, error)
+}
+
+func (e *Executor) scanClaimed(ctx context.Context, w state.DirtyScopeWork) (scan.Result, error) {
+	if s, ok := e.scanner.(ClaimedScopedScanner); ok {
+		return s.ScanClaimedScope(ctx, w, e.cfg.MaxEntriesPerScope)
+	}
+	return e.scanner.ScanScope(ctx, w.RootID, w.ScopeKey, e.cfg.MaxEntriesPerScope)
+}
+
 // DiscoveryStore commits follow-up scopes and the parent's verified prefix in
 // one transaction. A crash cannot strand a verified parent without its children.
 type DiscoveryStore interface {
@@ -58,10 +69,58 @@ type Result struct {
 
 // Executor runs at most one durable dirty-work item per ExecuteOne call.
 type Executor struct {
-	store   WorkStore
-	scanner ScopedScanner
-	cfg     Config
-	now     func() time.Time
+	store          WorkStore
+	scanner        ScopedScanner
+	cfg            Config
+	now            func() time.Time
+	retryFloor     func(string) time.Time
+	available      func(context.Context, string) (time.Time, error)
+	cooldownCursor string
+}
+
+// WithRetryFloor clones configuration before actor startup; never mutates a live executor.
+func (e *Executor) WithRetryFloor(f func(string) time.Time) *Executor {
+	c := *e
+	c.retryFloor = f
+	return &c
+}
+func (e *Executor) WithSourceAvailability(f func(context.Context, string) (time.Time, error)) *Executor {
+	c := *e
+	c.available = f
+	return &c
+}
+
+func (e *Executor) readySelection(ctx context.Context, now time.Time, w state.DirtyScopeWork, found bool, class string) (state.DirtyScopeWork, bool, string, error) {
+	excluded := []string{}
+	for found && e.available != nil {
+		at, err := e.available(ctx, w.RootID)
+		if err != nil {
+			return w, false, class, err
+		}
+		if !at.After(now) {
+			return w, true, class, nil
+		}
+		excluded = append(excluded, w.RootID)
+		if e.cooldownCursor == "" {
+			e.cooldownCursor = w.RootID
+		}
+		if len(excluded) == 8 {
+			return state.DirtyScopeWork{}, false, class, nil
+		}
+		fair, ok := e.store.(PoolFairStore)
+		if !ok {
+			return w, false, class, errors.New("cooldown admission requires fair store")
+		}
+		w, found, err = fair.NextPoolFairWork(ctx, now, e.cooldownCursor, excluded...)
+		if err != nil {
+			return w, false, class, err
+		}
+		if found {
+			e.cooldownCursor = w.RootID
+		}
+		class = "SOURCE_COOLDOWN_SKIP"
+	}
+	return w, found, class, nil
 }
 
 // New builds a one-shot executor. It fails closed on invalid configuration or
@@ -108,36 +167,44 @@ func (e *Executor) ExecuteOne(ctx context.Context) (Result, error) {
 
 	now := e.now()
 	work, found, class, err := e.selectWork(ctx, now)
+	if err == nil {
+		work, found, class, err = e.readySelection(ctx, now, work, found, class)
+	}
 	if err != nil {
 		return Result{}, fmt.Errorf("select eligible work: %w", err)
 	}
 	if !found {
 		return Result{}, ErrNoEligibleWork
 	}
-	res := Result{
-		SelectionClass:  class,
-		Selected:        true,
-		RootID:          work.RootID,
-		ScopeKey:        work.ScopeKey,
-		SelectedVersion: work.Version,
+	res, claimed, err := e.claimSelected(ctx, work, class, now)
+	if err != nil {
+		return res, err
 	}
 
+	// Exactly one scoped refresh per invocation.
+	scanRes, scanErr := e.scanClaimed(ctx, claimed)
+	return e.completeScan(ctx, res, claimed, scanRes, scanErr)
+}
+
+func (e *Executor) claimSelected(ctx context.Context, work state.DirtyScopeWork, class string, now time.Time) (Result, state.DirtyScopeWork, error) {
+	res := Result{SelectionClass: class, Selected: true, RootID: work.RootID, ScopeKey: work.ScopeKey, SelectedVersion: work.Version}
 	claimed, err := e.store.ClaimWork(ctx, work.RootID, work.ScopeKey, work.Version, now)
 	if err != nil {
 		if errors.Is(err, postgres.ErrStateCASConflict) {
-			// The selection went stale: no scan, no reselect.
-			return res, fmt.Errorf("%w: %v", ErrStaleSelection, err)
+			return res, claimed, fmt.Errorf("%w: %v", ErrStaleSelection, err)
 		}
-		return res, fmt.Errorf("claim work: %w", err)
+		return res, claimed, fmt.Errorf("claim work: %w", err)
 	}
 	if claimed.ClaimedSignalSeq == nil {
-		return res, fmt.Errorf("claim work: missing claimed signal sequence")
+		return res, claimed, errors.New("claim work: missing claimed signal sequence")
 	}
 	res.ClaimedSignalSeq = *claimed.ClaimedSignalSeq
 	e.recordSelection(ctx, claimed.RootID, class)
+	return res, claimed, nil
+}
 
-	// Exactly one scoped refresh per invocation.
-	scanRes, scanErr := e.scanner.ScanScope(ctx, claimed.RootID, claimed.ScopeKey, e.cfg.MaxEntriesPerScope)
+// One durable completion implementation for serial and pool callers.
+func (e *Executor) completeScan(ctx context.Context, res Result, claimed state.DirtyScopeWork, scanRes scan.Result, scanErr error) (Result, error) {
 
 	// The outer context must win over ANY completion. If the caller is shutting
 	// down after the provider call, neither a provider failure nor a success may
@@ -170,6 +237,7 @@ func (e *Executor) ExecuteOne(ctx context.Context) (Result, error) {
 		return e.completeFailure(ctx, res, claimed, state.ErrorInternal, childErr)
 	}
 	var done state.DirtyScopeWork
+	var err error
 	if len(children) > 0 && scanRes.MirrorPresence && e.cfg.MirrorRevisitInterval > 0 {
 		done, res.Discovery, err = e.store.(MirrorDiscoveryStore).CompleteSuccessWithMirrorChildren(ctx, claimed.RootID, claimed.ScopeKey, *claimed.ClaimedSignalSeq, children, e.cfg.DiscoveryScope, completionNow, e.cfg.MirrorRevisitInterval)
 	} else if len(children) > 0 {
@@ -224,8 +292,15 @@ func discoveryChildren(prefix, parent string, observed []string) ([]string, erro
 // directly, so a concurrent later transition can never rewrite FinalWorkState.
 func (e *Executor) completeFailure(ctx context.Context, res Result, claimed state.DirtyScopeWork, class state.ErrorClass, cause error) (Result, error) {
 	completionNow := e.now()
+	next := e.retryEligibility(class, completionNow)
+	if next != nil && e.retryFloor != nil {
+		floor := e.retryFloor(claimed.RootID)
+		if floor.After(*next) {
+			next = &floor
+		}
+	}
 	done, err := e.store.CompleteFailure(ctx, claimed.RootID, claimed.ScopeKey,
-		*claimed.ClaimedSignalSeq, class, e.retryEligibility(class, completionNow), completionNow)
+		*claimed.ClaimedSignalSeq, class, next, completionNow)
 	if err != nil {
 		// Preserve both the durable completion sentinel and the underlying cause
 		// (e.g. context.DeadlineExceeded) so a bounded caller can distinguish a
