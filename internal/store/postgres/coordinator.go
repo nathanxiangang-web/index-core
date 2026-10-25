@@ -153,6 +153,9 @@ func (s *Store) admitOrResumeSnapshot(ctx context.Context, rootID, snapshotID st
 			return 0, false, ErrTerminalSnapshot
 		}
 	}
+	if err := s.validateOptionalScopedAdmission(ctx, tx, snapshotID); err != nil {
+		return 0, false, err
+	}
 
 	var seq int64
 	if err := tx.QueryRow(ctx,
@@ -207,6 +210,9 @@ func (s *Store) AdmitSnapshot(ctx context.Context, rootID, snapshotID string) (i
 	}
 	if snapLc != string(domain.SnapshotSubmitted) {
 		return 0, ErrNotSubmitted
+	}
+	if err := s.validateOptionalScopedAdmission(ctx, tx, snapshotID); err != nil {
+		return 0, err
 	}
 
 	var seq int64
