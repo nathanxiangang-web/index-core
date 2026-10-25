@@ -43,7 +43,9 @@ func TestIssue138PoolRuntimeLatency(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			defer lock.Release(context.Background())
+			// Register before the actor cleanup below: LIFO cleanup joins the
+			// runtime before releasing ownership, including assertion failures.
+			t.Cleanup(func() { lock.Release(context.Background()) })
 			cfg := poolConfig(n)
 			cfg.IncrementalWakeInterval = time.Second
 			cycle, e := buildIncrementalCycle(st, cfg, poolLogger())

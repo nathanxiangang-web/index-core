@@ -359,6 +359,10 @@ func TestIssue138PoolCooldownSkipsBeforeClaimAndKeepsOtherRootLive(t *testing.T)
 				if attempts != after || calls != h.calls.Load() || healthy.calls.Load() == 0 {
 					t.Fatal("cooldown wasted attempts or blocked healthy Root", attempts, after, calls, h.calls.Load(), healthy.calls.Load())
 				}
+				var healthyVerified int
+				if e = st.Pool().QueryRow(context.Background(), `SELECT count(*) FROM index_dirty_scope_work WHERE root_id=$1 AND work_state='VERIFIED'`, roots[1]).Scan(&healthyVerified); e != nil || healthyVerified == 0 {
+					t.Fatal("healthy Root read did not produce a verified completion", healthyVerified, e)
+				}
 				if http429 {
 					var earliest time.Time
 					if e = st.Pool().QueryRow(context.Background(), `SELECT min(pending_not_before) FROM index_dirty_scope_work WHERE root_id=$1 AND work_state='RETRY_WAIT'`, roots[0]).Scan(&earliest); e != nil {
