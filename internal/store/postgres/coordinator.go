@@ -71,6 +71,15 @@ func (c *Coordinator) ProcessHead(ctx context.Context, rootID string) (Reconcile
 		return ReconcileOutcome{}, false, err
 	}
 	out, err := c.store.reconcileHeadSafe(ctx, rootID, seq, snap, c.cfg)
+	if errors.Is(err, ErrNotHead) {
+		consumed, receiptErr := c.store.consumedStaleHead(ctx, rootID, seq, snap)
+		if receiptErr != nil {
+			return ReconcileOutcome{}, true, receiptErr
+		}
+		if consumed {
+			return ReconcileOutcome{}, true, ErrStaleHeadConsumed
+		}
+	}
 	return out, true, err
 }
 

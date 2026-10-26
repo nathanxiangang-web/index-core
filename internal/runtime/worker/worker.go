@@ -137,6 +137,10 @@ func (w *Worker) processRoot(ctx context.Context, rootID string) {
 			return
 		}
 		out, done, err := c.ProcessHead(ctx, rootID)
+		if errors.Is(err, postgres.ErrStaleHeadConsumed) {
+			w.logger.Info("worker: selected stale head already consumed")
+			continue // no successful receipt or invented generation is logged
+		}
 		if err != nil {
 			if errors.Is(err, postgres.ErrNotHead) {
 				return

@@ -267,6 +267,11 @@ var ErrReconcileRejected = errors.New("snapshot rejected by kernel policy")
 func drainHead(ctx context.Context, coord *postgres.Coordinator, rootID string) error {
 	for {
 		_, done, err := coord.ProcessHead(ctx, rootID)
+		if errors.Is(err, postgres.ErrStaleHeadConsumed) {
+			// The exact old head was already rejected by another actor. Select
+			// the next head; this does not verify the current fresh Work claim.
+			continue
+		}
 		if err != nil {
 			return err
 		}

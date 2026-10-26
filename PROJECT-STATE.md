@@ -4,7 +4,18 @@
 
 ## Last updated
 
-2026-10-20
+2026-10-26
+
+## Issue144 production incident (candidate, not accepted)
+
+Production `17b64ba1` remains reader 1 / 200ms; N2 HOLD. A fresh read-only,
+31-sample, 1800s window had no new fatal/restart; this is not retroactive
+first-start acceptance.
+Owned PG18 reproduced a lost STALE_INPUT head as INTERNAL_ITEM_FAILURE on
+unchanged main. Narrow consumed-head proof + finite diagnostics are candidates;
+no production policy/Work/schema changed. F1/F2 opt-ins were observed disabled,
+and repeated-work/tail evidence is separate from this correctness hotfix.
+See [Issue144 evidence and module boundaries](docs/p0/P0-144-STARTUP-HANDOFF.md).
 
 ## Main branch
 
