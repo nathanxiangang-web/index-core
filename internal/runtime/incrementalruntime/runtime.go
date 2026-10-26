@@ -320,6 +320,7 @@ func (r *Runtime) runOnce(ctx context.Context) (backlog bool, contention bool, e
 			return true, true, nil
 		}
 		// systemic/fatal: the runtime must fail closed.
+		r.logger.Error("incremental_cycle_failed", cycleFailureFields(res, cerr)...)
 		return false, false, &runtimeFatalError{phase: phaseCycle, errorClass: "executor", cause: cerr}
 	}
 

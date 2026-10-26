@@ -151,3 +151,16 @@ jobs:
           INDEXCORE_ISSUE138_DISPOSABLE: owned-disposable-only
           INDEXCORE_ISSUE138_RUNTIME_FETCHES: '16'
         run: go test -race -p 1 -count=1 -timeout=5m -run '^TestIssue138PoolRuntimeLatency$' ./internal/runtime/app -v
+
+      - name: Issue144 stale-head startup handoff and redacted diagnosis (owned PostgreSQL 18)
+        env:
+          INDEXCORE_TEST_DATABASE_URL: postgres://indexcore:indexcore@127.0.0.1:5432/index138_test?sslmode=disable
+          INDEXCORE_ISSUE138_DISPOSABLE: owned-disposable-only
+        run: go test -race -p 1 -count=3 -timeout=3m -run '^TestIssue144' ./internal/runtime/app ./internal/runtime/incrementalruntime
+
+      - name: Issue144 one-root 400-scope finite safety and FIFO proof (owned PostgreSQL 18)
+        env:
+          INDEXCORE_TEST_DATABASE_URL: postgres://indexcore:indexcore@127.0.0.1:5432/index138_test?sslmode=disable
+          INDEXCORE_ISSUE138_DISPOSABLE: owned-disposable-only
+          INDEXCORE_ISSUE144_BACKLOG: '400'
+        run: go test -race -p 1 -count=1 -timeout=3m -run '^TestIssue144N1Backlog400$' ./internal/runtime/app -v
