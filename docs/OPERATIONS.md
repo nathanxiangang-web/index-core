@@ -43,7 +43,7 @@ IndexCore
 | `INDEXCORE_SOURCE_PROVIDER_INTERVAL` | `100ms` | per-source-group minimum source HTTP spacing |
 | `INDEXCORE_INCREMENTAL_DISCOVERY_SCOPE` | empty | optional explicit discovery scope |
 | `INDEXCORE_INCREMENTAL_FIRST_DISCOVERY_ENABLED` | `false` | F1 first-discovery scheduling, default off |
-| `INDEXCORE_INCREMENTAL_MIRROR_REVISIT` | `0` | F2 mirror revisit interval, disabled at zero |
+| `INDEXCORE_INCREMENTAL_MIRROR_REVISIT` | `0` | F2 mirror revisit interval; disabled at zero, `30s..1h` when enabled |
 
 See [.env.example](../.env.example). Source budgets are process-local safeguards, not proof of an upstream account quota. Reader counts above 1 and F1/F2 require isolated evidence, a measured request envelope, and separate operator authorization; they are not approved for production by appearing in this table.
 
