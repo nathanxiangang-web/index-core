@@ -183,6 +183,7 @@ Current usage and engineering docs:
 
 - [Current Architecture](docs/ARCHITECTURE.md)
 - [Development Guide](docs/DEVELOPMENT.md)
+- [Repository Agent Rules](AGENTS.md)
 - [AI Development Protocol](docs/AI-DEVELOPMENT-PROTOCOL.md)
 - [Operating Standards](docs/OPERATING-STANDARDS.md)
 - [Quick Start](docs/QUICKSTART.md)
