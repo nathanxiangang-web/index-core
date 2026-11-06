@@ -1,6 +1,6 @@
 # IndexCore Operations
 
-Current mode: **Stable Alpha Foundation / Incremental Hardening**. Gate 1–4 and P0–P11 are Architect-accepted. P12 shortened cross-repository test validation is complete and accepted; the original >=30-minute / >=100-visibility acceptance soak was not run. See [PROJECT-STATE.md](../PROJECT-STATE.md) for dated operational evidence and [OPERATING-STANDARDS.md](OPERATING-STANDARDS.md) for release, rollback, and safety rules.
+Current mode: **Stable Alpha Foundation / Incremental Hardening**. Gate 1–4 and incremental P0–P11 are Architect-accepted. P12 shortened cross-repository test validation is complete and accepted; the original >=30-minute / >=100-visibility acceptance soak was not run. See [PROJECT-STATE.md](../PROJECT-STATE.md) for dated operational evidence and [OPERATING-STANDARDS.md](OPERATING-STANDARDS.md) for release, rollback, and safety rules.
 
 IndexCore is a single Go runtime backed by PostgreSQL 18. The public application-facing surface is read-only HTTP.
 
