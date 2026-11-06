@@ -21,7 +21,7 @@ For the current system picture, read [ARCHITECTURE.md](ARCHITECTURE.md).
 
 For a host build:
 
-- Go 1.27.x;
+- Go 1.27.1 (see go.mod);
 - PostgreSQL 18.x;
 - rclone on PATH when using the rclone collector.
 
