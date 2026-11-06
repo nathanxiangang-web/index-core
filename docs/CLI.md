@@ -51,7 +51,7 @@ explicit; UNKNOWN exits1 even if persisted checks pass. See
 | `INDEXCORE_SOURCE_PROVIDER_INTERVAL` | `--source-provider-interval` | `100ms` |
 | `INDEXCORE_INCREMENTAL_DISCOVERY_SCOPE` | env only | empty |
 | `INDEXCORE_INCREMENTAL_FIRST_DISCOVERY_ENABLED` | `--incremental-first-discovery` | `false` |
-| `INDEXCORE_INCREMENTAL_MIRROR_REVISIT` | `--incremental-mirror-revisit` | `0` (disabled) |
+| `INDEXCORE_INCREMENTAL_MIRROR_REVISIT` | `--incremental-mirror-revisit` | `0` (disabled; `30s..1h` when enabled) |
 
 Valid log levels: `debug|info|warn|error`.
 
