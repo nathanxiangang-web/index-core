@@ -1,6 +1,8 @@
 # Incremental P12 — Deployment Soak with Reference Test Web
 
-> Status: **ARCHITECT PLAN — IMPLEMENTATION AFTER PLAN MERGE**
+> Status: **IMPLEMENTED; SHORTENED CROSS-REPOSITORY TEST VALIDATION COMPLETE / ARCHITECT_ACCEPTED**
+>
+> Acceptance boundary: original >=30-minute / >=100-visibility soak **NOT RUN / NOT CLAIMED**. See [P12 result](../incremental/P12-DEPLOYMENT-SOAK-RESULT.md). This file is retained as the historical acceptance plan.
 >
 > Parent incremental architecture: #57
 >
