@@ -12,6 +12,7 @@ This directory contains two kinds of documentation:
 | Understand the project quickly | [README](../README.md) |
 | Understand the current architecture / interface planes | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Develop and test IndexCore | [DEVELOPMENT.md](DEVELOPMENT.md) |
+| Follow repository-wide AI/developer rules | [AGENTS.md](../AGENTS.md) |
 | Run AI-assisted development safely | [AI-DEVELOPMENT-PROTOCOL.md](AI-DEVELOPMENT-PROTOCOL.md) |
 | Follow production/operator safety rules | [OPERATING-STANDARDS.md](OPERATING-STANDARDS.md) |
 | Run IndexCore locally | [QUICKSTART.md](QUICKSTART.md) |
