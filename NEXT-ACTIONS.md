@@ -1,156 +1,116 @@
-# Index Core — Next Actions
+# IndexCore — Next Actions
 
-## Current P0 Reliability execution (2026-10-20)
+> Last reviewed: 2026-11-06. This file is the current action board, not a replacement for historical evidence.
 
-Issue120 tracks a new production-reliability program, NOT the earlier accepted
-P0 Scoped Refresh prototype. R1 has bounded Architect acceptance at Issue120
-comment6281974853. R2 is BOUNDED ARCHITECT_ACCEPTED: PR122 squash54b15e988aee,
-main CI39366941874 SUCCESS; Issue121 closed, receipt Issue120 comment6283052837.
-Current packet is Issue123 / R3: one-shot root-scoped read-only diagnostics and
-operator guidance, one unmerged PR for Architect review. Compile/test on
-192.168.178.50, not the public runtime. No production change, provider calls,
-schema, writer/repair/scheduler or public endpoint. Database liveness is not
-source freshness; unknown source health/projection lag must remain explicit.
-See docs/p0/P0-R3-DIAGNOSTICS.md. No self-merge or R3 self-acceptance. R4/R5 are
-unstarted and whole-P0 reliability is NOT accepted. Prior records below remain
-history, not this new program's current status.
+## 1. Verified baseline
 
-## Historical incremental foundation
+~~~text
+Repository: nathanxiangang-web/index-core
+Branch: main
+Current main: 9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e
+Latest accepted code PR: #145
+Exact merged-main CI: #40265606961 SUCCESS
+Operating mode: Stable Alpha Foundation / Incremental Hardening
+~~~
 
-Architecture / acceptance owner: **ChatGPT Architect**
+Gate 1–4 and incremental P0–P11 are Architect-accepted. P12 shortened cross-repository test validation is accepted. The original >=30-minute / >=100-visibility P12 acceptance soak was not run and is not claimed. Gate 5 remains NOT AUTHORIZED.
 
-Execution owner: **Codex Executor / Worker only for the current Architect-authorized Issue**
+## 2. Current technical workstreams
 
-Current main baseline before this planning branch:
+### A. Production correctness / stability — Issue #132 and Issue #144
 
-`eddf95d232b261bac24f019621d1e3285ffb3c8b`
+- PR #145 merged as 9a33d011.
+- The last recorded operator receipt (2026-10-26) reports N1 hotfix deployed and observed for 31 probes / 1800 seconds with zero fatal, cycle-failure, and unplanned-restart deltas.
+- The same receipt did not witness a natural changed-source/APPLIED result. Actual source HTTP starts and 429/5xx were NOT_TRACKED.
+- N2 remains HOLD; performance acceptance is separate.
+- Before any further production decision, obtain a fresh read-only host receipt. Do not call the 2026-10-26 evidence today's live status.
 
-Current incremental state:
+References: [Issue #132](https://github.com/nathanxiangang-web/index-core/issues/132), [Issue #144](https://github.com/nathanxiangang-web/index-core/issues/144), [PR #145](https://github.com/nathanxiangang-web/index-core/pull/145).
 
-```text
-D0 change-discovery research             ARCHITECT_ACCEPTED
-P0 scoped refresh                        ARCHITECT_ACCEPTED
-P1 hot-scope polling feasibility         ARCHITECT_ACCEPTED
-P2 durable scope-state design            ARCHITECT_ACCEPTED
-P3 state persistence                     ARCHITECT_ACCEPTED
-P4 one-shot dirty executor               ARCHITECT_ACCEPTED
-P5 bounded executor loop                 ARCHITECT_ACCEPTED
-P6 scheduler orchestration               ARCHITECT_ACCEPTED
-P7 manual incremental command            ARCHITECT_ACCEPTED
-P8 mutation hint ingestion               ARCHITECT_ACCEPTED
-P9 trusted hint transport                ARCHITECT_ACCEPTED
-P10 hybrid runtime                       ARCHITECT_ACCEPTED
-P11 production hybrid runtime hardening  ARCHITECT_ACCEPTED
-P12 shortened deployment soak + Reference Test Web  ARCHITECT_ACCEPTED
-```
+### B. First-discovery and mirror-revisit latency — Issue #134
 
-P10 implementation PR #96 merged at `f655f04`; closeout PR #97 merged at
-`eddf95d`. P10 exit decision is:
+- Issue remains OPEN.
+- Repeated scope work and long due-age samples were observed in the 2026-10-26 receipt.
+- F1 first-discovery and F2 mirror-revisit remain default-off.
+- Next evidence must distinguish queue wait, provider HTTP time, Store/Kernel time, and consumer Q5/Q8 visibility.
+- Require fairness and freshness-debt/capacity analysis before any production flag change.
 
-`AUTHORIZE_PRODUCTION_HYBRID_RUNTIME_HARDENING`.
+Reference: [Issue #134](https://github.com/nathanxiangang-web/index-core/issues/134).
 
-The governing P11 plan is:
+### C. Bounded source-read pipeline — Issue #138
 
-`docs/architecture/INCREMENTAL-P11-PRODUCTION-HYBRID-RUNTIME-HARDENING.md`
+- Issue remains OPEN.
+- PR #142 and PR #143 are merged; PR #143 added a bounded read/serial-commit pipeline with reader default 1 and explicit 2/4/8 opt-ins.
+- The 1/2/4/8 performance evidence is isolated fake-source evidence, not a real 115 quota or production SLA.
+- Do not raise production reader count or shorten source intervals without actual HTTP starts/statuses, shared upstream quota evidence, fairness/capacity results, rollback-to-serial proof, and operator authorization.
 
-## Current bounded objective
+Reference: [Issue #138](https://github.com/nathanxiangang-web/index-core/issues/138), [ADR-012](docs/decisions/ADR-012-RUNTIME-READ-POOL.md).
 
-P11 hardening is complete and ARCHITECT_ACCEPTED.
+### D. Reliability / capacity follow-ups
 
-The current bounded validation step is **complete**: P12 shortened deployment soak with the Reference Test Web.
+- Issue #120 remains OPEN; whole P0 reliability is not accepted.
+- PR #133 remains OPEN / unmerged; it requires independent review and exact-head CI.
+- PR #126 remains OPEN / draft with incomplete 50k capacity evidence; 50k is NOT PASSED.
+- Do not mix these candidates into unrelated fixes or deploy an unmerged PR.
 
-Canonical plan:
+References: [Issue #120](https://github.com/nathanxiangang-web/index-core/issues/120), [PR #133](https://github.com/nathanxiangang-web/index-core/pull/133), [PR #126](https://github.com/nathanxiangang-web/index-core/pull/126).
 
-`docs/architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md`
+## 3. Execution order for the next session
 
-Reference consumer baseline:
+1. Verify the current remote main, open PRs, relevant Issues, and exact CI. Do not rely on the baseline above without refreshing it.
+2. Confirm the Owner's requested outcome and classify it as Collector, Kernel, Store, Query/Transport, Consumer, Operations, or Out of Scope.
+3. Select one bounded Issue. Do not start multiple workstreams at once.
+4. Capture a read-only baseline before any runtime/provider change.
+5. Write explicit acceptance predicates and forbidden changes.
+6. Assign one Executor; branch from the exact verified main SHA.
+7. Implement, test, submit one PR, and wait for independent Architect review.
+8. Update this file and PROJECT-STATE.md only when accepted facts change.
 
-`nathanxiangang-web/indexcore-reference-web` (**Reference Test Web / validation-only**) 
+The current documentation standard is defined in AGENTS.md, docs/DEVELOPMENT.md, docs/AI-DEVELOPMENT-PROTOCOL.md, and docs/OPERATING-STANDARDS.md.
 
-The incremental runtime remains **default disabled**.
+## 4. Task state vocabulary
 
-## Still not authorized
+Use:
 
-Do not begin:
+~~~text
+TODO
+READY
+IN_PROGRESS
+REVIEW
+FIX_REQUIRED
+BLOCKED
+DONE
+~~~
 
-- incremental runtime default-on;
-- native delta/provider cursor;
-- network-reachable/public Mutation Hint transport;
-- second writer / multi-daemon HA;
-- parallel P6 cycles;
-- automatic INTERNAL retry;
-- automatic BLOCKED/SUSPENDED repair;
-- destructive delta/removal;
-- migration/schema expansion;
-- direct 115 integration;
-- formal successor product / Gate 5;
-- auth/user/admin/search/catalog/preview/download/AI product work.
+DONE means independently accepted, merged, and post-merge verified. REVIEW is not accepted. BLOCKED must state the missing evidence, dependency, or authorization.
 
-`FROZEN_CONTRACT_CHANGES: NONE`
+## 5. Not authorized by a generic “continue”
 
-## Execution protocol
+- Gate 5 or a successor product architecture.
+- Hybrid runtime default-on.
+- Production F1/F2 activation.
+- Production source readers above 1.
+- Provider-native delta/cursor or direct 115 integration.
+- Public/network-reachable Mutation Hint.
+- Second writer, multi-daemon HA, or parallel P6 cycles.
+- Automatic INTERNAL retry or automatic BLOCKED/SUSPENDED repair.
+- Destructive scoped removal.
+- Schema/contract expansion or migration without a separate accepted plan.
+- Product auth/users, search/catalog, preview/download, sharing, or AI product features.
 
-P11 implementation PR #100 is Architect-accepted and merged as `ec980a5`; Issue #99 is complete.
+A future explicit Owner/Architect decision may authorize a bounded proposal. An open Issue, draft PR, benchmark, or historical production receipt does not grant authorization.
 
-P11 exit decision: `AUTHORIZE_DEPLOYMENT_SOAK`.
+## 6. Recovery rule
 
-P12 shortened cross-repository validation is complete.
+A new Architect session should read:
 
-Accepted implementation merges:
+1. AGENTS.md;
+2. PROJECT-CONTEXT.md;
+3. PROJECT-STATE.md;
+4. ARCHITECTURE-INVARIANTS.md;
+5. this file;
+6. the current authorized Issue/PR and relevant evidence.
 
-```text
-IndexCore Phase B         94eab92
-Reference Test Web        169535d
-```
+Then read only the module contracts and source needed for the task.
 
-The original long-duration acceptance profile remains available as
-`P12_MODE=acceptance` but was **not run** and is **not claimed**.
-
-After plan merge, the Architect opens one bounded execution Issue. Worker must:
-
-1. branch from current `main`;
-2. implement only the Issue/plan scope;
-3. add required tests and result report;
-4. submit one PR;
-5. **do not merge**;
-6. wait for Architect review.
-
-## Current project boundary
-
-Gate 1–4 remain CLOSED / ARCHITECT_ACCEPTED.
-
-Gate 5 remains **NOT AUTHORIZED**.
-
-CloudSite 1.0 remains Legacy / Frozen and is not the active IndexCore validation
-target.
-
-The public IndexCore Query contract remains read-only Q1–Q9.
-
-## Recovery rule
-
-A future Architect session should verify remote `main`, then read:
-
-1. `PROJECT-CONTEXT.md`;
-2. `PROJECT-STATE.md`;
-3. `ARCHITECTURE-INVARIANTS.md`;
-4. this file;
-5. the current authorized Issue/PR;
-6. the P12 result/closeout while no next feature phase is authorized.
-
-Chat history is cache; Git is project memory.
-
-
-## No automatic next phase
-
-The shortened P12 test validation does not automatically authorize:
-
-- incremental runtime default-on;
-- native delta/provider cursor;
-- network/public Hint;
-- second writer / HA;
-- destructive scoped removal;
-- migration/schema expansion;
-- direct 115;
-- Gate 5.
-
-A new explicit Architect/user decision is required before any such work.
+**Chat history is cache; Git is project memory.**
