@@ -21,7 +21,8 @@ This directory contains two kinds of documentation:
 | Integrate a new Web/application | [INTEGRATION.md](INTEGRATION.md) |
 | Operate / deploy / recover | [OPERATIONS.md](OPERATIONS.md) |
 | Review incremental architecture/history | [architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md](architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md) |
-| Review current P12 deployment-soak plan | [architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md](architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md) |
+| Review the P12 acceptance design | [architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md](architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md) |
+| Review the actual shortened P12 result | [incremental/P12-DEPLOYMENT-SOAK-RESULT.md](incremental/P12-DEPLOYMENT-SOAK-RESULT.md) |
 | Read accepted incremental capability research | [research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md](research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md) |
 
 A complete **test/reference consumer** is available in the separate repository:
