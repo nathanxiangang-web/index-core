@@ -4,7 +4,7 @@
 
 IndexCore collects resource observations from external sources, evaluates identity/completeness/safety, maintains one trustworthy Canonical Inventory, appends a canonical Change Journal, and exposes the result through a small read-only HTTP Query API.
 
-> **Status:** Core development is complete for the accepted Alpha scope. Gate 1–4 and incremental P0–P11 are Architect-accepted. P12 **Deployment Soak with Reference Test Web** is the current validation phase. The project is a **Stable Alpha Foundation / Incremental Hardening** component. The hybrid incremental runtime remains default disabled. Gate 5 (future product architecture) is not authorized.
+> **Status:** Core development is complete for the accepted Alpha scope. Gate 1–4 and incremental P0–P11 are Architect-accepted. P12 shortened cross-repository test validation is **COMPLETE / ARCHITECT_ACCEPTED**; the original >=30-minute / >=100-visibility acceptance soak was **NOT RUN / NOT CLAIMED**. The project is a **Stable Alpha Foundation / Incremental Hardening** component. The hybrid incremental runtime repository default remains disabled. Gate 5 is **NOT AUTHORIZED**. Separate production reliability and performance follow-ups remain open.
 
 IndexCore is **not CloudSite 2**, not a search engine, not a user system, and not a downloader. Product concerns belong in consumers.
 
@@ -179,9 +179,12 @@ canonical-write capabilities.
 
 Start at [docs/README.md](docs/README.md).
 
-Current usage docs:
+Current usage and engineering docs:
 
 - [Current Architecture](docs/ARCHITECTURE.md)
+- [Development Guide](docs/DEVELOPMENT.md)
+- [AI Development Protocol](docs/AI-DEVELOPMENT-PROTOCOL.md)
+- [Operating Standards](docs/OPERATING-STANDARDS.md)
 - [Quick Start](docs/QUICKSTART.md)
 - [CLI Reference](docs/CLI.md)
 - [HTTP API](docs/HTTP-API.md)
