@@ -43,7 +43,7 @@ Gate 3  Standalone runtime + scale            CLOSED
 Gate 4  Independent consumer validation       CLOSED
 
 Current mode: Stable Alpha Foundation / Incremental Hardening
-IndexCore extension: D0 + P0–P11 ARCHITECT_ACCEPTED
+IndexCore extension: D0 + incremental P0–P11 ARCHITECT_ACCEPTED
 P12 shortened cross-repository test validation: COMPLETE / ARCHITECT_ACCEPTED
 Original >=30-minute / >=100-visibility acceptance soak: NOT RUN / NOT CLAIMED
 Current focus: maintenance, production reliability, and measured performance follow-ups
