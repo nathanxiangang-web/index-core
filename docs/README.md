@@ -11,6 +11,9 @@ This directory contains two kinds of documentation:
 | --- | --- |
 | Understand the project quickly | [README](../README.md) |
 | Understand the current architecture / interface planes | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| Develop and test IndexCore | [DEVELOPMENT.md](DEVELOPMENT.md) |
+| Run AI-assisted development safely | [AI-DEVELOPMENT-PROTOCOL.md](AI-DEVELOPMENT-PROTOCOL.md) |
+| Follow production/operator safety rules | [OPERATING-STANDARDS.md](OPERATING-STANDARDS.md) |
 | Run IndexCore locally | [QUICKSTART.md](QUICKSTART.md) |
 | Learn the CLI | [CLI.md](CLI.md) |
 | Call the read-only HTTP API | [HTTP-API.md](HTTP-API.md) |
@@ -39,7 +42,9 @@ Gate 4  Independent consumer validation       CLOSED
 
 Current mode: Stable Alpha Foundation / Incremental Hardening
 IndexCore extension: D0 + P0–P11 ARCHITECT_ACCEPTED
-Active validation phase: P12 Deployment Soak with Reference Test Web
+P12 shortened cross-repository test validation: COMPLETE / ARCHITECT_ACCEPTED
+Original >=30-minute / >=100-visibility acceptance soak: NOT RUN / NOT CLAIMED
+Current focus: maintenance, production reliability, and measured performance follow-ups
 Incremental runtime: accepted opt-in same-process/same-writer runtime, default disabled
 Reference test consumer: nathanxiangang-web/indexcore-reference-web
 Next product blueprint phase: Gate 5 (NOT AUTHORIZED)
