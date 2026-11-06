@@ -13,7 +13,7 @@
 - Current remote main: 9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e
 - Latest accepted code change: PR #145, merged as 9a33d011.
 - Exact merged-main CI: [#40265606961](https://github.com/nathanxiangang-web/index-core/actions/runs/40265606961), completed / success on the exact main SHA.
-- The repository's last observed push in this audit is 2026-10-26. Always re-check remote main and CI before a new task.
+- The latest main commit observed in this audit is dated 2026-10-26; documentation-branch activity is tracked separately. Always re-check remote main and CI before a new task.
 
 ## Accepted project maturity
 
