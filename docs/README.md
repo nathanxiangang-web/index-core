@@ -11,6 +11,10 @@ This directory contains two kinds of documentation:
 | --- | --- |
 | Understand the project quickly | [README](../README.md) |
 | Understand the current architecture / interface planes | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| Develop and test IndexCore | [DEVELOPMENT.md](DEVELOPMENT.md) |
+| Follow repository-wide AI/developer rules | [AGENTS.md](../AGENTS.md) |
+| Run AI-assisted development safely | [AI-DEVELOPMENT-PROTOCOL.md](AI-DEVELOPMENT-PROTOCOL.md) |
+| Follow production/operator safety rules | [OPERATING-STANDARDS.md](OPERATING-STANDARDS.md) |
 | Run IndexCore locally | [QUICKSTART.md](QUICKSTART.md) |
 | Learn the CLI | [CLI.md](CLI.md) |
 | Call the read-only HTTP API | [HTTP-API.md](HTTP-API.md) |
@@ -18,7 +22,8 @@ This directory contains two kinds of documentation:
 | Integrate a new Web/application | [INTEGRATION.md](INTEGRATION.md) |
 | Operate / deploy / recover | [OPERATIONS.md](OPERATIONS.md) |
 | Review incremental architecture/history | [architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md](architecture/POST-MVP-INCREMENTAL-BLUEPRINT.md) |
-| Review current P12 deployment-soak plan | [architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md](architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md) |
+| Review the P12 acceptance design | [architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md](architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md) |
+| Review the actual shortened P12 result | [incremental/P12-DEPLOYMENT-SOAK-RESULT.md](incremental/P12-DEPLOYMENT-SOAK-RESULT.md) |
 | Read accepted incremental capability research | [research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md](research/INCREMENTAL-CHANGE-DISCOVERY-REPORT.md) |
 
 A complete **test/reference consumer** is available in the separate repository:
@@ -38,8 +43,10 @@ Gate 3  Standalone runtime + scale            CLOSED
 Gate 4  Independent consumer validation       CLOSED
 
 Current mode: Stable Alpha Foundation / Incremental Hardening
-IndexCore extension: D0 + P0–P11 ARCHITECT_ACCEPTED
-Active validation phase: P12 Deployment Soak with Reference Test Web
+IndexCore extension: D0 + incremental P0–P11 ARCHITECT_ACCEPTED
+P12 shortened cross-repository test validation: COMPLETE / ARCHITECT_ACCEPTED
+Original >=30-minute / >=100-visibility acceptance soak: NOT RUN / NOT CLAIMED
+Current focus: maintenance, production reliability, and measured performance follow-ups
 Incremental runtime: accepted opt-in same-process/same-writer runtime, default disabled
 Reference test consumer: nathanxiangang-web/indexcore-reference-web
 Next product blueprint phase: Gate 5 (NOT AUTHORIZED)

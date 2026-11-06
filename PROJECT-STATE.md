@@ -1,89 +1,90 @@
 # Index Core — Project State
 
-> Concise current-state truth for recovery.
+> Concise recovery snapshot. Dated production evidence below is not a live monitor.
 
-## Last updated
+## Last reviewed
 
-2026-10-26
+2026-11-06
 
-## Issue144 production incident (candidate, not accepted)
+## Verified repository baseline
 
-Production `17b64ba1` remains reader 1 / 200ms; N2 HOLD. A fresh read-only,
-31-sample, 1800s window had no new fatal/restart; this is not retroactive
-first-start acceptance.
-Owned PG18 reproduced a lost STALE_INPUT head as INTERNAL_ITEM_FAILURE on
-unchanged main. Narrow consumed-head proof + finite diagnostics are candidates;
-no production policy/Work/schema changed. F1/F2 opt-ins were observed disabled,
-and repeated-work/tail evidence is separate from this correctness hotfix.
-See [Issue144 evidence and module boundaries](docs/p0/P0-144-STARTUP-HANDOFF.md).
+- Repository: nathanxiangang-web/index-core
+- Default branch: main
+- Current remote main: 9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e
+- Latest accepted code change: PR #145, merged as 9a33d011.
+- Exact merged-main CI: [#40265606961](https://github.com/nathanxiangang-web/index-core/actions/runs/40265606961), completed / success on the exact main SHA.
+- The latest main commit observed in this audit is dated 2026-10-26; documentation-branch activity is tracked separately. Always re-check remote main and CI before a new task.
 
-## Main branch
+## Accepted project maturity
 
-Always verify the current remote `main` before execution.
+- Gate 1–4: CLOSED / ARCHITECT_ACCEPTED.
+- Incremental P0–P11: ARCHITECT_ACCEPTED.
+- P12 shortened cross-repository test validation: COMPLETE / ARCHITECT_ACCEPTED.
+- Original P12 >=30-minute / >=100-visibility acceptance soak: NOT RUN / NOT CLAIMED.
+- Operating mode: Stable Alpha Foundation / Incremental Hardening.
+- Hybrid incremental runtime repository default: disabled.
+- Gate 5: NOT AUTHORIZED.
 
-Latest accepted architecture milestone:
+## Last recorded production receipt (2026-10-26; not a live status check)
 
-Gate 1B accepted at `9291ac0706af6d584684498d75b714c408b9ffbe`.
-Gate 1C accepted at PR #43 head `7a3b32f` (ARCHITECT FINAL ACCEPTANCE — Gate 1C
-CLOSED).
-Gate 2 PoC accepted at PR #46 head `846a270` (ARCHITECT FINAL ACCEPTANCE —
-Gate 2 PoC) and merged to `main` at `410050d0b084d999063cde1a4be8d2051fbcb88f`.
-Gate 3 MVP Alpha authorized by Architect in Issue #47, accepted at PR #49
-head `055402da83235e6dc5f88f45206378fb210a7672`, and merged to `main` at
-`f7edc518dfc99a43cfc464e332e6fe3bfcda601c` (Issue #47 completed).
-Gate 4 Reference Consumer Integration was Architect-accepted in Issue #50. Verification fixture PR #53 merged at `9bc98fb7759f16d5c6b772cf4442dea133e2012b`; Reference Web PR #2 merged at `8f7062216dc9924f64d9ae0367e504c279704857`; authoritative findings PR #52 merged at `9d23b24f0ed715fce6128c031da99f6e111257ed`.
+Issue #144 operator receipt [#6416438985](https://github.com/nathanxiangang-web/index-core/issues/144#issuecomment-6416438985) records the N1 hotfix deployed from 9a33d011:
+
+- Native executable SHA256: 7818f9785fc56dac185ce882f94da18ae0c638f7f432b18370e5bbd2193da780.
+- 31 prospective probes over 1800.007354 seconds.
+- Fatal delta 0, cycle-failure delta 0, unplanned restart delta 0.
+- Q4/Q5/Q8/Q9, one writer, schema migration count, and Journal continuity were retained.
+- Reader count was 1; global/Root/provider spacing was 200ms.
+- F1 and F2 remained disabled.
+- 763 completed scopes were all NOOP; no natural changed-source/APPLIED result was witnessed.
+- Actual source HTTP starts and 429/5xx were NOT_TRACKED.
+- N2 remained HOLD; no production performance acceptance was claimed.
+
+This receipt proves only the recorded interval and predicates. It does not establish current live health on 2026-11-06, future stability, changed-source freshness, or performance. Re-read the operator host and latest Issue receipts before any live action.
+
+## Active follow-ups and boundaries
+
+| Item | Latest recorded state | Rule |
+| --- | --- | --- |
+| Issue #132 | Open; N1 hotfix observed, N2 HOLD | Do not infer current host state or authorize N2 from the historical 30-minute window |
+| Issue #134 | Open; first-discovery / mirror-revisit tail remains unresolved | F1/F2 stay off until isolated proof, source-rate evidence, capacity/fairness analysis, and separate operator authorization |
+| Issue #138 | Open; PR #143 merged with bounded read pipeline, serial default | Mock speedup is not production quota approval; workers >1 remain opt-in |
+| Issue #120 | Open P0 reliability tracking | Do not claim whole P0 reliability accepted |
+| PR #133 | Open, unmerged terminal-handoff candidate | Do not merge/deploy without independent review and exact-head CI |
+| PR #126 | Open draft/partial R4 capacity evidence; 50k matrix not passed | Do not treat as accepted scale evidence or deploy it |
+| Issue #129 | Open incident tracking | Preserve incident evidence; do not merge with unrelated performance work |
+
+No new feature phase is implied by the open list. An open Issue or draft PR is not an authorization.
 
 ## Execution model
 
-```text
-ChatGPT Architect
-       ↓
-Codex Executor
-       ↓
-branch + docs/code/tests
-       ↓
-Pull Request
-       ↓
-ChatGPT Architect Review
-       ↓
-main
-```
+~~~text
+Owner
+  -> Architect (ChatGPT / assigned reviewer)
+  -> one Executor (Codex or explicitly assigned developer)
+  -> task branch + bounded changes + tests
+  -> one PR
+  -> independent Architect review
+  -> main
+~~~
 
-The previous GLM Foreman + Worker A/B/C/D topology is retired.
+Do not assume multiple workers or parallel code writers. The Executor does not self-approve or self-merge.
 
-The experimental subagent topology is retired.
+## Current maintenance rule
 
-## Current phase
+Before changing the Kernel, classify the requirement as Collector, Kernel, Store, Query/Transport, Consumer, Operations, or Out of Scope. Only true Kernel responsibilities should change canonical truth.
 
-**2026-10-20 user-authorized download visibility latency repair IN VALIDATION.**
-The explicit non-root DiscoveryScope now selects HIGH child work atomically;
-other mirror discovery stays NORMAL. This addresses a measured 462.899-second
-child queue wait, not provider download time. No schema, deletion or trust change.
-See docs/decisions/ADR-006-PRIORITY-DISCOVERY-SUBTREE.md. Isolated PostgreSQL18
-focused tests pass (10 methods/subcases); the full isolated suite plus vet,
-build and targeted race completed successfully (633 passing test events,152.459s).
-Exact-head CI/deployment/live timing are still pending. This does
-not accept R4/R5 or certify any new real download completion.
+Do not add product users/auth, search/catalog, preview/download, sharing, AI recommendations, direct 115 integration, or CloudSite-specific business logic to IndexCore.
 
-**P0 Reliability (distinct from historical Scoped Refresh P0): R1 bounded
-Architect-accepted; R2 BOUNDED ARCHITECT_ACCEPTED; R3 Issue123 IN PROGRESS.**
-R1 acceptance: Issue120 comment6281974853. R2 PR122 reviewed HEAD
-`0ad1aed98a72affddd5f1222e0936917032084fc`, review5580396348; squash merge
-`54b15e988aee714d84d6b82d681b9f71ee8140bd`. Reviewed-head CI39362445591 and
-merged-main CI39366941874 SUCCESS. Issue121 closed; acceptance receipt is
-Issue120 comment6283052837. R2's49 isolated scenarios do not certify real provider
-mutation, OS/DB crash, production rollback, scale or soak. The16 inherited skips
-remain disclosed in docs/p0/P0-R2-VERIFICATION.md.
+## Recovery protocol
 
-R3 adds operator-only `root diagnose`: one-shot bounded read-only PostgreSQL
-evidence, no provider calls, repair, public endpoint, migration or deployment.
-Absent live-source/consumer evidence stays UNKNOWN/NOT_TRACKED. Compile/test on
-operator-designated192.168.178.50 in isolated PostgreSQL18. See
-docs/p0/P0-R3-DIAGNOSTICS.md for module boundaries, output contract and limits.
-Implementation is not acceptance; one focused unmerged PR and completed
-exact-head CI await Architect review. Parent Issue120 stays OPEN; R4/R5 and
-whole-P0 acceptance are not authorized. Older snapshots below are historical,
-not fixed production counts or universal SLAs.
+1. Verify remote main and its exact SHA.
+2. Read PROJECT-CONTEXT.md, this file, ARCHITECTURE-INVARIANTS.md, and NEXT-ACTIONS.md.
+3. Read the latest referenced Issue/PR comments and exact-head CI.
+4. Confirm the requested task is authorized and bounded.
+5. Read only the relevant contracts, ADRs, code, and tests.
+6. Record facts separately from inferences and unknowns.
+
+## Historical operational evidence (dated records; not current live status)
 
 **Issue115 deletion recovery live-verified (2026-10-20,02:15Z).** PR119 runtime
 2d9068e, binary a6c2a397504e, restores renewable separate topology authentication
