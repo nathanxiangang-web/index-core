@@ -62,6 +62,7 @@ func (r *replayTrace) handler(t *testing.T, st *postgres.Store, root string) htt
 	return func(w http.ResponseWriter, req *http.Request) {
 		began := time.Now()
 		r.mu.Lock()
+		experimentStart := r.start
 		r.active++
 		r.requests++
 		r.starts = append(r.starts, began)
@@ -135,7 +136,7 @@ func (r *replayTrace) handler(t *testing.T, st *postgres.Store, root string) htt
 			for i := 0; i < 401; i++ {
 				entries = append(entries, entry(fmt.Sprintf("d%06d", i), true))
 			}
-			if began.Sub(r.start) >= 5*time.Second {
+			if began.Sub(experimentStart) >= 5*time.Second {
 				for i := 0; i < 12; i++ {
 					scope := fmt.Sprintf("/fresh%02d", i)
 					entries = append(entries, entry(strings.TrimPrefix(scope, "/"), true))
@@ -155,7 +156,7 @@ func (r *replayTrace) handler(t *testing.T, st *postgres.Store, root string) htt
 			} else {
 				entries = append(entries, entry("new.bin", false), entry("nested", true))
 			}
-		case body.Path == "/d000000" && began.Sub(r.start) >= 90*time.Second:
+		case body.Path == "/d000000" && began.Sub(experimentStart) >= 90*time.Second:
 			entries = append(entries, entry("late.bin", false))
 		case strings.HasPrefix(body.Path, "/d"):
 		default:
@@ -233,14 +234,14 @@ func TestIssue134SchedulingReplay(t *testing.T) {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { lock.Release(context.Background()) })
-	r.start = time.Now()
+	queuedAt := time.Now()
 	for i := 0; i < 401; i++ {
-		if _, e = st.MergeSignal(ctx, state.DirtySignal{RootID: root, ScopeKey: fmt.Sprintf("/d%06d", i), Source: state.SourceRecovery, Reason: state.ReasonPossibleChange, Priority: state.PriorityNormal, SeenAt: r.start}); e != nil {
+		if _, e = st.MergeSignal(ctx, state.DirtySignal{RootID: root, ScopeKey: fmt.Sprintf("/d%06d", i), Source: state.SourceRecovery, Reason: state.ReasonPossibleChange, Priority: state.PriorityNormal, SeenAt: queuedAt}); e != nil {
 			t.Fatal(e)
 		}
 	}
 	seconds := int64(30)
-	due := r.start.Add(6 * time.Second)
+	due := time.Now().Add(6 * time.Second)
 	if _, e = st.CreateWatch(ctx, state.ScopeWatchState{RootID: root, ScopeKey: "/", WatchState: state.WatchHot, CadenceClass: "SOURCE_MIRROR", EffectiveIntervalSeconds: &seconds, SourceSet: []state.WatchSource{state.WatchSourceOperatorPolicy}, Priority: state.PriorityHigh, NextDueAt: &due}); e != nil {
 		t.Fatal(e)
 	}
@@ -264,6 +265,11 @@ func TestIssue134SchedulingReplay(t *testing.T) {
 	if n, e := rt.RecoverStartupInflight(ctx); e != nil || n != 0 {
 		t.Fatal("startup", n, e)
 	}
+	// Begin after all DB/configuration preparation. Otherwise a slow fixture can
+	// release the +5s source change before Runtime.Run has started scanning.
+	r.mu.Lock()
+	r.start = time.Now()
+	r.mu.Unlock()
 	r.write(map[string]any{"kind": "workload", "mode": mode, "backlog": 401, "readers": 1, "spacing_ms": 200, "start": r.start, "new_directories_at": r.start.Add(5 * time.Second), "late_file_at": r.start.Add(90 * time.Second), "duration_seconds": 480, "seed_history": "401 API-only operational verifications; canonical directory fixtures at generation0"})
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
