@@ -285,7 +285,7 @@ func TestIssue134SchedulingReplay(t *testing.T) {
 	seq := int64(0)
 	lastGen := int64(0)
 	deadline := r.start.Add(480 * time.Second)
-	observeJournal:=func() {
+	observeJournal := func() {
 		events, e := qr.ReadJournal(ctx, root, seq, 1000)
 		if e != nil {
 			t.Fatal(e)
