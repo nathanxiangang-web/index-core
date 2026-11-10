@@ -1,6 +1,7 @@
 # Issue134: production-policy scheduling replay
 
-State: IN_PROGRESS / independent Architect review required. No self-merge.
+State: REVIEW / evidence candidate. F1 needs FIX; F2 capacity is NO-GO.
+Independent Architect review required. No self-merge or production enablement.
 
 ## Verified baseline
 
@@ -113,8 +114,94 @@ It does not inject provider files or certify F1/F2 freshness/scale.
 Tokens, source paths/names and provider bodies stay in a private host directory
 and are excluded from the repository and public evidence.
 
-## Results and decision
+## Same-host serial results (2026-11-10)
 
-Execution is underway. Measured tables, raw-event hashes, local verification,
-exact-head CI and explicit PASS/FIX/NO-GO dispositions will be added after the
-recorded runs. No performance acceptance is claimed by this initial document.
+The requested host ran a separate PG18 container, CPU0.5/memory384MiB,
+GOMAXPROCS1/GOMEMLIMIT256MiB. These are deliberately disclosed resource ceilings,
+not a claim about production PostgreSQL capacity. Each mode ran480 real seconds;
+setup/compilation is excluded. All production Go code is byte-identical to main.
+
+| Measured metric | baseline | F1 only | F2 only |
+| --- | ---: | ---: | ---: |
+| First new directories claimed / visible |0/12 /0/12|12/12 /12/12|0/12 /0/12|
+| First discovery -> claim P50/P95/P99 seconds |NOT_TRACKED|59.85/110.58/110.58|NOT_TRACKED|
+| First discovery -> Q5/Q8 P50/P95/P99 seconds |NOT_TRACKED|62.61/113.49/113.49|NOT_TRACKED|
+| NORMAL claim wait P50/P95/max seconds |243.59/461.45/478.70|269.53/461.11/479.50|242.26/460.15/479.48|
+| NORMAL executed pending epochs |326|243|359|
+| Actual HTTP / directory lists |1700/340|1405/281|1872/374|
+| Repeated scope executions / ratio |13/3.82%|13/4.63%|14/3.74%|
+| Max receiver request starts / anchored second |5|5|5|
+| Peak source HTTP concurrency |1|1|1|
+| Actual receiver HTTP429 /5xx |0/0|0/0|0/0|
+| Unhinted late file visible by window end |false|false|false|
+| Watch first -> last |1->1|1->1|1->414|
+| Final due Watches / debt-overdue-seconds |1/4.19|0/0|322/72800.28|
+| PG sampled peak CPU percent |49.77|51.89|43.72|
+| PG sampled peak Docker memory MiB |51.18|54.78|54.50|
+| PG logical block-hit increase |697767|6049578|722025|
+| Max sampled lock waiters |0|0|0|
+
+Zero completed new-directory samples are right-censored failures, not zero
+latency. Their P50/P95/P99 cannot be computed. Timeout counts, transient lock-wait
+duration, exact client wire-start timestamps and per-admission critical-path
+attribution are NOT_TRACKED. CPU/memory are96 samples per mode at about5s intervals;
+they are not continuous profiles. Logical hit counters are per-database cumulative
+counters differenced between first/last samples; the1s observer is included.
+
+F1 proves real priority effect and all24 fresh/nested files reached Q5/Q8, but
+its first-claim P95 exceeds the Issue13460s engineering target, and the old late
+file missed the480s window. It is FIX, not overall PASS. NORMAL work progressed;
+finite progress does not certify absence of starvation under indefinite arrivals.
+The F1 run has about8.67x the baseline logical block-hit increase and17.35% fewer
+completed lists. This supports investigating selector/PG overhead, not attributing
+all of the slowdown to a particular query without a plan. The500-directory SQL
+probe has12 real eligible fresh candidates; the20K probe and500 probe emit separate
+actual EXPLAIN/BUFFERS and client timing evidence after their timed workloads.
+
+F2 suppresses some requeue, but cannot make the existing401-work backlog disappear.
+PENDING312 is not freshness: new files were still unobserved,322 Watches were due,
+and debt reached72800 overdue-seconds. No automatic Watch retirement exists.
+
+## Independent CI repetition and 20K rejection
+
+On code head `d592785ed9175e4d486d624a1332b42e22e59566`, replay matrix
+[42805036688](https://github.com/nathanxiangang-web/index-core/actions/runs/42805036688)
+completed SUCCESS. Those jobs have separate hosted machines, not the constrained
+same-host comparison above. Baseline/F1/F2 first-claim P95 was446.80/63.35/433.79s;
+Q5/Q8 P95 was448.56/64.49/435.47s. Actual HTTP2294/2295/2300, concurrency1 and
+all12 fresh files visible. These results independently reproduce F1's benefit,
+but do not replace the retained host failures or certify the60s target.
+
+The same CI F2-only20K experiment performed60 actual lists /300 actual HTTP in
+130.15s. Watch20001->20001, retired0, debt32048.63->2627484.56 overdue-seconds.
+Capacity disposition: **NO-GO**. This is a finite due-storm rejection with20K
+SQL-seeded directories, not a full20K source traversal or a steady-state soak.
+F1+F2 combined validation remains NOT_RUN because the independent gates did not
+pass. Shortening all directory cadences is not a remedy.
+
+## Evidence, verification and next boundary
+
+- `evidence/issue134-replay-20261110.ndjson.gz` contains original public trace
+  records wrapped as `{run,record}`, including all three host runs, the four CI
+  runs, receiver telemetry, resource samples and redacted source exploration.
+- `evidence/issue134-replay-manifest.json` records per-stream SHA256/byte counts,
+  exact initial-recorder hash and errata. Initial recorder's timeout0 is corrected
+  to NOT_TRACKED in analysis; original bytes are preserved. Server arrival jitter
+  was initially mistaken for exact budget reservation time; the receiver rate
+  envelope is now checked while strict sourcebudget clock tests remain required.
+- `evidence/issue134-replay-summary.ndjson` is the compact result index. Initial
+  failed host/CI outputs remain available in the task evidence bundle and CI.
+- Final per-head full PG18, Race, vet/build, additional SQL plans, real-source
+  opt-in and CI receipts are posted in [PR147](https://github.com/nathanxiangang-web/index-core/pull/147).
+  Read that receipt for completed checks; this measurement document does not
+  convert a pending check or a performance failure into PASS.
+
+At200ms, five real source calls per mirror observation imply an ideal ceiling
+near60 observations/minute and at least~400s of request-start budget for400
+directories, before SQL/admission/runtime costs. Increasing readers cannot remove
+that request budget. F1's one-fast-slot-per-Root/cycle also bounds burst service.
+F2 needs separately reviewed capacity-aware rolling cohorts/backpressure and an
+identity/epoch-fenced Watch lifecycle. Investigate the measured SQL read burden
+with preserved identity, Snapshot, parent/root, Journal and deletion fences.
+No production F1/F2/reader switch, second writer or unrelated PR integration is
+authorized or included. Issues134/138 remain OPEN.

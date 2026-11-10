@@ -5,6 +5,10 @@ set -uo pipefail
 : "${INDEXCORE_REPLAY_EVIDENCE_DIR:?Set a new, empty evidence directory}"
 export INDEXCORE_ISSUE138_DISPOSABLE=owned-disposable-only
 mkdir -p "$INDEXCORE_REPLAY_EVIDENCE_DIR"
+if [ -n "$(find "$INDEXCORE_REPLAY_EVIDENCE_DIR" -mindepth 1 -print -quit)" ]; then
+  printf 'Refusing to overwrite existing replay evidence\n' >&2
+  exit 2
+fi
 status=0
 for mode in baseline f1 f2; do
   INDEXCORE_ISSUE134_REPLAY="$mode" go test -json -count=1 -timeout=12m -run '^TestIssue134SchedulingReplay$' ./internal/runtime/app >"$INDEXCORE_REPLAY_EVIDENCE_DIR/test-$mode.jsonl" 2>&1

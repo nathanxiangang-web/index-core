@@ -3,6 +3,7 @@ package incrementalexec_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nathanxiangang-web/index-core/internal/incremental/state"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/incrementalexec"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/incrementalorch"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/scan"
@@ -172,4 +174,45 @@ func TestIssue134MirrorReplay20K(t *testing.T) {
 	write(result)
 	bytes, _ := json.Marshal(result)
 	t.Log("ISSUE134_REPLAY_20K " + string(bytes))
+	// Separate read-only SQL/EXPLAIN samples after the timed source experiment.
+	// Their durations are not relabeled as the serial admission critical path.
+	f3QueryEvidence(t, f, 20000)
+}
+
+// Isolate selector plans with a real pending first-discovery candidate. The
+// 20K probe often has no fresh candidate; it cannot explain the F1 hot path.
+func TestIssue134ReplaySelectorSQL(t *testing.T) {
+	testutil.Issue134Pool(t)
+	f := f2Setup(t, 0)
+	f3Seed(t, f, 500)
+	h := f3AttachHTTP(t, f, 0)
+	h.qualified.Store(true)
+	ctx := context.Background()
+	lock, e := f.st.AcquireWriterLock(ctx)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer lock.Release(ctx)
+	for i := 0; i < 500; i++ {
+		scope := fmt.Sprintf("/g%04d", i/100)
+		if i%100 != 0 {
+			scope += fmt.Sprintf("/d%02d", i%100)
+		}
+		if _, e := f.st.MergeSignal(ctx, state.DirtySignal{RootID: f.root, ScopeKey: scope, Source: state.SourceRecovery, Reason: state.ReasonPossibleChange, Priority: state.PriorityNormal, SeenAt: f.now().Add(-time.Hour)}); e != nil {
+			t.Fatal(e)
+		}
+	}
+	entries := []map[string]any{}
+	for g := 0; g < 5; g++ {
+		entries = append(entries, p4Dir(fmt.Sprintf("g%04d", g)))
+	}
+	for i := 0; i < 12; i++ {
+		entries = append(entries, p4Dir(fmt.Sprintf("fresh%02d", i)))
+	}
+	f.mock.set("/library", entries...)
+	f.parent(t, "/")
+	if _, found, e := f.st.NextFirstDiscoveryWork(ctx, f.now(), nil); e != nil || !found {
+		t.Fatal("SQL profile lacks eligible first discovery", found, e)
+	}
+	f3QueryEvidence(t, f, 500)
 }

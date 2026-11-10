@@ -1,0 +1,91 @@
+{
+  "base_sha": "9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e",
+  "app_code_sha": "d592785ed9175e4d486d624a1332b42e22e59566",
+  "initial_recorder_sha256": "f146185a4ae10eb0e0c7c61fe578333132cc1074b135cb157f11ebee39dde75f",
+  "files": [
+    {
+      "label": "baseline",
+      "name": "baseline.ndjson",
+      "bytes": 483763,
+      "records": 2526,
+      "sha256": "25e31034c160c0ed6775cb4494d9a026229cb0b1d4779c08f73ba33e919dbaa0"
+    },
+    {
+      "label": "f1",
+      "name": "f1.ndjson",
+      "bytes": 429903,
+      "records": 2220,
+      "sha256": "4f3a0e68c6369ae9a43e2b8b89b92d72ad83829d2adb5c2fe0f1ab076cf249a9"
+    },
+    {
+      "label": "f2",
+      "name": "f2.ndjson",
+      "bytes": 528035,
+      "records": 2745,
+      "sha256": "bf41d05438685d883c8fc2ce9519731a5a47009f91fb11cc9b50e71d03509c38"
+    },
+    {
+      "label": "ci-d592-baseline",
+      "name": "baseline.ndjson",
+      "bytes": 620810,
+      "records": 3284,
+      "sha256": "8e4cd44b3610eb27e69950883daec7c2044811c89994a934653d09c7a3cf17cf"
+    },
+    {
+      "label": "ci-d592-f1",
+      "name": "f1.ndjson",
+      "bytes": 624129,
+      "records": 3297,
+      "sha256": "07af1e34b3506f396cdc6a3bfa5cac520eb8a9a7e8422c15126eb9c4d3cf7714"
+    },
+    {
+      "label": "ci-d592-f2",
+      "name": "f2.ndjson",
+      "bytes": 627019,
+      "records": 3291,
+      "sha256": "ab3d203d1b7dd54c32f52bc2f608fad77558aa07fab7d6f34f9177493465acbd"
+    },
+    {
+      "label": "ci-d592-f2-20k",
+      "name": "f2-20k.ndjson",
+      "bytes": 62681,
+      "records": 627,
+      "sha256": "254d644b67d17151ae7caf46c1d445ec7df3256de85347e416bdebb72bdb1ac2"
+    },
+    {
+      "label": "resources",
+      "name": "pg-resources.ndjson",
+      "bytes": 131322,
+      "records": 424,
+      "sha256": "98bf6e34cf468cc1f300f815fa503ca71e43a953811ad9180c4eeae653464706"
+    },
+    {
+      "label": "real-source-probe-initial",
+      "name": "real-source-probe-initial.ndjson",
+      "bytes": 392,
+      "records": 3,
+      "sha256": "586670bc0a0f37d776577a7f5ead743190f02af665365f74780a428f91ac359e"
+    },
+    {
+      "label": "real-source-probe",
+      "name": "real-source-probe.ndjson",
+      "bytes": 2077,
+      "records": 15,
+      "sha256": "752fd1f4ad3871412a28fe0645aa0c82b2c2efd7ab0f2d6a788c014e72bebff3"
+    },
+    {
+      "label": "real-source-explore",
+      "name": "real-source-explore.ndjson",
+      "bytes": 4346,
+      "records": 40,
+      "sha256": "df38612ef8c0eba587afa4f748fa59660a0604083c7ac4e8f3853ac384d7281a"
+    }
+  ],
+  "errata": [
+    "Initial recorder incorrectly printed timeout0; client timeout count is NOT_TRACKED. Original bytes retained.",
+    "Initial recorder inferred strict pacing from server-arrival gaps; that assertion was corrected, with exact budget-clock tests retained. All measured arrival gaps are retained.",
+    "Initial source probe POSTed the read topology route and misclassified a non-JSON response as transport_error; corrected GET returned API403.",
+    "Local failed deadlines remain failures; no duration or freshness criterion was relaxed. CI machines are separate from the serial host comparison."
+  ],
+  "compressed_sha256": "d830bd812b6c28f1789d5a8cb605b914418c018ffc0a5b71a739af3f79e7d428"
+}
