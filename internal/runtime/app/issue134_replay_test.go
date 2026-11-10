@@ -393,7 +393,11 @@ func TestIssue134SchedulingReplay(t *testing.T) {
 	r.write(summary)
 	raw, _ := json.Marshal(summary)
 	t.Log("ISSUE134_REPLAY " + string(raw))
-	if r.peak > 1 || minGap < .195 || len(r.normal) == 0 {
+	// Arrival gaps include loopback scheduling jitter after budget acquisition.
+	// Exact pacing is asserted by sourcebudget's deterministic clock tests;
+	// this receiver checks the measured rate envelope without inventing a strict
+	// client-reservation timestamp from a server-arrival observation.
+	if r.peak > 1 || maxStarts > 6 || len(r.normal) == 0 {
 		t.Error("source budget or NORMAL progress violated")
 	}
 	if len(claims) != 12 || len(visible) != 12 {

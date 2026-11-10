@@ -25,7 +25,7 @@ jobs:
           POSTGRES_DB: postgres
         ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U indexcore"
+          --health-cmd "pg_isready -U indexcore -d postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
