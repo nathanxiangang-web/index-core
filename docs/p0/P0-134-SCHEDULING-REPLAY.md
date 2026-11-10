@@ -114,7 +114,14 @@ It does not inject provider files or certify F1/F2 freshness/scale.
 Tokens, source paths/names and provider bodies stay in a private host directory
 and are excluded from the repository and public evidence.
 
-## Same-host serial results (2026-11-10)
+## Initial same-host serial results (2026-11-10, retained history)
+
+These initial traces predate the replay-clock correction: the start timestamp
+included queue preparation, so a slow host could cross the+5s source-release
+threshold before Runtime.Run. They remain diagnostic history, not final proof
+of a mid-scan injection. The corrected harness starts its clock after startup
+preparation; final-clock reruns and per-head receipts are linked from PR147.
+The exact-head CI replay matrix also enables Race for the telemetry itself.
 
 The requested host ran a separate PG18 container, CPU0.5/memory384MiB,
 GOMAXPROCS1/GOMEMLIMIT256MiB. These are deliberately disclosed resource ceilings,
