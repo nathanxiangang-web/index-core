@@ -285,13 +285,7 @@ func TestIssue134SchedulingReplay(t *testing.T) {
 	seq := int64(0)
 	lastGen := int64(0)
 	deadline := r.start.Add(480 * time.Second)
-	for time.Now().Before(deadline) {
-		select {
-		case <-ticker.C:
-		case e := <-done:
-			done <- e
-			t.Fatal("runtime exited", e)
-		}
+	observeJournal:=func() {
 		events, e := qr.ReadJournal(ctx, root, seq, 1000)
 		if e != nil {
 			t.Fatal(e)
@@ -316,6 +310,15 @@ func TestIssue134SchedulingReplay(t *testing.T) {
 			seq = ev.EventSeq
 			lastGen = ev.GenerationNumber
 		}
+	}
+	for time.Now().Before(deadline) {
+		select {
+		case <-ticker.C:
+		case e := <-done:
+			done <- e
+			t.Fatal("runtime exited", e)
+		}
+		observeJournal()
 		var watches, dueCount, pending, locks int
 		var debt float64
 		var dbBytes, reads, hits int64
@@ -337,6 +340,9 @@ func TestIssue134SchedulingReplay(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("drain timeout")
 	}
+	// Include any commit between the final polling tick and the joined drain.
+	observeJournal()
+	srv.Close()
 	claims, visible := []float64{}, []float64{}
 	r.mu.Lock()
 	for i := 0; i < 12; i++ {

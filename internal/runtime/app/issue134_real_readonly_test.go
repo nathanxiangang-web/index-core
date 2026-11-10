@@ -163,12 +163,20 @@ func TestIssue134RealSourceReadOnly(t *testing.T) {
 			if ev.EventSeq != seq+1 || ev.EventType == domain.EventResourceRemoved || ev.ResourceID == nil {
 				t.Fatal("real source Q8 ordering/absence")
 			}
+			var producing string
+			if e = pool.QueryRow(ctx, `SELECT produced_by_snapshot_id::text FROM index_generation WHERE root_id=$1 AND generation_number=$2`, root, ev.GenerationNumber).Scan(&producing); e != nil || producing != result.SnapshotID {
+				t.Fatal("real source producing generation/Snapshot")
+			}
 			seq = ev.EventSeq
 		}
 		identities = paths
 		write(map[string]any{"kind": "round", "round": round, "snapshot": result.SnapshotID, "canonical_count": len(paths), "q8_sequence": seq, "status": result.Outcome.Status, "elapsed_seconds": time.Since(start).Seconds()})
 	}
-	if calls != 3 || evidenceErr != nil {
+	server.Close()
+	mu.Lock()
+	actualCalls, recordingError := calls, evidenceErr
+	mu.Unlock()
+	if actualCalls != 3 || recordingError != nil {
 		t.Fatal("invalid source/evidence request accounting")
 	}
 	hash := sha256.Sum256([]byte(secret.Chosen.Path))

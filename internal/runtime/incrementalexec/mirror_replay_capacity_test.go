@@ -154,17 +154,21 @@ func TestIssue134MirrorReplay20K(t *testing.T) {
 		write(map[string]any{"kind": "cycle", "round": round, "due_emitted": res.DueEmitted, "succeeded": res.Executor.Succeeded})
 		sample(round)
 	}
-	if writeErr != nil {
-		t.Fatal(writeErr)
+	server.Close()
+	mu.Lock()
+	recordingError, actualCalls := writeErr, calls
+	mu.Unlock()
+	if recordingError != nil {
+		t.Fatal(recordingError)
 	}
-	if h.calls.Load() == 0 || calls < int(h.calls.Load()) || lastCount < firstCount {
+	if h.calls.Load() == 0 || actualCalls < int(h.calls.Load()) || lastCount < firstCount {
 		t.Fatal("invalid/no-source capacity evidence")
 	}
 	verdict := "NOT_VERIFIED"
 	if lastDebt > initialDebt {
 		verdict = "NO-GO"
 	}
-	result := map[string]any{"kind": "summary", "verdict": verdict, "f1": false, "actual_lists": h.calls.Load(), "actual_http_requests": calls, "wall_seconds": time.Since(start).Seconds(), "initial_watches": firstCount, "final_watches": lastCount, "retired": 0, "automatic_retirement": "ABSENT", "initial_debt_seconds": initialDebt, "final_debt_seconds": lastDebt, "full_traversal": false}
+	result := map[string]any{"kind": "summary", "verdict": verdict, "f1": false, "actual_lists": h.calls.Load(), "actual_http_requests": actualCalls, "wall_seconds": time.Since(start).Seconds(), "initial_watches": firstCount, "final_watches": lastCount, "retired": firstCount - lastCount, "automatic_retirement": "ABSENT", "initial_debt_seconds": initialDebt, "final_debt_seconds": lastDebt, "full_traversal": false}
 	write(result)
 	bytes, _ := json.Marshal(result)
 	t.Log("ISSUE134_REPLAY_20K " + string(bytes))
