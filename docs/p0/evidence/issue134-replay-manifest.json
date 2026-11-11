@@ -85,7 +85,10 @@
     "Initial recorder incorrectly printed timeout0; client timeout count is NOT_TRACKED. Original bytes retained.",
     "Initial recorder inferred strict pacing from server-arrival gaps; that assertion was corrected, with exact budget-clock tests retained. All measured arrival gaps are retained.",
     "Initial source probe POSTed the read topology route and misclassified a non-JSON response as transport_error; corrected GET returned API403.",
-    "Local failed deadlines remain failures; no duration or freshness criterion was relaxed. CI machines are separate from the serial host comparison."
+    "Local failed deadlines remain failures; no duration or freshness criterion was relaxed. CI machines are separate from the serial host comparison.",
+    "Initial clock included queue preparation; these historical traces do not certify mid-scan injection. Corrected-clock evidence is separate.",
+    "Initial local archive used CRLF working-tree bytes; normalized source matched Git and exact LF source was used for final runs.",
+    "Older 20K retired field is net Watch count decrease, not retirement events; actual event counter NOT_TRACKED."
   ],
   "compressed_sha256": "d830bd812b6c28f1789d5a8cb605b914418c018ffc0a5b71a739af3f79e7d428"
 }

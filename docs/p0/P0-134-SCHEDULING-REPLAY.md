@@ -114,6 +114,98 @@ It does not inject provider files or certify F1/F2 freshness/scale.
 Tokens, source paths/names and provider bodies stay in a private host directory
 and are excluded from the repository and public evidence.
 
+## Corrected-clock final measurements (2026-11-10 UTC; retained initial traces below)
+
+The app replay code is `203afc0d17e00bb7518b79ad87bb76993751a384`.
+Each LF-exported source file matched its Git blob. The clock begins after queue
+preparation and startup recovery. All three final traces contain six real old
+scope claims before first source observation of the new directories. They prove
+a mid-scan injection; the earlier pre-correction traces do not replace this gate.
+
+| 指标 | OFF/OFF 基线 | F1 ON/OFF | F2 OFF/120s |
+| --- | ---: | ---: | ---: |
+| 新目录→Claim P50/P95/P99 秒 | NOT_TRACKED（0/12） | 60.74/121.22/121.22 | NOT_TRACKED（0/12） |
+| 新目录→目录本身 Q5/Q8 P50/P95/P99 秒 | 4.01/4.10/4.10 | 3.00/3.05/3.05 | 2.86/2.99/2.99 |
+| 新目录→子文件 Q5/Q8 P50/P95/P99 秒 | NOT_TRACKED（0/12） | 62.82/123.87/123.87 | NOT_TRACKED（0/12） |
+| NORMAL 等待 P50/P95/最大 秒 | 245.47/467.06/485.74 | 272.25/462.87/486.60 | 251.32/461.27/487.04 |
+| NORMAL 实际执行 epoch 样本数 | 341 | 225 | 347 |
+| 实际 HTTP / 目录列表读取次数 | 1780/356 | 1314/263 | 1808/362 |
+| 重复 scope 执行数 / 比例 | 14/3.93% | 13/4.94% | 14/3.87% |
+| HOT Root / 全部读取次数 | 15/356 (4.21%) | 14/263 (5.32%) | 15/362 (4.14%) |
+| 实际 HTTP 启动最大数量 / 锚定秒 | 5 | 5 | 5 |
+| HTTP 并发峰值 | 1 | 1 | 1 |
+| HTTP429 / HTTP5xx | 0/0 | 0/0 | 0/0 |
+| 客户端超时计数 | NOT_TRACKED | NOT_TRACKED | NOT_TRACKED |
+| 窗口结束时新目录子文件可见数 | 0/12 | 12/12 | 0/12 |
+| 迟到文件可见 | False | False | False |
+| Watch 首→末 / 净增长 | 1→1 / 0 | 1→1 / 0 | 1→414 / 413 |
+| 退休事件计数 / 自动退休能力 | NOT_TRACKED / 缺失 | NOT_TRACKED / 缺失 | NOT_TRACKED / 缺失 |
+| Freshness Debt 首→末 逾期秒 | 0.00→0.00 | 0.00→0.00 | 0.00→74672.70 |
+| 末尾 due Watch 数 | 0 | 0 | 327 |
+| PG 容器采样 CPU 峰值 % | 51.00 | 50.13 | 37.69 |
+| PG 容器采样内存峰值 MiB | 40.70 | 43.41 | 43.06 |
+| PG 逻辑块命中 / 块读取增量 | 725233/15 | 5496033/15 | 700621/15 |
+| 末尾数据库大小 MiB | 15.40 | 15.82 | 15.37 |
+| 采样锁等待会话最大值 | 0 | 0 | 0 |
+
+Units and limits: q5q8 in the legacy summary/analyzer key means child-file
+visibility. The analyzer now exposes directory visibility separately. A visible
+directory is not proof that its children were scanned. Zero finished samples
+are right-censored, not zero latency. NORMAL epochs include actual queued time
+before Runtime.Run, so their maximum may exceed480s. Only completed epochs enter
+their quantiles. Repeated scopes include intentional root revisits.
+
+Each mode has96 PG container resource samples. Lock wait duration, exact client
+wire-starts and transport timeout totals remain NOT_TRACKED. Receiver timestamps
+and every per-second bucket remain in raw evidence; arrival jitter is not an
+exact client reservation clock. All observed HTTP statuses were200, concurrency1,
+and the maximum receiver starts in an anchored second was5.
+
+F1: **FIX**. Priority changes actual claims and canonical visibility, but its
+P95 exceeds60s and the late file misses the480s window. NORMAL work progresses;
+one finite single-root run does not prove infinite-arrival or cross-root fairness.
+F1 has7.58x the baseline logical block-hit increment and26.12%
+fewer lists. These counters motivate profiling; they do not attribute the whole
+critical path to one SQL statement.
+
+F2: **NO-GO**. The final400-level run still misses new child files and accumulates
+debt. The host20K run performs15 actual lists /
+75 HTTP in134.89s; debt grows
+420302.44->3114143.36 overdue-seconds.
+Watch20001->20001 is not a sustainable-service proof. The older field `retired`
+was only net Watch-count decrease; event counts are NOT_TRACKED. The recorder now
+names the net value explicitly. Automatic retirement remains absent.
+
+Independent corrected-clock Race CI203afc run
+[42813050973](https://github.com/nathanxiangang-web/index-core/actions/runs/42813050973)
+has first-claim P95451.05/
+88.76/435.39s
+and child visibility P95452.56/
+90.56/436.57s.
+Its F1 freshness gate fails; baseline/F2 gates pass. Its20K evidence still says
+NO-GO despite evidence-test exit0. The full regression CI203afc
+[42813050726](https://github.com/nathanxiangang-web/index-core/actions/runs/42813050726)
+passes PG18/vet/build and all listed race/crash gates. Separate hosted machines
+are an independent repetition, not the primary same-host comparison.
+
+Local LF full PG18:745 test passes,4 failures,119 skips. Related Race:210 passes,
+2 failures,6 skips; no DATA RACE report. Failures concern retry timestamps,
+wall-deadline claim preconditions and a30ms overlap fixture. Unchanged-main
+counterfactuals reproduce the two wall-deadline failures and the overlap failure.
+The retry and hundred-folder cases pass their single main control; their local
+full-suite failures remain unresolved. Counts include subtest events, and no
+failed gate is converted to green.
+The500-selector and20K Race probes and the real read-only source proof pass.
+The latter performs3 real reads,72 stable identities and72 ordered Q8 events,
+with no source writes or stronger deletion proof.
+
+Final streams, all resource samples and original SHA256 values are in
+`evidence/issue134-finalclock-20261110.ndjson.gz`, its manifest and summary.
+Original Go JSON logs, EXPLAIN/BUFFERS plans and per-head CI/cleanup receipts are
+included in the Owner evidence bundle and summarized on PR147. The owned PG18
+container and its anonymous volume were removed after all serial experiments;
+its OOM/restart counters were0. Temporary real-source credentials were removed.
+
 ## Initial same-host serial results (2026-11-10, retained history)
 
 These initial traces predate the replay-clock correction: the start timestamp
@@ -180,7 +272,7 @@ all12 fresh files visible. These results independently reproduce F1's benefit,
 but do not replace the retained host failures or certify the60s target.
 
 The same CI F2-only20K experiment performed60 actual lists /300 actual HTTP in
-130.15s. Watch20001->20001, retired0, debt32048.63->2627484.56 overdue-seconds.
+130.15s. Watch20001->20001, net count decrease0 (retirement events NOT_TRACKED), debt32048.63->2627484.56 overdue-seconds.
 Capacity disposition: **NO-GO**. This is a finite due-storm rejection with20K
 SQL-seeded directories, not a full20K source traversal or a steady-state soak.
 F1+F2 combined validation remains NOT_RUN because the independent gates did not

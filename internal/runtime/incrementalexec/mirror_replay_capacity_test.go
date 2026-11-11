@@ -170,7 +170,8 @@ func TestIssue134MirrorReplay20K(t *testing.T) {
 	if lastDebt > initialDebt {
 		verdict = "NO-GO"
 	}
-	result := map[string]any{"kind": "summary", "verdict": verdict, "f1": false, "actual_lists": h.calls.Load(), "actual_http_requests": actualCalls, "wall_seconds": time.Since(start).Seconds(), "initial_watches": firstCount, "final_watches": lastCount, "retired": firstCount - lastCount, "automatic_retirement": "ABSENT", "initial_debt_seconds": initialDebt, "final_debt_seconds": lastDebt, "full_traversal": false}
+	// Net Watch cardinality is not an event counter; no retirement telemetry exists.
+	result := map[string]any{"kind": "summary", "verdict": verdict, "f1": false, "actual_lists": h.calls.Load(), "actual_http_requests": actualCalls, "wall_seconds": time.Since(start).Seconds(), "initial_watches": firstCount, "final_watches": lastCount, "watch_count_net_decrease": firstCount - lastCount, "retirement_events": "NOT_TRACKED", "automatic_retirement": "ABSENT", "initial_debt_seconds": initialDebt, "final_debt_seconds": lastDebt, "full_traversal": false}
 	write(result)
 	bytes, _ := json.Marshal(result)
 	t.Log("ISSUE134_REPLAY_20K " + string(bytes))

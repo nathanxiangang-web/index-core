@@ -37,6 +37,7 @@ def analyze(path):
             normal_wait.append(instant(row['claimed_at']) - instant(row['first_seen_at']))
     visible = {row['path']: instant(row['at']) for row in rows if row['kind'] == 'visible'}
     claim_latencies = [first_claim[scope]-at for scope, at in discovered.items() if scope in first_claim]
+    directory_visibility_latencies = [visible[scope]-at for scope, at in discovered.items() if scope in visible]
     visibility_latencies = [visible[scope+'/new.bin']-at for scope, at in discovered.items() if scope+'/new.bin' in visible]
     starts = sorted(instant(row['start']) for row in http)
     per_second = collections.Counter(math.floor(at-start) for at in starts)
@@ -51,10 +52,17 @@ def analyze(path):
         'http_peak_active': max((row['active_at_start'] for row in http), default=0),
         'list_executions': len(claims), 'repeated_scope_executions': duplicate_executions,
         'repeated_scope_ratio': duplicate_executions/len(claims) if claims else None,
+        'distinct_claimed_scopes': len(counts), 'root_scope_executions': counts['/'],
+        'root_scope_execution_ratio': counts['/']/len(claims) if claims else None,
+        'new_directory_availability_to_first_observation_seconds':
+            min(discovered.values())-instant(workload['new_directories_at']) if discovered else 'NOT_TRACKED',
         'normal_claim_wait_seconds': quantiles(normal_wait),
         'new_directory_to_claim_seconds': quantiles(claim_latencies),
         'new_directory_to_q5q8_seconds': quantiles(visibility_latencies),
+        'new_directory_to_directory_q5q8_seconds': quantiles(directory_visibility_latencies),
+        'new_directory_to_child_file_q5q8_seconds': quantiles(visibility_latencies),
         'new_directory_samples_expected': 12,
+        'q5q8_visible_new_directories': sum(scope in visible for scope in discovered),
         'q5q8_visible_new_files': sum('/fresh' in p and p.endswith('/new.bin') for p in visible),
         'late_file_visible': '/d000000/late.bin' in visible,
         'watch_first': samples[0] if samples else 'NOT_TRACKED',
