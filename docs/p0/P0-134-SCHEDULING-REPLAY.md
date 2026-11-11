@@ -206,6 +206,24 @@ included in the Owner evidence bundle and summarized on PR147. The owned PG18
 container and its anonymous volume were removed after all serial experiments;
 its OOM/restart counters were0. Temporary real-source credentials were removed.
 
+## Follow-up: exhausted-candidate SQL probe
+
+The60s raw-event bins show high F1 block-hit growth continues during240-480s,
+after fresh/nested scans and visibility events stop. This rules out attributing
+all of the difference simply to extra new-file writes; it does not identify one
+query as the cause. See `evidence/issue134-replay-60s-bins.json`.
+
+The selector probe now profiles both12 eligible fresh candidates and the same500
+known pending scopes after real serial scans consume all12 fresh candidates.
+Both phases run under the writer fence. The exhausted query returns0 rows:
+1.970ms execution,34.769ms planning,17 execution shared hits; client P50/P95/P99
+42/147/147ms (N10). The eligible phase is8.701ms execution,44.687ms planning,
+153 execution shared hits. This smaller fixture does not reproduce the complete
+Runtime read amplification, so production SQL remains unchanged. Planning and
+execution timings are not relabeled as per-admission costs. Original Go JSON is
+in `evidence/issue134-selector-phases-20261111.jsonl.gz` with a separate manifest.
+It is a SQL diagnostic fixture, not another timed200ms source-budget comparison.
+
 ## Initial same-host serial results (2026-11-10, retained history)
 
 These initial traces predate the replay-clock correction: the start timestamp

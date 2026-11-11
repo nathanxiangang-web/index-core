@@ -215,5 +215,19 @@ func TestIssue134ReplaySelectorSQL(t *testing.T) {
 	if _, found, e := f.st.NextFirstDiscoveryWork(ctx, f.now(), nil); e != nil || !found {
 		t.Fatal("SQL profile lacks eligible first discovery", found, e)
 	}
-	f3QueryEvidence(t, f, 500)
+	t.Run("eligible", func(t *testing.T) { f3QueryEvidence(t, f, 500) })
+	// Match the long tail of the real F1 replay: known NORMAL work is still
+	// pending after all fresh scopes have been verified. Use real serial scans
+	// to consume the fresh candidates; do not manufacture verification history.
+	for i := 0; i < 12; i++ {
+		f.parent(t, fmt.Sprintf("/fresh%02d", i))
+	}
+	if _, found, e := f.st.NextFirstDiscoveryWork(ctx, f.now(), nil); e != nil || found {
+		t.Fatal("SQL exhausted profile still has first discovery", found, e)
+	}
+	var pending int
+	if e := f.st.Pool().QueryRow(ctx, `SELECT count(*) FROM index_dirty_scope_work WHERE work_state='PENDING'`).Scan(&pending); e != nil || pending != 500 {
+		t.Fatal("SQL exhausted profile lost known backlog", pending, e)
+	}
+	t.Run("exhausted", func(t *testing.T) { f3QueryEvidence(t, f, 500) })
 }
