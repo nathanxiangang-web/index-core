@@ -1,0 +1,73 @@
+name: Issue134 scheduling replay
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    name: PG18 / ${{ matrix.mode }} / 200ms
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [baseline, f1, f2, f2-20k]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: indexcore
+          POSTGRES_PASSWORD: indexcore
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U indexcore -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      INDEXCORE_TEST_DATABASE_URL: postgres://indexcore:indexcore@127.0.0.1:5432/index138_test?sslmode=disable
+      INDEXCORE_ISSUE138_DISPOSABLE: owned-disposable-only
+      INDEXCORE_ISSUE134_DISPOSABLE: owned-disposable-only
+      INDEXCORE_REPLAY_EVIDENCE_DIR: ${{ github.workspace }}/evidence
+      GOMAXPROCS: '2'
+      GOMEMLIMIT: 512MiB
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Create owner-marked disposable databases
+        env:
+          PGPASSWORD: indexcore
+        run: |
+          psql -h 127.0.0.1 -U indexcore -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE DATABASE index138_test OWNER indexcore;
+          COMMENT ON DATABASE index138_test IS 'indexcore-issue138-owned-disposable';
+          CREATE DATABASE index134_test OWNER indexcore;
+          COMMENT ON DATABASE index134_test IS 'indexcore-issue134-owned-disposable';
+          SQL
+          mkdir -p evidence
+      - name: Wall-clock replay and invariant assertions
+        if: matrix.mode != 'f2-20k'
+        env:
+          INDEXCORE_ISSUE134_REPLAY: ${{ matrix.mode }}
+        run: go test -json -race -count=1 -timeout=12m -run '^TestIssue134SchedulingReplay$' ./internal/runtime/app > evidence/test.jsonl
+      - name: F2-only 20K capacity rejection evidence
+        if: matrix.mode == 'f2-20k'
+        env:
+          INDEXCORE_TEST_DATABASE_URL: postgres://indexcore:indexcore@127.0.0.1:5432/index134_test?sslmode=disable
+          INDEXCORE_ISSUE134_REPLAY_20K: '1'
+        run: go test -json -race -count=1 -timeout=8m -run '^TestIssue134MirrorReplay20K$' ./internal/runtime/incrementalexec > evidence/test.jsonl
+      - name: Retain raw evidence including failed runs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue134-${{ matrix.mode }}-${{ github.sha }}
+          path: evidence/
+          retention-days: 30

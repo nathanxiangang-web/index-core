@@ -1,0 +1,87 @@
+{
+  "base_sha": "9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e",
+  "corrected_replay_head": "203afc0d17e00bb7518b79ad87bb76993751a384",
+  "local_regression_head": "9bf7bd3a866ac3caf41b3ea05bbed3c096252f6c",
+  "ci_run": 42813050973,
+  "files": [
+    {
+      "label": "ci-203afc-baseline",
+      "name": "baseline.ndjson",
+      "bytes": 616228,
+      "records": 3259,
+      "sha256": "6ea9e3d96c1203f642b75a9c73d84a9fe42e4387489fde8d7747451017fd0a58"
+    },
+    {
+      "label": "ci-203afc-f1",
+      "name": "f1.ndjson",
+      "bytes": 593863,
+      "records": 3127,
+      "sha256": "ef540ba4b7429126eafd823748e11cf2e857db8492b235ac79a8f0447a59ada9"
+    },
+    {
+      "label": "ci-203afc-f2",
+      "name": "f2.ndjson",
+      "bytes": 625970,
+      "records": 3285,
+      "sha256": "ac8306c4e44c2723c4de9702584b3aba09066888072fbe465ef8b4b691a102e1"
+    },
+    {
+      "label": "ci-203afc-f2-20k",
+      "name": "f2-20k.ndjson",
+      "bytes": 57521,
+      "records": 575,
+      "sha256": "55c084910ec4ac03d2cb118069ec3e333cee925bdf52d83c04fd5b0eb215da92"
+    },
+    {
+      "label": "pg-resource-complete",
+      "name": "pg-resources.ndjson",
+      "bytes": 5482244,
+      "records": 17797,
+      "sha256": "be8d21c8b740e7f282983172d7c849d40c233f484878957c0190a92d5983591d"
+    },
+    {
+      "label": "host-203afc-baseline",
+      "name": "baseline.ndjson",
+      "bytes": 506329,
+      "records": 2642,
+      "sha256": "cb6eda8840bc54610c8eb92c3a6f6b8a9353f1140dc0e23649510dd89cb7bfd1"
+    },
+    {
+      "label": "host-203afc-f1",
+      "name": "f1.ndjson",
+      "bytes": 413536,
+      "records": 2119,
+      "sha256": "afc299ee2a21a75787d8f4f7ab609af4ea2903d48314f9359d486eaa0b554b3f"
+    },
+    {
+      "label": "host-203afc-f2",
+      "name": "f2.ndjson",
+      "bytes": 517483,
+      "records": 2676,
+      "sha256": "49057bb4cb01b587211182de83017b3bd25377aa92781a91e3ab113fa8b702cc"
+    },
+    {
+      "label": "host-9bf7-f2-20k",
+      "name": "f2-20k.ndjson",
+      "bytes": 16292,
+      "records": 159,
+      "sha256": "69c6d4f0199f5edcd4636f8881aeb1909b43b8481437b86b61543ac41f7cd12f"
+    },
+    {
+      "label": "real-source-readonly",
+      "name": "real-source-readonly.ndjson",
+      "bytes": 1551,
+      "records": 10,
+      "sha256": "7de22ecda202b5bbe015caae853af08f48ed1f5a69c477423f24e0c461a6c870"
+    }
+  ],
+  "limits": [
+    "Receiver arrival is not exact wire-start time; client timeout count NOT_TRACKED.",
+    "20K is SQL-seeded finite due-storm, not full source traversal.",
+    "Initial-clock/CRLF history is retained in the separate initial archive.",
+    "Local PG CPU0.5/memory384MiB; shared host background load not isolated.",
+    "CI jobs use separate hosted machines; same-host comparison is separate.",
+    "Older 20K summaries named net Watch-count decrease retired; this is not an event counter. Retirement events NOT_TRACKED. Original rows retained."
+  ],
+  "compressed_sha256": "b67d8cc4dde34870bdd96f4c2e78f4e61b8267ab8340844c2ac33ad44b342b8d"
+}

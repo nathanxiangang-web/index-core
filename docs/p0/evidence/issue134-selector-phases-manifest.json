@@ -1,0 +1,36 @@
+{
+  "base_sha": "2506a7cf1a5f8e73708c88437d036398e17a16b2",
+  "overlay_sha256": "47f4eded4513e6841236a5b27567f019c86658e6c1c59ed2cd09a5e8fc2409f1",
+  "raw_sha256": "c8cad0d22371c6f270c4f5f196e32ee1fae1d3876b69a7ae087e4e4d404b1de4",
+  "gzip_sha256": "3ea80add5351c6a07747bf833402165d15fd1e09ebea141fc755cd5c57c19d3f",
+  "raw_bytes": 833542,
+  "test_exit": 0,
+  "phases": [
+    "eligible",
+    "exhausted"
+  ],
+  "fixture_known_pending": 500,
+  "fresh_consumed_via_serial_scans": 12,
+  "scope": "SQL probe, not the primary 200ms replay",
+  "finding": "exhausted query execution1.970ms, planning34.769ms, execution17 shared hits; whole-runtime amplification not isolated",
+  "production_sql_changed": false,
+  "execution_provenance": {
+    "base_sha": "2506a7cf1a5f8e73708c88437d036398e17a16b2",
+    "overlay_file": "internal/runtime/incrementalexec/mirror_replay_capacity_test.go",
+    "overlay_sha256": "47f4eded4513e6841236a5b27567f019c86658e6c1c59ed2cd09a5e8fc2409f1",
+    "executed_overlay_sha256": "47f4eded4513e6841236a5b27567f019c86658e6c1c59ed2cd09a5e8fc2409f1",
+    "postgres_version_num": "180006",
+    "container_id": "b490f250a4930ceac4d9322a7f364f638fe12bfbd596ee7b89b37668481ab487",
+    "owner": "issue134-profile-20261111",
+    "nano_cpus": 500000000,
+    "memory_bytes": 402653184,
+    "restart_count": 0,
+    "oom_killed": false,
+    "production_source_changed": false,
+    "primary_replay_budget_claim": false,
+    "fixture": "500 known pending; 12 fresh candidates consumed through real serial scans; same remaining known backlog",
+    "test_exit": 0,
+    "container_removed": true,
+    "closed_at": "2026-11-11T12:02:28.228860+00:00"
+  }
+}
