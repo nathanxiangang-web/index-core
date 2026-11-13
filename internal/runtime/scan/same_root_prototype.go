@@ -159,7 +159,7 @@ func (p *SameRootPrototype) FetchBatch(ctx context.Context, claims []state.Dirty
 					errs[i] = ctx.Err()
 					continue
 				}
-				obs[i], errs[i] = p.s.readScope(ctx, claims[i].RootID, claims[i].ScopeKey, 1000)
+				obs[i], errs[i] = p.s.readClaimedScope(ctx, claims[i], 1000)
 				if errs[i] != nil {
 					cancel()
 				}

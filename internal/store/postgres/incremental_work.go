@@ -570,6 +570,16 @@ func (s *Store) completeDiscovery(ctx context.Context, rootID, scopeKey string, 
 	if len(children) > 0 && !activeFromLifecycle(lifecycle) {
 		return state.DirtyScopeWork{}, fmt.Errorf("discovery: root is not active")
 	}
+	if s.rolling != nil {
+		if _, err := lockMirrorAdapter(ctx, tx, rootID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return state.DirtyScopeWork{}, err
+		}
+		if len(children) > 0 {
+			if _, err := tx.Exec(ctx, `INSERT INTO index_mirror_root_budget(root_id) VALUES($1) ON CONFLICT DO NOTHING`, rootID); err != nil {
+				return state.DirtyScopeWork{}, err
+			}
+		}
+	}
 	if _, _, err := lockWatchForUpdate(ctx, tx, rootID, scopeKey); err != nil {
 		return state.DirtyScopeWork{}, err
 	}
@@ -638,6 +648,13 @@ func (s *Store) completeDiscovery(ctx context.Context, rootID, scopeKey string, 
 
 	out, err := writeWork(ctx, tx, wk)
 	if err != nil {
+		return state.DirtyScopeWork{}, err
+	}
+	var proof mirrorProof
+	if policy != nil {
+		proof = policy.proofs[scopeKey]
+	}
+	if err := s.completeMirrorReservation(ctx, tx, rootID, scopeKey, claimedSignalSeq, now, proof); err != nil {
 		return state.DirtyScopeWork{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

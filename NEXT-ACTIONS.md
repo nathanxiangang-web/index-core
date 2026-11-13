@@ -1,5 +1,14 @@
 # Index Core — Next Actions
 
+## 2026-11-13 F4 candidate review gate
+
+Review the separate Owner-authorized [F4 candidate](docs/p0/P0-134-F4-ROLLING.md)
+and proposed ADR013/migration0006. Keep Issue134 open;20K freshness remains
+NO-GO despite bounded new poll reservations. Verify exact-head CI and independent
+architecture review before merge. No production flag/reader/config change.
+Next evidence: whole-Root authoritative prior scaling, F1-only profiling,
+legacy-POLL transition and sustained multi-Root churn/lease validation.
+
 ## Current P0 Reliability execution (2026-10-20)
 
 Issue120 tracks a new production-reliability program, NOT the earlier accepted

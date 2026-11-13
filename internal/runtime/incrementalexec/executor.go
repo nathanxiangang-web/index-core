@@ -238,7 +238,7 @@ func (e *Executor) completeScan(ctx context.Context, res Result, claimed state.D
 	}
 	var done state.DirtyScopeWork
 	var err error
-	if len(children) > 0 && scanRes.MirrorPresence && e.cfg.MirrorRevisitInterval > 0 {
+	if (len(children) > 0 || e.cfg.MirrorRollingEnabled) && scanRes.MirrorPresence && e.cfg.MirrorRevisitInterval > 0 {
 		done, res.Discovery, err = e.store.(MirrorDiscoveryStore).CompleteSuccessWithMirrorChildren(ctx, claimed.RootID, claimed.ScopeKey, *claimed.ClaimedSignalSeq, children, e.cfg.DiscoveryScope, completionNow, e.cfg.MirrorRevisitInterval)
 	} else if len(children) > 0 {
 		discoveryStore, ok := e.store.(DiscoveryStore)

@@ -51,7 +51,8 @@ func (p RetryPolicy) Validate() error {
 // Config is the executor's explicit configuration: one max_entries bound and
 // three retry delays. There is no hidden scheduler cadence.
 type Config struct {
-	MaxEntriesPerScope int
+	MirrorRollingEnabled bool
+	MaxEntriesPerScope   int
 	// Empty disables child discovery. Otherwise only this subtree is expanded;
 	// each one-shot still performs exactly one provider refresh. Source mirrors
 	// also discover outside this subtree, but only this explicit non-root subtree
@@ -67,6 +68,9 @@ type Config struct {
 // invalid: max_entries must be inside the accepted P0 hard cap and every retry
 // delay strictly positive.
 func (c Config) Validate() error {
+	if c.MirrorRollingEnabled && c.MirrorRevisitInterval == 0 {
+		return fmt.Errorf("rolling completion requires mirror revisit")
+	}
 	if err := state.ValidateMirrorRevisit(c.MirrorRevisitInterval); err != nil {
 		return err
 	}

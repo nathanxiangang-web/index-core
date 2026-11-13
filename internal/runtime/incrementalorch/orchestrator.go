@@ -19,6 +19,13 @@ type DueWatchStore interface {
 	EmitDuePoll(ctx context.Context, rootID, scopeKey string, expectedWatchVersion int64, now time.Time) (state.DirtyScopeWork, error)
 }
 
+type RollingWatchStore interface {
+	PrepareMirrorRolling(context.Context) error
+	MaintainMirrorBindings(context.Context, time.Time, int) error
+	ListDueWatchesRolling(context.Context, time.Time, int) ([]state.ScopeWatchState, error)
+	EmitRollingPoll(context.Context, string, string, int64, time.Time) (state.DirtyScopeWork, error)
+}
+
 // ExecutorCycle is the accepted P5 bounded executor cycle.
 // *incrementalexec.CycleRunner satisfies it.
 type ExecutorCycle interface {
@@ -48,6 +55,7 @@ type Result struct {
 	DueAttempted   int
 	DueEmitted     int
 	DueStale       int
+	DueDeferred    int
 	MoreDueWatches bool
 
 	// MaterializationInterrupted is true when the P6-owned wall deadline
@@ -62,9 +70,10 @@ type Result struct {
 // Runner composes the accepted P3 due-poll materialization with the accepted P5
 // bounded executor cycle. RunCycle is strictly serial.
 type Runner struct {
-	store DueWatchStore
-	exec  ExecutorCycle
-	now   func() time.Time
+	store           DueWatchStore
+	exec            ExecutorCycle
+	now             func() time.Time
+	rollingPrepared bool
 }
 
 // NewRunner builds a bounded orchestration runner.
@@ -106,7 +115,26 @@ func (r *Runner) RunCycle(ctx context.Context, cfg Config) (Result, error) {
 	limit := cfg.MaxDueWatchAttempts + 1
 	var watches []state.ScopeWatchState
 	var err error
-	if cfg.MirrorRevisitEnabled {
+	var rolling RollingWatchStore
+	if cfg.MirrorRollingEnabled {
+		var ok bool
+		rolling, ok = r.store.(RollingWatchStore)
+		if !ok {
+			return r.stop(res, StopMaterializationError), errors.New("rolling requires budgeted watch store")
+		}
+		if !r.rollingPrepared {
+			err = rolling.PrepareMirrorRolling(orchCtx)
+			if err == nil {
+				r.rollingPrepared = true
+			}
+		}
+		if err == nil {
+			err = rolling.MaintainMirrorBindings(orchCtx, res.ObservedAt, 5)
+		}
+		if err == nil {
+			watches, err = rolling.ListDueWatchesRolling(orchCtx, res.ObservedAt, limit)
+		}
+	} else if cfg.MirrorRevisitEnabled {
 		fair, ok := r.store.(interface {
 			ListDueWatchesWithMirrorFairness(context.Context, time.Time, int) ([]state.ScopeWatchState, error)
 		})
@@ -142,7 +170,15 @@ func (r *Runner) RunCycle(ctx context.Context, cfg Config) (Result, error) {
 		}
 
 		res.DueAttempted++
-		if _, err := r.store.EmitDuePoll(orchCtx, w.RootID, w.ScopeKey, w.Version, res.ObservedAt); err != nil {
+		emit := r.store.EmitDuePoll
+		if rolling != nil && w.WatchState == state.WatchWarm && w.CadenceClass == "MIRROR_REVISIT" && w.Priority == state.PriorityNormal && len(w.SourceSet) == 1 && w.SourceSet[0] == state.WatchSourceBackstopEnroll {
+			emit = rolling.EmitRollingPoll
+		}
+		if _, err := emit(orchCtx, w.RootID, w.ScopeKey, w.Version, res.ObservedAt); err != nil {
+			if errors.Is(err, postgres.ErrMirrorDeferred) {
+				res.DueDeferred++
+				continue
+			}
 			if errors.Is(err, postgres.ErrStateCASConflict) {
 				// The watch changed under us: one attempt consumed, no retry, no
 				// re-read, no re-list; continue with the next snapshot row.

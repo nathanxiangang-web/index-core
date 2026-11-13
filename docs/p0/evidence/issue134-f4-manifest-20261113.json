@@ -1,0 +1,276 @@
+{
+  "base_main": "9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e",
+  "primary_replay_source_manifest": "9a4dca6e50ee703ff9d55623adcea8cbba7dcc0b43c6be7cccd436a94fda0e2f",
+  "files": {
+    "issue134-f4-legacy-20261113.ndjson.gz": {
+      "sha256": "1b8517bf2809b9d5adf5078e3cfcf2be60dc027350c34834e350b95f9bd9be69",
+      "bytes": 14126,
+      "uncompressed_sha256": "724c024548d1ad8b0710483d6ca36b36b387926d069927f30885f70cb1977b11",
+      "uncompressed_bytes": 132179
+    },
+    "issue134-f4-legacy-pg-20261113.ndjson.gz": {
+      "sha256": "66c364d6f50c10e169963ee67be88a0d5861b7446e1a74dcd2f71126e7990d25",
+      "bytes": 1334,
+      "uncompressed_sha256": "057ee8e3b3294f477bee6e084e88528e3fa9f94bb67ae7b45f96c394ed47b3e0",
+      "uncompressed_bytes": 14976
+    },
+    "issue134-f4-rolling-20261113.ndjson.gz": {
+      "sha256": "ff615ba19a4e1cc139869441f65ac344c08e2f0f999a885daf3df767d23d959f",
+      "bytes": 14124,
+      "uncompressed_sha256": "112e1f2fee8bb8521462d77e677b312609c02d62728d4da9c4318f057c09c0fb",
+      "uncompressed_bytes": 131587
+    },
+    "issue134-f4-rolling-pg-20261113.ndjson.gz": {
+      "sha256": "499cbf00867c23938b9644f44e774ad3640b87d4a90ce5073a542d39ba1d8731",
+      "bytes": 1326,
+      "uncompressed_sha256": "b1bd522c804846beb434ae16e992bd8bd6b1e05380a9955e665b879a26384fab",
+      "uncompressed_bytes": 14996
+    },
+    "issue134-f4-vet-final-20261113.log.gz": {
+      "sha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e",
+      "bytes": 20,
+      "uncompressed_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "uncompressed_bytes": 0
+    },
+    "issue134-f4-build-final-20261113.log.gz": {
+      "sha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e",
+      "bytes": 20,
+      "uncompressed_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "uncompressed_bytes": 0
+    },
+    "issue134-f4-full-final-20261113.log.gz": {
+      "sha256": "6a0d49c750a0861e7e7e8dafa94c2af7e4c895d770d6047ad9721fa3e82e8df4",
+      "bytes": 71511,
+      "uncompressed_sha256": "e55d9c642a66773c5ad4a982b64055d4b46d9d4a47418e540a4ae6485ec6a6e9",
+      "uncompressed_bytes": 1084727
+    },
+    "issue134-f4-runtime-race-final-20261113.log.gz": {
+      "sha256": "b67286851a8f44b71e2a2b1375396b5b8d4ad494fc8a27166073af1a35726940",
+      "bytes": 11724,
+      "uncompressed_sha256": "69a2b8607ed77dcdc7d3ed5dbd50f1157f602e51badaade9eab39d00987c4697",
+      "uncompressed_bytes": 175614
+    },
+    "issue134-f4-f4-race-final-20261113.log.gz": {
+      "sha256": "61c942143ab426f2b91ce522e03e1dd9b8db8b3763e2802478937d8ec7f48f17",
+      "bytes": 5383,
+      "uncompressed_sha256": "d8defc4144274e0a987e555f8681ab2aab7f3e211c0b2140a9a1184f2361c572",
+      "uncompressed_bytes": 97340
+    },
+    "issue134-f4-issue134-race-final-20261113.log.gz": {
+      "sha256": "fbf7cd8e048403bf741ad04a0f788e2bac113a2c0d43a6444ca41a059a8c2e4e",
+      "bytes": 6101,
+      "uncompressed_sha256": "5b2dbc17b49dbaf9a4c57fa78ed7240ebd9424ba2a924e0329263ec7123b835d",
+      "uncompressed_bytes": 73995
+    },
+    "issue134-f4-pool-runtime-final-20261113.log.gz": {
+      "sha256": "041f9f097d293831a2c3057bf13d9881e366517bf1a93c40372f6434feacf684",
+      "bytes": 1124,
+      "uncompressed_sha256": "34e5406e678ff2579552c6a2897747223356386cd4aa5e6932a8859ba84f6ead",
+      "uncompressed_bytes": 8235
+    },
+    "issue134-f4-debt-clock-red-correct-fixture-20261113.log.gz": {
+      "sha256": "8b1080ac90baba4f1c4cb30c47fa3ed19192b3cea231831917a1d557c40061a3",
+      "bytes": 661,
+      "uncompressed_sha256": "9e6fe45b062947d2c898657ac539f0404177d23aa5dadaa6f78ae025a0350031",
+      "uncompressed_bytes": 4703
+    },
+    "issue134-f4-debt-clock-green-20261113.log.gz": {
+      "sha256": "781b33adcbdce7c98af782f8b86e7a129f1ad0950ed273388b4462f910b6571f",
+      "bytes": 531,
+      "uncompressed_sha256": "0910cb7fd0ecc9b7f6a9222b9935add235117a24f890bc3c8ab0b8e0b3db7b16",
+      "uncompressed_bytes": 3892
+    },
+    "issue134-f4-source-manifests-20261113.json.gz": {
+      "sha256": "2f0bcf77de1ea45ac00ace6935e977ef6dcf0dd3314d2d236d280d5d30f905fa",
+      "bytes": 49041,
+      "uncompressed_sha256": "04f0f83d298f51d8a4934a14062d5f5196794131ea14aa546b802640a9072a2d",
+      "uncompressed_bytes": 138716
+    }
+  },
+  "checks": {
+    "vet-final": {
+      "name": "vet-final",
+      "command": [
+        "go",
+        "vet",
+        "./..."
+      ],
+      "database": "indexcore",
+      "base_head": "9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e",
+      "source_manifest_sha256": "c0465103ac1ae5f30b02da3060c9da1032bc32e7190abb4a4e62d50999b1f16a",
+      "seconds": 1.6085143160000825,
+      "exit_code": 0,
+      "finished_at": "2026-11-13T13:20:38.012202+00:00",
+      "log": "vet-final-1794576036392979904.log",
+      "test_and_subtest_events": {},
+      "data_race_report": false
+    },
+    "build-final": {
+      "name": "build-final",
+      "command": [
+        "go",
+        "build",
+        "./..."
+      ],
+      "database": "indexcore",
+      "base_head": "9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e",
+      "source_manifest_sha256": "c0465103ac1ae5f30b02da3060c9da1032bc32e7190abb4a4e62d50999b1f16a",
+      "seconds": 0.6533741989999271,
+      "exit_code": 0,
+      "finished_at": "2026-11-13T13:20:38.717607+00:00",
+      "log": "build-final-1794576038053550416.log",
+      "test_and_subtest_events": {},
+      "data_race_report": false
+    },
+    "full-final": {
+      "name": "full-final",
+      "command": [
+        "go",
+        "test",
+        "-json",
+        "-p",
+        "1",
+        "-count=1",
+        "-timeout=15m",
+        "./..."
+      ],
+      "database": "indexcore",
+      "base_head": "9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e",
+      "source_manifest_sha256": "c0465103ac1ae5f30b02da3060c9da1032bc32e7190abb4a4e62d50999b1f16a",
+      "seconds": 213.82856011599984,
+      "exit_code": 0,
+      "finished_at": "2026-11-13T13:24:12.607367+00:00",
+      "log": "full-final-1794576038766476490.log",
+      "test_and_subtest_events": {
+        "pass": 769,
+        "skip": 125
+      },
+      "data_race_report": false
+    },
+    "runtime-race-final": {
+      "name": "runtime-race-final",
+      "command": [
+        "go",
+        "test",
+        "-json",
+        "-race",
+        "-p",
+        "1",
+        "-count=1",
+        "-timeout=10m",
+        "./internal/sourcebudget",
+        "./internal/runtime/incrementalruntime",
+        "./internal/runtime/app"
+      ],
+      "database": "indexcore",
+      "base_head": "9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e",
+      "source_manifest_sha256": "c0465103ac1ae5f30b02da3060c9da1032bc32e7190abb4a4e62d50999b1f16a",
+      "seconds": 34.61383575800028,
+      "exit_code": 0,
+      "finished_at": "2026-11-13T13:24:47.274401+00:00",
+      "log": "runtime-race-final-1794576252649893289.log",
+      "test_and_subtest_events": {
+        "pass": 111,
+        "skip": 49
+      },
+      "data_race_report": false
+    },
+    "f4-race-final": {
+      "name": "f4-race-final",
+      "command": [
+        "go",
+        "test",
+        "-json",
+        "-race",
+        "-p",
+        "1",
+        "-count=3",
+        "-timeout=8m",
+        "-run",
+        "^TestIssue134Rolling|^TestIssue134RuntimeQueryCosts",
+        "./internal/sourcebudget",
+        "./internal/runtime/config",
+        "./internal/store/postgres",
+        "./internal/runtime/scan",
+        "./internal/runtime/incrementalorch",
+        "./internal/runtime/app"
+      ],
+      "database": "index138_test",
+      "base_head": "9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e",
+      "source_manifest_sha256": "c0465103ac1ae5f30b02da3060c9da1032bc32e7190abb4a4e62d50999b1f16a",
+      "seconds": 60.39815832699969,
+      "exit_code": 0,
+      "finished_at": "2026-11-13T13:25:47.741068+00:00",
+      "log": "f4-race-final-1794576287330243993.log",
+      "test_and_subtest_events": {
+        "pass": 87,
+        "skip": 3
+      },
+      "data_race_report": false
+    },
+    "issue134-race-final": {
+      "name": "issue134-race-final",
+      "command": [
+        "go",
+        "test",
+        "-json",
+        "-race",
+        "-p",
+        "1",
+        "-count=1",
+        "-timeout=10m",
+        "-run",
+        "^TestIssue134|^TestDiscoveryCompletionAtomicRollbackAndStaleClaim$",
+        "./internal/runtime/config",
+        "./internal/store/postgres",
+        "./internal/runtime/incrementalexec",
+        "./internal/runtime/incrementalorch",
+        "./internal/runtime/app"
+      ],
+      "database": "index134_test",
+      "base_head": "9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e",
+      "source_manifest_sha256": "c0465103ac1ae5f30b02da3060c9da1032bc32e7190abb4a4e62d50999b1f16a",
+      "seconds": 129.02123580900025,
+      "exit_code": 0,
+      "finished_at": "2026-11-13T13:27:56.821246+00:00",
+      "log": "issue134-race-final-1794576347787605332.log",
+      "test_and_subtest_events": {
+        "pass": 47,
+        "skip": 13
+      },
+      "data_race_report": false
+    },
+    "pool-runtime-final": {
+      "name": "pool-runtime-final",
+      "command": [
+        "go",
+        "test",
+        "-json",
+        "-race",
+        "-p",
+        "1",
+        "-count=1",
+        "-timeout=5m",
+        "-run",
+        "^TestIssue138PoolRuntimeLatency$",
+        "./internal/runtime/app"
+      ],
+      "database": "index138_test",
+      "base_head": "9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e",
+      "source_manifest_sha256": "c0465103ac1ae5f30b02da3060c9da1032bc32e7190abb4a4e62d50999b1f16a",
+      "seconds": 49.67750625200006,
+      "exit_code": 0,
+      "finished_at": "2026-11-13T13:28:46.557840+00:00",
+      "log": "pool-runtime-final-1794576476869176474.log",
+      "test_and_subtest_events": {
+        "pass": 5
+      },
+      "data_race_report": false
+    }
+  },
+  "primary_to_final_production_go_differences": [
+    "internal/runtime/app/incremental.go"
+  ],
+  "provenance_note": "Primary pair has identical source manifests. Subsequent production change is the one-shot CLI rejection guard, outside the replayed P10 path; test-only fault coverage was also added. CI repeats final head.",
+  "exploratory_runs": "Two earlier legacy runs precede the final debt-clock correction; retained locally, excluded from primary comparison."
+}

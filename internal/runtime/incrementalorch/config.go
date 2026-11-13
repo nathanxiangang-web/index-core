@@ -22,6 +22,7 @@ const (
 type Config struct {
 	ReadWorkers          int
 	MirrorRevisitEnabled bool
+	MirrorRollingEnabled bool
 	MaxDueWatchAttempts  int
 	MaxExecuteItems      int
 	MaxWallTime          time.Duration
@@ -30,6 +31,9 @@ type Config struct {
 // Validate enforces the prototype hard caps. An invalid config fails before any
 // Store due-watch query, EmitDuePoll, or P5 execution.
 func (c Config) Validate() error {
+	if c.MirrorRollingEnabled && !c.MirrorRevisitEnabled {
+		return fmt.Errorf("rolling requires mirror revisit")
+	}
 	if c.MirrorRevisitEnabled && c.MaxDueWatchAttempts < 2 {
 		return fmt.Errorf("mirror revisit fairness requires at least two due-watch attempts")
 	}
