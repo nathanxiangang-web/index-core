@@ -1,5 +1,35 @@
 # Index Core — Project State
 
+## 2026-11-15 full PR148+149 review / permission closure
+
+State REVIEW. The combined main→PR148→PR149 chain was inspected. A concrete
+owner-only-fixture/Ping-only-preflight gap is corrected by explicit least-privilege
+SQL recipes and read-only runtime-account doctor/serve checks. Real non-owner
+LOGIN tests exercise Root registration and actual OFF/ON Kernel paths;0007 lock
+interleaving and0008 partial-upgrade retry are tested. Migrations0001..0008 stay
+unchanged, schema remains8, F4 defaults OFF and readers/budgets are unchanged.
+See [complete-chain review](docs/p0/P0-134-F4-FINAL-REVIEW.md) and
+[deployment/grant procedure](docs/p0/P0-134-F4-DEPLOYMENT.md).
+At isolated-review handoff, production role/ACL/connectivity are NOT_VERIFIED.
+The Owner subsequently authorized conditional public-server replacement after
+exact-head review/CI and backup/restore preflight. This is not cutover evidence;
+record deployment separately. No merge or F4 enablement is implied.
+20K/long stability/real throughput/resources
+remain NOT_RUN_POST_DEPLOYMENT and are not development blockers.
+
+## 2026-11-14 F4 registration follow-up (review candidate)
+
+The Owner moved20K scale, real throughput/resource and long stability acceptance
+**after separately authorized deployment**. They remain NOT_RUN for this phase;
+historical capacity NO-GO is retained and does not block functional delivery.
+The independent follow-up to unmerged PR148 fixes transactional dynamic Root
+budget registration and flag-off drain/re-enable, and adds a latest-authoritative-
+observation index without narrowing Whole-Root Prior. Migrations0007/0008 are
+forward additions;0001..0006 remain unchanged. Default F4 remains OFF. No
+production connection/config/data change or self-merge. See the
+[functional/prior report](docs/p0/P0-134-F4-REGISTRATION.md),
+[deployment plan](docs/p0/P0-134-F4-DEPLOYMENT.md) and proposed ADR014.
+
 ## 2026-11-13 isolated F4 candidate (not accepted/production)
 
 Owner-authorized budgeted rolling, identity-bound Watch lifecycle and actual

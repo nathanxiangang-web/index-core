@@ -68,6 +68,9 @@ func Doctor(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if !state.Compatible() {
 		return postgres.SchemaError(state)
 	}
+	if err := postgres.CheckRuntimePrivileges(ctx, pool, cfg.MirrorRollingPercent > 0); err != nil {
+		return fmt.Errorf("runtime privilege preflight: %w", err)
+	}
 	rcloneOK := "configured"
 	logger.Info("doctor ok",
 		"schema_applied", state.Applied, "schema_required", state.Required,
@@ -105,6 +108,9 @@ func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	if !state.Compatible() {
 		return postgres.SchemaError(state)
+	}
+	if err := postgres.CheckRuntimePrivileges(ctx, pool, cfg.MirrorRollingPercent > 0); err != nil {
+		return fmt.Errorf("runtime privilege preflight: %w", err)
 	}
 
 	if !cfg.LoopbackOnly() {

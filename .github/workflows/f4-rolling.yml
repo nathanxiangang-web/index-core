@@ -2,6 +2,12 @@ name: F4 rolling evidence
 
 on:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      run_capacity:
+        description: Optional historical synthetic capacity replay
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -46,6 +52,7 @@ jobs:
           path: f4-race.json
 
   replay:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_capacity
     name: F4 actual Runtime ${{ matrix.mode }}
     runs-on: ubuntu-latest
     timeout-minutes: 12

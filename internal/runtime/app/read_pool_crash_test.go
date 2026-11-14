@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/nathanxiangang-web/index-core/internal/domain"
+	"github.com/nathanxiangang-web/index-core/internal/incremental/rolling"
+	"github.com/nathanxiangang-web/index-core/internal/incremental/state"
 	"github.com/nathanxiangang-web/index-core/internal/runtime/incrementalruntime"
 	"github.com/nathanxiangang-web/index-core/internal/store/postgres"
 	"github.com/nathanxiangang-web/index-core/testutil"
@@ -30,6 +32,10 @@ func TestIssue138PoolCrashChild(t *testing.T) {
 	}
 	defer lock.Release(context.Background())
 	cfg := poolConfig(4)
+	if os.Getenv("INDEXCORE_ISSUE134_ROLLING_CRASH") == "owned" {
+		cfg.IncrementalMirrorRevisit = 2 * time.Minute
+		cfg.MirrorRollingPercent = 25
+	}
 	cycle, e := buildIncrementalCycle(st, cfg, poolLogger())
 	if e != nil {
 		t.Fatal(e)
@@ -47,9 +53,45 @@ func TestIssue138PoolCrashChild(t *testing.T) {
 }
 
 func TestIssue138PoolOSCrashPreservesOrderedRecovery(t *testing.T) {
+	testPoolOSCrashPreservesOrderedRecovery(t, false)
+}
+
+func TestIssue134RollingOSCrashPreservesBudgetAndOrderedRecovery(t *testing.T) {
+	testPoolOSCrashPreservesOrderedRecovery(t, true)
+}
+
+func testPoolOSCrashPreservesOrderedRecovery(t *testing.T, withRolling bool) {
 	st, h, _, roots := poolFixture(t, 1, 8)
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
+	if withRolling {
+		// Reuse the existing eight-read crash fixture. Establish a real rolling
+		// admission on one verified fixture directory before the child starts.
+		now := time.Now().UTC()
+		wk, err := st.GetWork(ctx, roots[0], "/d000000")
+		if err != nil {
+			t.Fatal(err)
+		}
+		wk, err = st.ClaimWork(ctx, roots[0], wk.ScopeKey, wk.Version, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = st.CompleteSuccess(ctx, roots[0], wk.ScopeKey, *wk.ClaimedSignalSeq, now); err != nil {
+			t.Fatal(err)
+		}
+		interval := int64(120)
+		watch, err := st.CreateWatch(ctx, state.ScopeWatchState{RootID: roots[0], ScopeKey: wk.ScopeKey, WatchState: state.WatchWarm, CadenceClass: "MIRROR_REVISIT", EffectiveIntervalSeconds: &interval, SourceSet: []state.WatchSource{state.WatchSourceBackstopEnroll}, Priority: state.PriorityNormal, NextDueAt: &now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rollingStore, err := st.WithMirrorRolling(rolling.Policy{SharePercent: 25, Spacing: time.Millisecond, Lease: time.Hour})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = rollingStore.EmitRollingPoll(ctx, roots[0], wk.ScopeKey, watch.Version, now); err != nil {
+			t.Fatal(err)
+		}
+	}
 	guard, e := st.Pool().Acquire(ctx)
 	if e != nil {
 		t.Fatal(e)
@@ -66,6 +108,9 @@ func TestIssue138PoolOSCrashPreservesOrderedRecovery(t *testing.T) {
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestIssue138PoolCrashChild$", "-test.v=true", "-test.timeout=50s")
 	cmd.Env = append(os.Environ(), "INDEXCORE_ISSUE138_POOL_CHILD=stage2")
+	if withRolling {
+		cmd.Env = append(cmd.Env, "INDEXCORE_ISSUE134_ROLLING_CRASH=owned")
+	}
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
@@ -121,6 +166,14 @@ func TestIssue138PoolOSCrashPreservesOrderedRecovery(t *testing.T) {
 	}
 	defer lock.Release(context.Background())
 	cfg := poolConfig(4)
+	if withRolling {
+		cfg.IncrementalMirrorRevisit = 2 * time.Minute
+		cfg.MirrorRollingPercent = 25
+		stats, err := st.MirrorRollingStats(ctx, time.Now())
+		if err != nil || stats.Emitted != 1 || stats.OutstandingRoots != 1 {
+			t.Fatal("OS crash lost durable reservation", stats, err)
+		}
+	}
 	cycle, e := buildIncrementalCycle(st, cfg, poolLogger())
 	if e != nil {
 		t.Fatal(e)
@@ -156,5 +209,11 @@ func TestIssue138PoolOSCrashPreservesOrderedRecovery(t *testing.T) {
 	}
 	if e = st.Pool().QueryRow(ctx, `SELECT count(*) FROM index_journal_event WHERE event_type=$1`, domain.EventResourceAdded).Scan(&events); e != nil || events != 8 || h.calls.Load() != 16 {
 		t.Fatal("fresh recovery did not converge exactly once", events, h.calls.Load(), e)
+	}
+	if withRolling {
+		stats, err := st.MirrorRollingStats(ctx, time.Now())
+		if err != nil || stats.Emitted != 1 || stats.OutstandingRoots != 0 {
+			t.Fatal("recovery did not release exactly the verified budget", stats, err)
+		}
 	}
 }
