@@ -69,7 +69,6 @@ jobs:
       INDEXCORE_ISSUE138_DISPOSABLE: owned-disposable-only
       INDEXCORE_F4_REPLAY: '1'
       INDEXCORE_F4_MODE: ${{ matrix.mode }}
-      INDEXCORE_F4_EVIDENCE_DIR: ${{ runner.temp }}/f4
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -81,6 +80,8 @@ jobs:
           PGPASSWORD: indexcore
         run: psql -h 127.0.0.1 -U indexcore -d postgres -v ON_ERROR_STOP=1 -c "COMMENT ON DATABASE index138_test IS 'indexcore-issue138-owned-disposable'"
       - name: Collect120s20K evidence, capacity verdict stays independent
+        env:
+          INDEXCORE_F4_EVIDENCE_DIR: ${{ runner.temp }}/f4
         run: |
           set -o pipefail
           go test -json -p 1 -count=1 -timeout=4m -run '^TestIssue134RollingRuntimeEvidence$' ./internal/runtime/app | tee f4-replay.json
