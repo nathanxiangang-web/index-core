@@ -1,5 +1,15 @@
 # Index Core — Project State
 
+## 2026-11-13 isolated F4 candidate (not accepted/production)
+
+Owner-authorized budgeted rolling, identity-bound Watch lifecycle and actual
+Runtime query-cost candidate is on a separate branch based on9a33d011.
+Defaults remain OFF; migration0006 is proposed operational metadata only.
+Local PG18/full/Race gates pass, but the120s20K capacity/new-child gate remains
+NO-GO. No production/provider changes or self-merge. See
+[F4 method, metrics, limits and review gate](docs/p0/P0-134-F4-ROLLING.md).
+Older dated state below is historical; use live GitHub checks for acceptance.
+
 > Concise current-state truth for recovery.
 
 ## Last updated

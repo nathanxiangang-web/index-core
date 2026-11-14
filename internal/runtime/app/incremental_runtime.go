@@ -21,7 +21,16 @@ import (
 // hybrid runtime. It is a package-level seam so tests can inject a controlled
 // cycle runner. The P4/P6 prototype caps stay at their accepted defaults.
 var buildIncrementalCycle = func(st *postgres.Store, cfg config.Config, logger *slog.Logger) (incrementalruntime.CycleRunner, error) {
-	budget, err := sourcebudget.New(cfg.SourceBudget())
+	var options []sourcebudget.Option
+	if cfg.MirrorRollingPercent != 0 {
+		var err error
+		st, err = st.WithMirrorRolling(cfg.MirrorRollingPolicy())
+		if err != nil {
+			return nil, err
+		}
+		options = append(options, sourcebudget.WithBackgroundShare(cfg.MirrorRollingPercent))
+	}
+	budget, err := sourcebudget.New(cfg.SourceBudget(), options...)
 	if err != nil {
 		return nil, err
 	}
@@ -32,6 +41,7 @@ var buildIncrementalCycle = func(st *postgres.Store, cfg config.Config, logger *
 		DiscoveryScope:        cfg.IncrementalDiscoveryScope,
 		FirstDiscoveryEnabled: cfg.IncrementalFirstDiscovery,
 		MirrorRevisitInterval: cfg.IncrementalMirrorRevisit,
+		MirrorRollingEnabled:  cfg.MirrorRollingPercent > 0,
 		Retry: incrementalexec.RetryPolicy{
 			TransientProvider: 30 * time.Second,
 			Throttled:         45 * time.Second,
@@ -74,6 +84,7 @@ var newIncrementalRuntime = func(store incrementalruntime.MaintenanceStore, cycl
 func runtimeConfig(cfg config.Config) incrementalruntime.Config {
 	cycle := incrementalruntime.DefaultCycleConfig()
 	cycle.MirrorRevisitEnabled = cfg.IncrementalMirrorRevisit > 0
+	cycle.MirrorRollingEnabled = cfg.MirrorRollingPercent > 0
 	if cfg.IncrementalReadWorkers > 1 {
 		cycle.ReadWorkers = cfg.IncrementalReadWorkers
 		cycle.MaxExecuteItems = 8

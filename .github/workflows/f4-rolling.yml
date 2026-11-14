@@ -1,0 +1,94 @@
+name: F4 rolling evidence
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  correctness:
+    name: F4 PostgreSQL18 race
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: indexcore
+          POSTGRES_PASSWORD: indexcore
+          POSTGRES_DB: index138_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U indexcore -d index138_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      INDEXCORE_TEST_DATABASE_URL: postgres://indexcore:indexcore@127.0.0.1:5432/index138_test?sslmode=disable
+      INDEXCORE_ISSUE138_DISPOSABLE: owned-disposable-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Mark owned disposable database
+        env:
+          PGPASSWORD: indexcore
+        run: psql -h 127.0.0.1 -U indexcore -d postgres -v ON_ERROR_STOP=1 -c "COMMENT ON DATABASE index138_test IS 'indexcore-issue138-owned-disposable'"
+      - name: F4 lifecycle, budgets, mixed pool and query costs Race
+        run: |
+          set -o pipefail
+          go test -race -json -p 1 -count=3 -timeout=8m -run '^TestIssue134Rolling|^TestIssue134RuntimeQueryCosts' ./internal/sourcebudget ./internal/runtime/config ./internal/store/postgres ./internal/runtime/scan ./internal/runtime/incrementalorch ./internal/runtime/app | tee f4-race.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: f4-race
+          path: f4-race.json
+
+  replay:
+    name: F4 actual Runtime ${{ matrix.mode }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [legacy, rolling]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: indexcore
+          POSTGRES_PASSWORD: indexcore
+          POSTGRES_DB: index138_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U indexcore -d index138_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      INDEXCORE_TEST_DATABASE_URL: postgres://indexcore:indexcore@127.0.0.1:5432/index138_test?sslmode=disable
+      INDEXCORE_ISSUE138_DISPOSABLE: owned-disposable-only
+      INDEXCORE_F4_REPLAY: '1'
+      INDEXCORE_F4_MODE: ${{ matrix.mode }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Mark owned disposable database
+        env:
+          PGPASSWORD: indexcore
+        run: psql -h 127.0.0.1 -U indexcore -d postgres -v ON_ERROR_STOP=1 -c "COMMENT ON DATABASE index138_test IS 'indexcore-issue138-owned-disposable'"
+      - name: Collect120s20K evidence, capacity verdict stays independent
+        env:
+          INDEXCORE_F4_EVIDENCE_DIR: ${{ runner.temp }}/f4
+        run: |
+          set -o pipefail
+          go test -json -p 1 -count=1 -timeout=4m -run '^TestIssue134RollingRuntimeEvidence$' ./internal/runtime/app | tee f4-replay.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: f4-replay-${{ matrix.mode }}
+          path: |
+            f4-replay.json
+            ${{ runner.temp }}/f4/

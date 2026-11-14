@@ -12,13 +12,15 @@ import (
 )
 
 type mirrorProof struct {
-	valid     bool
-	changedAt time.Time
+	valid                                       bool
+	changedAt                                   time.Time
+	resourceID, canonicalPath, digest, revision string
 }
 type mirrorCompletion struct {
 	interval time.Duration
 	proofs   map[string]mirrorProof
 	stats    state.MirrorDiscoveryStats
+	store    *Store
 }
 
 // Same atomic boundary as accepted discovery. Configurable only by a trusted
@@ -27,7 +29,7 @@ func (s *Store) CompleteSuccessWithMirrorChildren(ctx context.Context, root, sco
 	if err := state.ValidateMirrorRevisit(interval); err != nil || interval == 0 {
 		return state.DirtyScopeWork{}, state.MirrorDiscoveryStats{}, errors.New("mirror completion requires a valid positive revisit interval")
 	}
-	p := &mirrorCompletion{interval: interval}
+	p := &mirrorCompletion{interval: interval, store: s}
 	w, err := s.completeDiscovery(ctx, root, scope, seq, children, priorityScope, now, p)
 	if err != nil {
 		return w, state.MirrorDiscoveryStats{}, err
@@ -39,7 +41,8 @@ func mirrorProofs(ctx context.Context, tx pgx.Tx, root, parent string, children 
 	proofs := map[string]mirrorProof{}
 	var kind string
 	var raw []byte
-	err := tx.QueryRow(ctx, `SELECT collector_kind,config FROM index_root_adapter_config WHERE root_id=$1`, root).Scan(&kind, &raw)
+	var revision string
+	err := tx.QueryRow(ctx, `SELECT collector_kind,config,xmin::text FROM index_root_adapter_config WHERE root_id=$1`, root).Scan(&kind, &raw, &revision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return proofs, nil
 	}
@@ -58,7 +61,7 @@ func mirrorProofs(ctx context.Context, tx pgx.Tx, root, parent string, children 
 	for _, c := range children {
 		paths = append(paths, prefix+c)
 	}
-	rows, err := tx.Query(ctx, `SELECT canonical_path,count(*),bool_and(coalesce(is_dir,false) AND removal_evidence_state='NONE'),max(updated_at) FROM index_canonical_resource WHERE root_id=$1 AND resource_presence='PRESENT' AND canonical_path=ANY($2::text[]) GROUP BY canonical_path`, root, paths)
+	rows, err := tx.Query(ctx, `SELECT canonical_path,count(*),bool_and(coalesce(is_dir,false) AND removal_evidence_state='NONE'),max(updated_at),min(resource_id::text) FROM index_canonical_resource WHERE root_id=$1 AND resource_presence='PRESENT' AND canonical_path=ANY($2::text[]) GROUP BY canonical_path`, root, paths)
 	if err != nil {
 		return nil, err
 	}
@@ -68,10 +71,11 @@ func mirrorProofs(ctx context.Context, tx pgx.Tx, root, parent string, children 
 		var count int
 		var valid bool
 		var changed time.Time
-		if err := rows.Scan(&path, &count, &valid, &changed); err != nil {
+		var id string
+		if err := rows.Scan(&path, &count, &valid, &changed, &id); err != nil {
 			return nil, err
 		}
-		proofs[strings.TrimPrefix(path, prefix)] = mirrorProof{valid: valid && count == 1, changedAt: changed}
+		proofs[strings.TrimPrefix(path, prefix)] = mirrorProof{valid: valid && count == 1, changedAt: changed, resourceID: id, canonicalPath: path, digest: AdapterConfigDigest(AdapterConfig{CollectorKind: kind, Config: raw}), revision: revision}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -108,6 +112,18 @@ func (p *mirrorCompletion) child(ctx context.Context, tx pgx.Tx, root, child str
 		}
 		if err != nil {
 			return false, err
+		}
+	}
+	if p.store != nil && p.store.rolling != nil {
+		var rebound bool
+		var err error
+		watch, rebound, err = p.store.bindMirrorChild(ctx, tx, root, child, watch, proof, now, p.interval)
+		if err != nil {
+			return false, err
+		}
+		if rebound {
+			p.stats.ChangedChildren++
+			return merge()
 		}
 	}
 	wk, found, err := loadWorkForUpdate(ctx, tx, root, child)

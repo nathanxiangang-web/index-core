@@ -81,11 +81,18 @@ type workerRunner func(ctx context.Context) error
 
 // Serve starts the read-only HTTP transport and blocks until shutdown.
 func Serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
-	pool, err := postgres.Open(ctx, cfg.DatabaseURL)
+	var queryCosts *postgres.QueryCosts
+	if cfg.RuntimeQueryCosts {
+		queryCosts = postgres.NewQueryCosts()
+	}
+	pool, err := postgres.OpenWithQueryCosts(ctx, cfg.DatabaseURL, queryCosts)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer pool.Close()
+	if queryCosts != nil {
+		defer func() { logger.Info("runtime query costs", "queries", queryCosts.Snapshot()) }()
+	}
 	if err := pool.Ping(ctx); err != nil {
 		return fmt.Errorf("ping database: %w", err)
 	}

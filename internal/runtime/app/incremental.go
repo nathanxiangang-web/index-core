@@ -61,6 +61,9 @@ func RunIncremental(ctx context.Context, base config.Config, logger *slog.Logger
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	if cfg.MirrorRollingPercent != 0 {
+		return errors.New("mirror rolling is only supported by serve hybrid runtime")
+	}
 
 	p4cfg := incrementalexec.Config{
 		MaxEntriesPerScope: *maxEntriesPerScope,

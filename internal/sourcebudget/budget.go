@@ -40,22 +40,32 @@ func (c Config) Validate() error {
 
 type slot struct {
 	next, until time.Time
+	background  time.Time
 	strikes     int
 }
 type Manager struct {
-	mu            sync.Mutex
-	cfg           Config
-	global        time.Time
-	roots, groups map[string]*slot
-	now           func() time.Time
-	wait          func(context.Context, time.Duration) error
+	mu                sync.Mutex
+	cfg               Config
+	global            time.Time
+	backgroundGlobal  time.Time
+	backgroundPercent int
+	observer          func(HTTPEvent)
+	roots, groups     map[string]*slot
+	now               func() time.Time
+	wait              func(context.Context, time.Duration) error
 }
 
-func New(c Config) (*Manager, error) {
+func New(c Config, options ...Option) (*Manager, error) {
 	if e := c.Validate(); e != nil {
 		return nil, e
 	}
-	return &Manager{cfg: c, roots: map[string]*slot{}, groups: map[string]*slot{}, now: time.Now, wait: sleep}, nil
+	m := &Manager{cfg: c, roots: map[string]*slot{}, groups: map[string]*slot{}, now: time.Now, wait: sleep}
+	for _, option := range options {
+		if err := option(m); err != nil {
+			return nil, err
+		}
+	}
+	return m, nil
 }
 func sleep(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
@@ -106,10 +116,19 @@ func (m *Manager) acquire(ctx context.Context, root, group string) error {
 			return ErrDeferred
 		}
 		due := max(m.global, max(r.next, p.next))
+		background := isBackground(ctx) && m.backgroundPercent > 0
+		if background {
+			due = max(due, max(m.backgroundGlobal, max(r.background, p.background)))
+		}
 		if !due.After(now) {
 			m.global = now.Add(m.cfg.Global)
 			r.next = now.Add(m.cfg.Root)
 			p.next = now.Add(m.cfg.Provider)
+			if background {
+				m.backgroundGlobal = now.Add(m.cfg.Global * 100 / time.Duration(m.backgroundPercent))
+				r.background = now.Add(m.cfg.Root * 100 / time.Duration(m.backgroundPercent))
+				p.background = now.Add(m.cfg.Provider * 100 / time.Duration(m.backgroundPercent))
+			}
 			m.mu.Unlock()
 			return nil
 		}
@@ -225,9 +244,19 @@ func (t transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if e = t.manager.acquire(req.Context(), t.root, t.group); e != nil {
 		return nil, e
 	}
+	started := t.manager.now()
 	resp, e := t.base.RoundTrip(req)
 	if e == nil && resp != nil && resp.StatusCode == 429 {
 		t.manager.Penalize(t.root, t.group, retryAfter(resp.Header.Get("Retry-After"), t.manager.now()))
+	}
+	if t.manager.observer != nil {
+		event := HTTPEvent{StartedAt: started, FinishedAt: t.manager.now(), Background: isBackground(req.Context()), Failed: e != nil, Canceled: errors.Is(e, context.Canceled)}
+		if resp != nil {
+			event.Status = resp.StatusCode
+		}
+		var timeout net.Error
+		event.Timeout = errors.Is(e, context.DeadlineExceeded) || (errors.As(e, &timeout) && timeout.Timeout())
+		t.manager.observer(event)
 	}
 	return resp, e
 }
