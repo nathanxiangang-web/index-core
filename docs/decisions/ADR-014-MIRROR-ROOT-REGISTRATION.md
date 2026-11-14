@@ -63,7 +63,26 @@ The scheduler still rotates Root/scope cursors; pre-registering idle Roots canno
 make them candidates or spend budget. Existing multi-Root/global-atomicity tests
 remain required alongside dynamic registration tests.
 
-## Acceptance boundary
+## Runtime-account permission closure (2026-11-15 follow-up)
+
+The whole-chain review found owner-only fixtures and Ping/schema-only doctor
+insufficient for an invoker trigger. Keep0007 unchanged and invoker-rights.
+Explicit base/rolling GRANT recipes now define the writer profiles; doctor and
+serve perform bounded read-only has_schema_privilege/has_table_privilege checks
+using the configured runtime account before actors/listeners. No automatic grant,
+SECURITY DEFINER, ownership or PUBLIC grant is introduced. OFF still requires
+budget INSERT for Root creation and SELECT/UPDATE for covered completion; ON
+additionally needs global ledger/binding privileges. The runtime has no migration,
+schema CREATE, budget DELETE or TRUNCATE requirement.
+
+Real non-owner LOGIN tests execute the exact recipes and actual Fake HTTP/Kernel
+paths in OFF and ON, and prove denied registration rolls back and can be retried.
+A relation-lock barrier proves concurrent Root insertion waits across0007;
+an0008 failure after committed0007 is resumable. See the
+[complete-chain review](../p0/P0-134-F4-FINAL-REVIEW.md). Production identities and
+ACLs remain NOT_VERIFIED until separately authorized operator preflight.
+
+## Current acceptance boundary
 
 See [functional and prior evidence](../p0/P0-134-F4-REGISTRATION.md) and
 [deployment/rollback plan](../p0/P0-134-F4-DEPLOYMENT.md). The Owner moved20K,

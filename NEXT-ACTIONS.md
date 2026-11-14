@@ -1,5 +1,21 @@
 # Index Core — Next Actions
 
+## 2026-11-15 permission-closed functional delivery
+
+1. Review the whole PR148+149 chain and the follow-up permission fix at its exact
+   tested head. Inspect role/grant recipes, invoker registration, migration lock
+   barrier, OFF/drain/ON, identity/Journal and final CI. No self-merge.
+2. After separate deployment authorization, verify actual runtime versus migrator
+   identity/ACL using the supplied read-only probe; apply reviewed explicit grants
+   as the correct owner, then run doctor as the runtime account with planned
+   flags. Test role/credential/database-ACL recovery alongside whole-DB restore.
+3. Preserve one writer and business tasks, explicitly upgrade5→8, retain default
+   F4 OFF/current Reader/budgets, verify startup and rollback. Production identity,
+   permissions, backup size/index-build time are not claimed verified here.
+4. Real20K/long stability/HTTP throughput/resources remain independent authorized
+   deployment-stage validation. Do not reset production data/queues or label
+   missing real evidence PASS. See [review](docs/p0/P0-134-F4-FINAL-REVIEW.md).
+
 ## 2026-11-14 current F4 delivery boundary
 
 1. Independently review the PR148 follow-up: dynamic Root registration,

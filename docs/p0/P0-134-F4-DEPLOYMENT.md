@@ -26,7 +26,50 @@ No mixed old/new serving instances. Root creation runs the registration trigger
 with invoker privileges; grant the application the required operational table
 INSERT privilege through the reviewed deployment role, not SECURITY DEFINER.
 
-## Backup, upgrade, interruption and rollback
+## Runtime account and exact GRANT recipes
+
+The migration identity owns/changes schema; the runtime LOGIN executes the
+application. Do not use a successful migrator doctor as evidence for a different
+runtime account. Schema8's invoker trigger requires budget INSERT even with F4
+OFF; successful covered completion also requires its SELECT/UPDATE privileges.
+No SECURITY DEFINER or runtime owner membership is needed.
+
+After migration, an authorized owner/grant-option role applies the reviewed
+recipes to an existing, deliberately chosen runtime role/database:
+
+```sh
+# Credentials come from the approved secret/connection mechanism, never literals.
+psql -X -v ON_ERROR_STOP=1 -v runtime_role=indexcore_runtime \
+  -v runtime_database=indexcore -f scripts/sql/runtime-grants.sql
+# Optional additional rights for a separately reviewed F4 ON configuration:
+psql -X -v ON_ERROR_STOP=1 -v runtime_role=indexcore_runtime \
+  -f scripts/sql/mirror-rolling-grants.sql
+```
+
+The scripts grant CONNECT, schema USAGE and only explicit SELECT/INSERT/UPDATE
+operations used by the existing writer. They do not create a role, supply a
+password, grant PUBLIC/ownership/CREATE/DELETE/TRUNCATE, alter default privileges,
+enable F4 or change Reader/source budgets. No blanket privileges on future
+tables. Review inherited/public/default ACLs separately; a GRANT script does not
+remove pre-existing excessive privileges. Roles/credentials and database-level
+ACLs need their own approved restore procedure; ordinary whole-DB dump is not a
+cluster-role backup. A runtime role must not run migrate or own schema objects.
+
+Run the read-only [registration probe](../../scripts/sql/check-runtime-registration.sql)
+using the runtime identity. It explicitly reports current_user/session_user,
+table owners, has_table_privilege for Root/budget and the trigger's invoker flag.
+Then run `indexcore doctor` with the **same injected runtime DSN and planned
+configuration**. Doctor checks the full table-level writer profile; ON also
+checks the global ledger and binding profile. Serve repeats it before taking the
+writer lock or exposing listeners. Missing grants fail before work/source I/O;
+there is no automatic GRANT, test Root insert, temporary owner switch or repair.
+
+Real non-owner LOGIN fixtures execute these exact recipes and actual OFF/ON
+Runtime/Kernel paths. Actual production account/ACL/connectivity remain
+NOT_VERIFIED because this task does not connect to production. Preflight is a
+point-in-time catalog check, not immunity to later REVOKE/RLS/schema changes.
+
+## Controlled upgrade, interruption and rollback
 
 For a separately authorized deployment:
 
