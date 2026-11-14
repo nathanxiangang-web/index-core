@@ -19,6 +19,10 @@ func TestIssue134RollingRuntimeLateFileAndRestart(t *testing.T) {
 	h.visible.Store(false)
 	cfg := poolConfig(1)
 	cfg.IncrementalMirrorRevisit = 2 * time.Minute
+	cfg.MirrorRollingPercent = 25
+	cfg.SourceGlobalInterval = 200 * time.Millisecond
+	cfg.SourceRootInterval = 200 * time.Millisecond
+	cfg.SourceProviderInterval = 200 * time.Millisecond
 	cycle, err := buildIncrementalCycle(st, cfg, poolLogger())
 	if err != nil {
 		t.Fatal(err)
@@ -32,14 +36,7 @@ func TestIssue134RollingRuntimeLateFileAndRestart(t *testing.T) {
 	if _, err = st.CreateWatch(ctx, state.ScopeWatchState{RootID: roots[0], ScopeKey: "/d000000", WatchState: state.WatchWarm, CadenceClass: "MIRROR_REVISIT", EffectiveIntervalSeconds: &interval, SourceSet: []state.WatchSource{state.WatchSourceBackstopEnroll}, Priority: state.PriorityNormal, NextDueAt: &due}); err != nil {
 		t.Fatal(err)
 	}
-	cfg.MirrorRollingPercent = 25
-	cfg.SourceGlobalInterval = 200 * time.Millisecond
-	cfg.SourceRootInterval = 200 * time.Millisecond
-	cfg.SourceProviderInterval = 200 * time.Millisecond
-	cycle, err = buildIncrementalCycle(st, cfg, poolLogger())
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Same running actor prepared with no managed Watch; do not rebuild it.
 	h.visible.Store(true)
 	before := h.api.Load()
 	started := time.Now()

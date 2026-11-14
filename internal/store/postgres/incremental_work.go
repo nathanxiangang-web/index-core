@@ -574,11 +574,6 @@ func (s *Store) completeDiscovery(ctx context.Context, rootID, scopeKey string, 
 		if _, err := lockMirrorAdapter(ctx, tx, rootID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return state.DirtyScopeWork{}, err
 		}
-		if len(children) > 0 {
-			if _, err := tx.Exec(ctx, `INSERT INTO index_mirror_root_budget(root_id) VALUES($1) ON CONFLICT DO NOTHING`, rootID); err != nil {
-				return state.DirtyScopeWork{}, err
-			}
-		}
 	}
 	if _, _, err := lockWatchForUpdate(ctx, tx, rootID, scopeKey); err != nil {
 		return state.DirtyScopeWork{}, err

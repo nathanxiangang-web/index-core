@@ -103,9 +103,10 @@ func TestP3MigrationAddsOnlyOperationalTables(t *testing.T) {
 	// Upgrade from a pre-0005 (0001..0004) schema must succeed and recreate only
 	// the operational tables.
 	if _, err := pool.Exec(ctx,
-		`DROP TABLE index_mirror_watch_binding; DROP TABLE index_mirror_root_budget; DROP TABLE index_mirror_budget;
+		`DROP TRIGGER index_register_mirror_root ON index_root; DROP FUNCTION index_register_mirror_root(); DROP INDEX idx_identity_resource_latest;
+		 DROP TABLE index_mirror_watch_binding; DROP TABLE index_mirror_root_budget; DROP TABLE index_mirror_budget;
 		 DROP TABLE index_dirty_scope_work; DROP TABLE index_scope_watch_state;
-		 DELETE FROM schema_migrations WHERE version LIKE '0005%' OR version LIKE '0006%'`); err != nil {
+		 DELETE FROM schema_migrations WHERE version >= '0005'`); err != nil {
 		t.Fatalf("simulate pre-0005 schema: %v", err)
 	}
 	if err := postgres.Migrate(ctx, pool); err != nil {

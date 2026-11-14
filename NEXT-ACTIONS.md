@@ -1,5 +1,19 @@
 # Index Core — Next Actions
 
+## 2026-11-14 current F4 delivery boundary
+
+1. Independently review the PR148 follow-up: dynamic Root registration,
+   off/drain/on recovery, Whole-Root Prior index, migrations0007/0008 and exact-head
+   functional/PG18/Race/CI evidence. Keep Issue134 open; no automatic merge.
+2. Obtain separate deployment authorization, then verify whole-DB backup/restore,
+   writer-stopped schema upgrade and startup with existing Reader/budgets/F4 OFF.
+   See [the deployment plan](docs/p0/P0-134-F4-DEPLOYMENT.md).
+3. After authorized real operation, progressively measure actual20K fairness,
+   discovery/visibility, debt, requests and resource cost, then long stability.
+   These are NOT_RUN_POST_DEPLOYMENT, not PASS and not current development blockers.
+   Never reset production queues/data to create a test. Decide later budget and
+   concurrency changes from real measurements with separate authorization.
+
 ## 2026-11-13 F4 candidate review gate
 
 Review the separate Owner-authorized [F4 candidate](docs/p0/P0-134-F4-ROLLING.md)

@@ -12,14 +12,19 @@ import (
 
 var ErrMirrorDeferred = errors.New("mirror rolling admission deferred")
 
-// PrepareMirrorRolling adopts only Root scheduling metadata, once per actor.
+// PrepareMirrorRolling checks the singleton, once per actor. Migration 0007
+// registers existing Roots once and future Roots in their creation transaction;
+// startup is no longer the only opportunity to discover a Root. No Watch scan.
 // Binding adoption remains lazy and requires a positive unique directory proof.
 func (s *Store) PrepareMirrorRolling(ctx context.Context) error {
 	if s.rolling == nil {
 		return errors.New("mirror rolling disabled")
 	}
-	_, err := s.pool.Exec(ctx, `INSERT INTO index_mirror_root_budget(root_id) SELECT DISTINCT root_id FROM index_scope_watch_state WHERE `+managedMirrorSQL+` ON CONFLICT DO NOTHING`)
-	return err
+	var ready bool
+	if err := s.pool.QueryRow(ctx, `SELECT singleton FROM index_mirror_budget WHERE singleton`).Scan(&ready); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Store) ListDueWatchesRolling(ctx context.Context, now time.Time, limit int) ([]state.ScopeWatchState, error) {

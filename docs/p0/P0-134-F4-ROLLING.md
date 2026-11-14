@@ -1,5 +1,10 @@
 # Issue134 F4: bounded rolling candidate, capacity remains NO-GO
 
+Current phase: [registration/prior follow-up](P0-134-F4-REGISTRATION.md). The Owner
+moved real20K/soak/resource acceptance after separate deployment authorization.
+Historical replay evidence/NO-GO below is unchanged; automatic PR CI now runs
+functional checks, with old synthetic replays manual-only.
+
 Date:2026-11-13, Asia/Shanghai. Base main:9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e.
 State: implementation candidate for independent review, NOT architecture acceptance.
 No production deployment, flag change, real provider request or source mutation.

@@ -1,5 +1,18 @@
 # Index Core — Project State
 
+## 2026-11-14 F4 registration follow-up (review candidate)
+
+The Owner moved20K scale, real throughput/resource and long stability acceptance
+**after separately authorized deployment**. They remain NOT_RUN for this phase;
+historical capacity NO-GO is retained and does not block functional delivery.
+The independent follow-up to unmerged PR148 fixes transactional dynamic Root
+budget registration and flag-off drain/re-enable, and adds a latest-authoritative-
+observation index without narrowing Whole-Root Prior. Migrations0007/0008 are
+forward additions;0001..0006 remain unchanged. Default F4 remains OFF. No
+production connection/config/data change or self-merge. See the
+[functional/prior report](docs/p0/P0-134-F4-REGISTRATION.md),
+[deployment plan](docs/p0/P0-134-F4-DEPLOYMENT.md) and proposed ADR014.
+
 ## 2026-11-13 isolated F4 candidate (not accepted/production)
 
 Owner-authorized budgeted rolling, identity-bound Watch lifecycle and actual

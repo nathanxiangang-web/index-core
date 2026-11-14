@@ -1,5 +1,9 @@
 # ADR-013: budgeted mirror rolling and identity-bound Watch lifecycle
 
+Current follow-up: [ADR014](ADR-014-MIRROR-ROOT-REGISTRATION.md) repairs dynamic
+registration and flag-off drain. The Owner now moves20K/long stability to real
+post-deployment validation; the original evidence and verdict below are historical.
+
 Status: PROPOSED / Owner-authorized implementation candidate for Issue134.
 Base: 9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e. Independent review required.
 This does not accept production F1/F2 or supersede the F2 capacity NO-GO.
