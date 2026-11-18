@@ -65,7 +65,7 @@ func TestIssue134RollingRegistrationUpgradeRetry(t *testing.T) {
 		t.Fatal(cursor, scope, seq, err)
 	}
 	status, err := SchemaStatus(ctx, pool)
-	if err != nil || !status.Compatible() || status.Required != 8 {
+	if err != nil || !status.Compatible() || status.Required != 9 {
 		t.Fatal(status, err)
 	}
 }

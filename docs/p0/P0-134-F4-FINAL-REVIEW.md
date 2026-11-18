@@ -36,6 +36,37 @@ with pgx-quoted test role/database identifiers. No PUBLIC, blanket future-table,
 ownership, schema CREATE, DELETE, TRUNCATE or SECURITY DEFINER grants are added.
 Identity-column inserts succeed without direct sequence USAGE/UPDATE grants.
 
+## Forward search_path repair (schema 9) and its evidence
+
+FIX:0007's `index_register_mirror_root()` was written with unqualified relation
+names. A caller session holding a TEMP table named `index_mirror_root_budget`
+shadows the persisted relation, so the AFTER INSERT trigger writes into the
+session's temporary table and the durable budget row is lost. Editing0007 cannot
+repair that:0007 is frozen at the content production executed (`3a82f542`),
+because PostgreSQL records applied migrations by name and never re-runs an
+edited file.
+
+The repair is the forward migration0009, which `CREATE OR REPLACE`s
+`public.index_register_mirror_root()` with `SET search_path = pg_catalog, public`
+and a schema-qualified `public.index_mirror_root_budget` insert.0007 bytes are
+restored exactly; no table, trigger, index, ACL, owner, `SECURITY INVOKER`
+semantic or Go runtime path changes. `SchemaState.Required` becomes 9.
+
+Evidence is the regression `TestIssue138MirrorRootRegistrationSchema8To9Upgrade`.
+It applies the real0001..0008 files, then a genuine unprivileged LOGIN with TEMP,
+schema USAGE and Root/budget INSERT rights creates a same-named TEMP table and
+inserts a Root on one pinned connection: at schema8 the old function adds 0 rows
+to the persisted budget table and 1 row to `pg_temp`, which is the defect. After
+migrate to schema9 the same session writes exactly 1 persisted budget row and 0
+`pg_temp` rows, `SchemaStatus` reports Required/Applied 9 with no missing or
+unexpected file, `prosecdef` is false and `proconfig` pins a `search_path`
+containing `public` and not `pg_temp`. The regression demonstrates the defect
+before the fix rather than only asserting the final state.
+
+The earlier schema8 function is **NOT the delivered state**.0007 as edited in the
+first PR149 revision is not the shipped file; the delivered state is frozen0007
+plus0009. This evidence is isolated PG18 only, not live production verification.
+
 ## Functional evidence and minimum account
 
 `testutil.Issue138RestrictedLogin` creates a unique real LOGIN only after the
@@ -83,10 +114,15 @@ business work is not claimed starvation-free by a finite test.
 ## Deployment unit and residual risks
 
 Schema5→8 upgrade, owner-schema8 backup/restore and compatible schema5 whole-DB
-rollback were exercised in the preceding isolated receipts. This follow-up
-preserves migration0001..0008 bytes. No new schema version is introduced.
+rollback were exercised in the preceding isolated receipts. Migration0001..0008
+bytes are preserved and0009 is added, so the delivered schema version is 9.
 0008 is ordinary transactional CREATE INDEX, requiring a writer-stopped window,
-disk/WAL and lock-timeout planning. Real build cost remains unmeasured.
+disk/WAL and lock-timeout planning.0009 is a function-catalog replacement with no
+data write, trigger recreation or table lock. Real build cost remains unmeasured.
+A schema8 binary rejects schema9 as an unexpected future migration, so rollback
+of a schema9 deployment is a whole-DB restore plus the schema8 binary, not a
+binary-only downgrade; the schema9 backup/restore rehearsal is a documented
+pre-cutover requirement.
 
 Apply ACL recipes as the correct table/database owner or grant-option role after
 migration. Run doctor with the **actual runtime DSN and planned flags**, not the

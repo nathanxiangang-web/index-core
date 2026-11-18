@@ -82,6 +82,31 @@ an0008 failure after committed0007 is resumable. See the
 [complete-chain review](../p0/P0-134-F4-FINAL-REVIEW.md). Production identities and
 ACLs remain NOT_VERIFIED until separately authorized operator preflight.
 
+## Migration freeze and forward search_path repair (schema 9)
+
+An applied migration is immutable. PostgreSQL records migrations by name in
+`schema_migrations` and never re-runs an edited file, so editing 0007 cannot
+repair a database that already executed it. Migration0007 is therefore frozen at
+the content production executed at commit `3a82f542`: an unqualified trigger
+function that inserts into `index_mirror_root_budget`. Any correction is a new
+forward migration.
+
+Migration0009 (`0009_mirror_root_registration_search_path.sql`) is that repair.
+It runs `CREATE OR REPLACE FUNCTION public.index_register_mirror_root()` with
+`SET search_path = pg_catalog, public` and a schema-qualified
+`public.index_mirror_root_budget` insert. Only the function body/attributes are
+replaced: the trigger created by0007 stays in place, `SECURITY INVOKER`,
+the owner, the existing ACL and the absence of a PUBLIC grant are preserved, and
+there is no data write, trigger recreation or table lock. Applying0009 to an
+already-migrated database is idempotent in effect but is recorded once.
+
+The embedded migration file count derives `SchemaState.Required`, which becomes
+9. No table, trigger, index, ACL, Go runtime or scheduling behavior changes.
+Because `SchemaState.Compatible()` rejects any applied migration the binary does
+not know, a schema8 binary treats0009 as an unexpected future migration and
+refuses to start; rollback of a schema9 deployment is a whole-database restore
+together with the schema8 binary, never a binary-only downgrade.
+
 ## Current acceptance boundary
 
 See [functional and prior evidence](../p0/P0-134-F4-REGISTRATION.md) and

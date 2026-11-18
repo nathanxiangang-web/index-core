@@ -95,7 +95,7 @@ func TestIssue134RollingMigrationLocksRegistrationWindow(t *testing.T) {
 		t.Fatal("index failure injection missed")
 	}
 	status, err := SchemaStatus(ctx, pool)
-	if err != nil || len(status.Missing) != 1 || status.Missing[0] != "0008_latest_identity_observation.sql" {
+	if err != nil || len(status.Missing) != 2 || status.Missing[0] != "0008_latest_identity_observation.sql" || status.Missing[1] != "0009_mirror_root_registration_search_path.sql" {
 		t.Fatal(status, err)
 	}
 	if _, err := pool.Exec(ctx, `DROP INDEX idx_identity_resource_latest`); err != nil {

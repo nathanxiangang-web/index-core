@@ -7,22 +7,30 @@ Independent review and a separate deployment authorization are still required.
 ## Migration and compatibility
 
 0001..0006 are unchanged. From main schema5, explicitly apply0006 operational
-tables,0007 Root registration/backfill,0008 latest-observation index. From the
-PR148 lab schema6, apply only0007/0008. Each migration is transactional and
+tables,0007 Root registration/backfill,0008 latest-observation index and0009
+search_path repair of the Root registration function. From the PR148 lab
+schema6, apply only0007/0008/0009.0007 is frozen at the content production
+executed (`3a82f542`); PostgreSQL records applied migrations by name and never
+re-runs an edited file, so the search_path defect is repaired by forward
+migration0009 and never by editing0007. Each migration is transactional and
 recorded only after successful commit; failure of0008 may leave committed0007,
 so repair the cause and rerun the same binary's migrate before starting serve.
 
 0007 holds the Root-table DDL lock and scans Roots once; no Watch-table scan.
 0008 uses ordinary CREATE INDEX inside its migration transaction: it can block
-evidence writes and needs index build disk/WAL/time. Schedule a writer-stopped
-maintenance window; no CONCURRENTLY inside the existing migration transaction.
-Inspect real history/table/index size and free space read-only before authorizing
-that window. Real build time/storage are NOT_TRACKED in this development stage.
+evidence writes and needs index build disk/WAL/time.0009 is a function-catalog
+replacement only: `CREATE OR REPLACE FUNCTION` with
+`SET search_path = pg_catalog, public`, no data write, no trigger recreation and
+no table lock. Schedule a writer-stopped maintenance window; no CONCURRENTLY
+inside the existing migration transaction. Inspect real history/table/index size
+and free space read-only before authorizing that window. Real build
+time/storage are NOT_TRACKED in this development stage.
 
 Startup `doctor` and `serve` Ping the DB and require an exact known schema;
-serve never auto-migrates. Schema5/6 is rejected by the schema8 candidate; the
-old schema5 binary and PR148 schema6 binary reject schema8 even if F4 is off.
-No mixed old/new serving instances. Root creation runs the registration trigger
+serve never auto-migrates. Schema5/6 is rejected by the schema9 candidate; the
+old schema5 binary, the PR148 schema6 binary and any schema8 binary reject
+schema9 even if F4 is off. No mixed old/new serving instances. Root creation runs
+the registration trigger
 with invoker privileges; grant the application the required operational table
 INSERT privilege through the reviewed deployment role, not SECURITY DEFINER.
 
@@ -30,7 +38,7 @@ INSERT privilege through the reviewed deployment role, not SECURITY DEFINER.
 
 The migration identity owns/changes schema; the runtime LOGIN executes the
 application. Do not use a successful migrator doctor as evidence for a different
-runtime account. Schema8's invoker trigger requires budget INSERT even with F4
+runtime account. Schema9's invoker trigger requires budget INSERT even with F4
 OFF; successful covered completion also requires its SELECT/UPDATE privileges.
 No SECURITY DEFINER or runtime owner membership is needed.
 
@@ -84,10 +92,13 @@ For a separately authorized deployment:
    schema, Canonical IDs, generations, Journal sequence, Snapshot/admission and
    Work/Watch/budget state. Keep production DSNs out of shell history/logs.
 4. With writer stopped and backup verified, run the new binary's explicit migrate
-   under bounded lock/statement timeouts suitable for the approved window.
-   Run doctor; verify schema8, trigger/index, Root/budget coverage and unchanged
-   existing reservation/queue anchors. A failure is a failed cutover, not a reason
-   to edit historical migrations or clear operational data.
+   under bounded lock/statement timeouts suitable for the approved window. On a
+   database that already applied0007,0009 replaces the registration function and
+   is recorded in `schema_migrations`; it changes no table, trigger or data.
+   Run doctor; verify schema9, trigger/index, the pinned `search_path` function
+   definition and Root/budget coverage, and unchanged existing reservation/queue
+   anchors. A failure is a failed cutover, not a reason to edit historical
+   migrations or clear operational data.
 5. Start the single new binary using reviewed existing settings, F4 default OFF,
    existing Reader count/intervals. Check readiness, Runtime startup/recovery and
    normal task completion. Enable F4 only if separately authorized with explicit
@@ -97,10 +108,14 @@ Prefer rollback by stopping F4/F2 with the **same new binary/schema** and draini
 durable work normally. The verified-success path now frees old reservations even
 with F4 off. Failure/cancellation retains intent; never manually clear reservations
 to manufacture progress. Global admission time survives off/on and restart.
-There are no down migrations. Old-binary rollback requires a verified **whole DB
-restore** to the old compatible schema, with an explicit plan for writes after
-the backup and the corresponding approved recovery-point tradeoff. Dropping0006
-tables or deleting migration markers is not rollback.
+There are no down migrations, and0007 is never edited to behave like one. A
+schema8 binary rejects schema9 as an unexpected future migration
+(`SchemaState.Compatible()` refuses applied migrations the binary does not
+know), so old-binary rollback requires a verified **whole DB restore** to the old
+compatible schema **together with the matching schema8 binary**, with an explicit
+plan for writes after the backup and the corresponding approved recovery-point
+tradeoff. A binary-only downgrade is not supported. Dropping0006 tables or
+deleting migration markers is not rollback.
 
 The isolated functional rehearsal built the exact main9a33d011 binary, created
 its real schema5, loaded only fake business data (including eight Journal events
@@ -110,6 +125,18 @@ and pending Work; the main binary rejected schema8, and accepted the separately
 restored schema5 backup. A second schema8 backup/restore preserved all table
 fingerprints, including existing budget/binding metadata. Receipts and dump
 hashes are in this phase's evidence; no production backup or restore was run.
+
+The schema9 step requires its own rehearsal in the same isolated owned fixture:
+build the schema9 binary, apply0009 to a schema8 fixture, and verify the
+`schema_migrations` row for0009, the function `proconfig` pinning
+`search_path = pg_catalog, public`, unchanged table/budget fingerprints and a
+non-owner Root creation that persists its budget. Take and restore a schema9
+custom-format backup, compare all business-table fingerprints and the restored
+trigger/function metadata, then confirm the old schema8 binary refuses that
+schema9 database. Because schema9 cannot be downgraded in place, this
+whole-DB backup is the only old-version rollback basis; the upgrade from schema8
+is proven by the schema8→9 regression and a receipt must be filed before a real
+cutover. These are preparation requirements, not production evidence.
 
 The development backup/restore exercise uses only an owned disposable fixture;
 it is not proof of production backup size, role/extension compatibility, timing
