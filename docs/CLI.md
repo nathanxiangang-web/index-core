@@ -45,10 +45,19 @@ explicit; UNKNOWN exits1 even if persisted checks pass. See
 | `INDEXCORE_HINT_TOKEN` | no flag; env-only secret | empty |
 | `INDEXCORE_INCREMENTAL_RUNTIME_ENABLED` | `--incremental-runtime` | `false` |
 | `INDEXCORE_INCREMENTAL_WAKE_INTERVAL` | `--incremental-wake-interval` | `5s` |
+| `INDEXCORE_INCREMENTAL_READ_WORKERS` | `--incremental-read-workers` | `1` (valid: `1`, `2`, `4`, `8`) |
+| `INDEXCORE_SOURCE_GLOBAL_INTERVAL` | `--source-global-interval` | `100ms` |
+| `INDEXCORE_SOURCE_ROOT_INTERVAL` | `--source-root-interval` | `100ms` |
+| `INDEXCORE_SOURCE_PROVIDER_INTERVAL` | `--source-provider-interval` | `100ms` |
+| `INDEXCORE_INCREMENTAL_DISCOVERY_SCOPE` | env only | empty |
+| `INDEXCORE_INCREMENTAL_FIRST_DISCOVERY_ENABLED` | `--incremental-first-discovery` | `false` |
+| `INDEXCORE_INCREMENTAL_MIRROR_REVISIT` | `--incremental-mirror-revisit` | `0` (disabled; `30s..1h` when enabled) |
 
 Valid log levels: `debug|info|warn|error`.
 
 Valid log formats: `text|json`.
+
+Source reader counts above `1`, F1 first-discovery, and F2 mirror-revisit are opt-in scheduling controls, not production authorization. The three source spacing values are process-local minimums and do not establish a provider/account quota. See [OPERATING-STANDARDS.md](OPERATING-STANDARDS.md).
 
 ## Database
 

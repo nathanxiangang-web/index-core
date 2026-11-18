@@ -23,6 +23,16 @@ Gate 5: NOT AUTHORIZED
 
 IndexCore is not a CloudSite-only module and is not a full product backend.
 
+## 1.1 Latest verified checkpoint (2026-11-06)
+
+- Current remote main: 9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e.
+- PR #145 is merged; exact merged-main CI #40265606961 completed successfully.
+- P12 shortened cross-repository test validation is accepted. The original >=30-minute / >=100-visibility acceptance soak was not run.
+- The last recorded production receipt is dated 2026-10-26: N1 hotfix 9a33d011 was deployed and observed for 31 probes / 1800 seconds with zero fatal, cycle-failure, and unplanned-restart deltas. This is a dated receipt, not a live status check.
+- That receipt did not prove a natural changed-source/APPLIED outcome or production performance acceptance. Source HTTP starts and actual 429/5xx remained NOT_TRACKED; N2 stayed HOLD; F1/F2 remained off.
+- Issues #132, #134, and #138 remain open. Re-check their latest evidence before acting. Do not infer production state from GitHub merge state.
+
+
 ## 2. Core flow
 
 ```text

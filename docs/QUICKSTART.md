@@ -9,7 +9,8 @@ Current maturity:
 ```text
 Gate 1–4                         ARCHITECT_ACCEPTED
 Incremental P0–P11              ARCHITECT_ACCEPTED
-P12 Deployment Soak             PLAN ACCEPTED / EXECUTION AUTHORIZED
+P12 shortened cross-repo validation COMPLETE / ARCHITECT_ACCEPTED
+Original >=30m / >=100 acceptance soak NOT RUN / NOT CLAIMED
 Hybrid incremental runtime      default disabled
 Gate 5                          NOT AUTHORIZED
 ```
@@ -20,7 +21,7 @@ For the current system picture, read [ARCHITECTURE.md](ARCHITECTURE.md).
 
 For a host build:
 
-- Go 1.27.x;
+- Go 1.27.1 (see go.mod);
 - PostgreSQL 18.x;
 - rclone on PATH when using the rclone collector.
 
@@ -315,4 +316,7 @@ See [CLI.md](CLI.md).
 - HTTP API: [HTTP-API.md](HTTP-API.md)
 - Application integration: [INTEGRATION.md](INTEGRATION.md)
 - Operations: [OPERATIONS.md](OPERATIONS.md)
+- Development: [DEVELOPMENT.md](DEVELOPMENT.md)
+- AI workflow: [AI-DEVELOPMENT-PROTOCOL.md](AI-DEVELOPMENT-PROTOCOL.md)
+- Operating standards: [OPERATING-STANDARDS.md](OPERATING-STANDARDS.md)
 - P12 soak plan: [architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md](architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md)

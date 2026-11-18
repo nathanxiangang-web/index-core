@@ -1,6 +1,6 @@
 # IndexCore Operations
 
-Current mode: **Stable Alpha Foundation / Incremental Hardening**. P0–P11 are Architect-accepted; P12 deployment soak with the separate Reference Web consumer is the active validation phase.
+Current mode: **Stable Alpha Foundation / Incremental Hardening**. Gate 1–4 and incremental P0–P11 are Architect-accepted. P12 shortened cross-repository test validation is complete and accepted; the original >=30-minute / >=100-visibility acceptance soak was not run. See [PROJECT-STATE.md](../PROJECT-STATE.md) for dated operational evidence and [OPERATING-STANDARDS.md](OPERATING-STANDARDS.md) for release, rollback, and safety rules.
 
 IndexCore is a single Go runtime backed by PostgreSQL 18. The public application-facing surface is read-only HTTP.
 
@@ -36,9 +36,16 @@ IndexCore
 | `INDEXCORE_HINT_ADDR` | empty (disabled) | trusted Hint listener, literal loopback `127.0.0.1:<port>` / `[::1]:<port>` |
 | `INDEXCORE_HINT_TOKEN` | empty | trusted Hint bearer token, env-only, `>= 32` bytes when enabled |
 | `INDEXCORE_INCREMENTAL_RUNTIME_ENABLED` | `false` | accepted in-process hybrid incremental runtime |
-| `INDEXCORE_INCREMENTAL_WAKE_INTERVAL` | `5s` | hybrid runtime scheduler wake interval, `1s..60s` when enabled |
+| `INDEXCORE_INCREMENTAL_WAKE_INTERVAL` | `5s` | hybrid runtime scheduler check interval, `1s..60s`; not provider polling cadence |
+| `INDEXCORE_INCREMENTAL_READ_WORKERS` | `1` | source readers; `1` is serial, `2/4/8` are explicit opt-ins |
+| `INDEXCORE_SOURCE_GLOBAL_INTERVAL` | `100ms` | process-wide minimum source HTTP spacing |
+| `INDEXCORE_SOURCE_ROOT_INTERVAL` | `100ms` | per-Root minimum source HTTP spacing |
+| `INDEXCORE_SOURCE_PROVIDER_INTERVAL` | `100ms` | per-source-group minimum source HTTP spacing |
+| `INDEXCORE_INCREMENTAL_DISCOVERY_SCOPE` | empty | optional explicit discovery scope |
+| `INDEXCORE_INCREMENTAL_FIRST_DISCOVERY_ENABLED` | `false` | F1 first-discovery scheduling, default off |
+| `INDEXCORE_INCREMENTAL_MIRROR_REVISIT` | `0` | F2 mirror revisit interval; disabled at zero, `30s..1h` when enabled |
 
-See [.env.example](../.env.example).
+See [.env.example](../.env.example). Source budgets are process-local safeguards, not proof of an upstream account quota. Reader counts above 1 and F1/F2 require isolated evidence, a measured request envelope, and separate operator authorization; they are not approved for production by appearing in this table.
 
 ## Hybrid incremental runtime (P10/P11 accepted, opt-in)
 

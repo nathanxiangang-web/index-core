@@ -6,7 +6,9 @@
 >
 > Incremental P0–P11: **ARCHITECT_ACCEPTED**
 >
-> P12 Deployment Soak with Reference Test Web: **PLAN ACCEPTED / EXECUTION AUTHORIZED**
+> P12 shortened cross-repository test validation: **COMPLETE / ARCHITECT_ACCEPTED**
+>
+> Original >=30-minute / >=100-visibility acceptance soak: **NOT RUN / NOT CLAIMED**
 >
 > Incremental runtime repository default: **disabled**
 >
@@ -535,11 +537,13 @@ Consumers and deployment platforms should use the distinction correctly.
 
 ---
 
-## 13. Current P12 validation phase
+## 13. P12 validation result
 
-P12 is the current cross-repository deployment-soak phase.
+P12 shortened cross-repository test validation is **COMPLETE / ARCHITECT_ACCEPTED**. The fail-closed harness exercised the accepted chain with a 60-second test profile and 42 successful mutation-to-Reference-Test-Web visibility observations, plus burst, transient retry, graceful restart, crash recovery, and durable-state checks.
 
-It combines:
+The original >=30-minute / >=100-visibility acceptance soak was **NOT RUN / NOT CLAIMED**. This result does not authorize runtime default-on, provider concurrency, a new writer, schema expansion, or Gate 5. The repository default remains disabled.
+
+The validation exercised:
 
 - accepted P11 hybrid runtime;
 - a controlled AList/OpenList-compatible fixture;
@@ -550,11 +554,9 @@ It combines:
 - controlled crash/startup recovery;
 - continuous read-only observations through the `indexcore-reference-web` test Web.
 
-P12 does not change the production architecture.
+P12 did not change the production architecture. The result report is authoritative for what was actually run; the plan below is retained as the historical acceptance design.
 
-It validates the architecture already accepted.
-
-The authoritative plan is:
+The authoritative result is [P12 result](incremental/P12-DEPLOYMENT-SOAK-RESULT.md). The plan is:
 
 [`architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md`](architecture/INCREMENTAL-P12-DEPLOYMENT-SOAK.md)
 
