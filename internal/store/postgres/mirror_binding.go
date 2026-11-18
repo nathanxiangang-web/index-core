@@ -89,10 +89,10 @@ func lockMirrorAdapter(ctx context.Context, tx pgx.Tx, root string) (AdapterConf
 }
 
 func (s *Store) completeMirrorReservation(ctx context.Context, tx pgx.Tx, root, scope string, verified int64, now time.Time, proof mirrorProof) error {
-	if s.rolling == nil {
-		return nil
-	}
-	if proof.valid {
+	// Flag-off stops admission/lifecycle, not acknowledgement of a previously
+	// reserved successful prefix. Otherwise an off/drain/on transition strands
+	// the Root forever. Failures/cancellation never reach this success path.
+	if s.rolling != nil && proof.valid {
 		if _, err := tx.Exec(ctx, `UPDATE index_mirror_watch_binding SET lifecycle='ACTIVE',lease_expires_at=$3,freshness_at=$4,last_observed_at=$4,updated_at=$4,renewals=renewals+1
 WHERE root_id=$1 AND scope_key=$2 AND resource_id=$5 AND canonical_path=$6 AND adapter_digest=$7 AND adapter_revision=$8 AND lifecycle<>'RETIRED'`, root, scope, now.Add(s.rolling.Lease), now, proof.resourceID, proof.canonicalPath, proof.digest, proof.revision); err != nil {
 			return err
