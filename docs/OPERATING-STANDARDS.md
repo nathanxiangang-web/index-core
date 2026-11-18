@@ -33,6 +33,7 @@ The Hint listener must bind to literal loopback (127.0.0.1 or ::1) and use an en
 - indexcore scan --root ... performs real Collector work and may generate upstream provider requests. It is not a harmless read-only diagnostic.
 - indexcore root diagnose is bounded/read-only and must not be described as source freshness or downstream consumer proof.
 - serve never auto-migrates. Migration is an explicit operator action.
+- An executed migration file is immutable. Never edit, rename, reorder, or delete a migration that may have run; an applied migration is recorded by name and is never re-executed. Repair the defect with a new forward migration applied to both fresh and already-migrated databases; do not "fix" history by rewriting the old file.
 
 Never perform ad hoc SQL updates to Root, Snapshot, Admission, Work, Canonical Inventory, or Journal in production. Never clear queues, bulk-retry INTERNAL work, fabricate coverage, force a generation, or synthesize Journal events.
 
@@ -59,7 +60,7 @@ Important distinctions:
 - Mock throughput does not authorize production concurrency.
 - Lower PENDING counts or more completed scopes do not prove better freshness.
 - F1/F2 and reader counts above 1 require isolated evidence, a measured request envelope, fairness/capacity analysis, rollback-to-serial proof, and separate operator authorization.
-- The last recorded production receipt (2026-10-26) used one reader and 200ms global/Root/provider spacing; F1/F2 were off. This is historical evidence, not a claim about today's live process.
+- The last recorded production receipt (2026-11-15) deployed commit `3a82f542` with schema upgraded 5→8, one writer, one reader and 200ms global/Root/provider spacing; F1, F2 and F4 were off. This is historical evidence, not a claim about today's live process.
 
 ## 5. Preflight before any production change
 
@@ -90,7 +91,7 @@ Do not infer the writer from an image tag or read-facade container. Inspect the 
 3. Confirm service UID, file ownership, permissions, config, mount, and rollback path before stopping the current writer.
 4. Drain only the owned IndexCore writer cleanly. Never stop unrelated application, database, proxy, or provider services.
 5. Ensure no second writer can start. Preserve the advisory lock boundary.
-6. Apply a migration only when it is part of the reviewed release and has a tested upgrade/restore plan. Do not infer that a code-only fix needs a migration.
+6. Apply a migration only when it is part of the reviewed release and has a tested upgrade/restore plan. Do not infer that a code-only fix needs a migration. Never edit a migration that may have executed; ship a new forward migration instead.
 7. Install the artifact atomically and start the single writer.
 8. Verify actual process SHA, UID, one writer, /readyz, and Q4/Q5/Q8/Q9/Journal continuity.
 9. Observe a prospective interval with explicit start/end UTC, fatal/cycle/restart deltas, source request rates/statuses, queue age, and changed-source outcomes.

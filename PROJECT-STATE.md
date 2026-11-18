@@ -4,7 +4,7 @@
 
 ## Last reviewed
 
-2026-11-06
+2026-11-15
 
 ## Verified repository baseline
 
@@ -25,21 +25,19 @@
 - Hybrid incremental runtime repository default: disabled.
 - Gate 5: NOT AUTHORIZED.
 
-## Last recorded production receipt (2026-10-26; not a live status check)
+## Last recorded production receipt (2026-11-15; not a live status check)
 
-Issue #144 operator receipt [#6416438985](https://github.com/nathanxiangang-web/index-core/issues/144#issuecomment-6416438985) records the N1 hotfix deployed from 9a33d011:
+The operator deployed commit `3a82f542` on 2026-11-15. The recorded deployment predicates are:
 
-- Native executable SHA256: 7818f9785fc56dac185ce882f94da18ae0c638f7f432b18370e5bbd2193da780.
-- 31 prospective probes over 1800.007354 seconds.
-- Fatal delta 0, cycle-failure delta 0, unplanned restart delta 0.
-- Q4/Q5/Q8/Q9, one writer, schema migration count, and Journal continuity were retained.
-- Reader count was 1; global/Root/provider spacing was 200ms.
-- F1 and F2 remained disabled.
-- 763 completed scopes were all NOOP; no natural changed-source/APPLIED result was witnessed.
-- Actual source HTTP starts and 429/5xx were NOT_TRACKED.
-- N2 remained HOLD; no production performance acceptance was claimed.
+- PostgreSQL schema moved 5 → 8 by explicitly applying migrations 0006–0008 with the writer stopped; serve did not auto-migrate.
+- Exactly one writer process owned the PostgreSQL advisory writer lock.
+- INDEXCORE_INCREMENTAL_READ_WORKERS was 1.
+- Global, per-Root and per-provider source spacing was 200ms.
+- F1 first-discovery, F2 mirror-revisit and F4 rolling admission were all OFF.
 
-This receipt proves only the recorded interval and predicates. It does not establish current live health on 2026-11-06, future stability, changed-source freshness, or performance. Re-read the operator host and latest Issue receipts before any live action.
+Schema 9 (`0009_mirror_root_registration_search_path.sql`) is a forward candidate only: it is not applied in production, no schema-9 binary is deployed, and remote main remains `9a33d0113ea8d6ddd1f66834ba7a781e5007fe3e`.
+
+This receipt proves only the recorded deployment predicates. It does not record artifact hashes, request counts, or Q4/Q5/Q8/Q9 and Journal deltas, and it does not establish current live health, future stability, changed-source freshness, or performance. Re-read the operator host and the latest Issue receipts before any live action.
 
 ## Active follow-ups and boundaries
 

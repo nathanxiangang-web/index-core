@@ -42,6 +42,7 @@ Preserve these rules:
 - The trusted Mutation Hint listener is a separate exact-loopback-only interface; it is not a public application API.
 - Missing or incomplete observations are not deletion evidence. Preserve the accepted absence, topology, identity, generation, FIFO, and Journal fences.
 - serve does not auto-migrate. Schema changes are explicit SQL-first migrations.
+- An executed migration file is immutable. Never edit, rename, reorder, or delete a migration that may have run; PostgreSQL records applied migrations by name and will not re-run an edited file. Repair a schema defect with a new forward migration that both a fresh database and an already-migrated database apply.
 
 Do not introduce product users/auth, search/catalog UX, preview/download, sharing, AI recommendations, direct 115 integration, or CloudSite-specific business logic into the Kernel.
 
