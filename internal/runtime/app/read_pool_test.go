@@ -25,6 +25,7 @@ import (
 
 type poolHTTP struct {
 	calls, active, peak, code, delay atomic.Int64
+	httpStatus                       atomic.Int64
 	api, duplicates                  atomic.Int64
 	seen                             sync.Map
 	visible                          atomic.Bool
@@ -79,6 +80,10 @@ func (h *poolHTTP) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-time.After(time.Duration(d)):
 		}
+	}
+	if h.bad == req.Path && h.httpStatus.Load() != 0 {
+		w.WriteHeader(int(h.httpStatus.Load()))
+		return
 	}
 	if h.bad == req.Path && h.code.Load() != 0 {
 		if h.http429 {

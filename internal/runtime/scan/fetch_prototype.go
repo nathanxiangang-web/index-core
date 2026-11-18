@@ -110,7 +110,7 @@ func (p *FetchPrototype) FetchScope(ctx context.Context, claimed state.DirtyScop
 	if !claimMatches(claimed, current) {
 		return nil, postgres.ErrScopedFetchStale
 	}
-	obs, err := p.s.readScope(ctx, claimed.RootID, claimed.ScopeKey, maxEntries)
+	obs, err := p.s.readClaimedScope(ctx, claimed, maxEntries)
 	if err != nil {
 		return nil, err
 	}

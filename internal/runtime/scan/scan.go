@@ -17,6 +17,7 @@ import (
 	"github.com/nathanxiangang-web/index-core/internal/collector/alist"
 	"github.com/nathanxiangang-web/index-core/internal/collector/rclone"
 	"github.com/nathanxiangang-web/index-core/internal/domain"
+	"github.com/nathanxiangang-web/index-core/internal/incremental/state"
 	"github.com/nathanxiangang-web/index-core/internal/kernel/reconcile"
 	"github.com/nathanxiangang-web/index-core/internal/sourcebudget"
 	"github.com/nathanxiangang-web/index-core/internal/store/postgres"
@@ -30,6 +31,17 @@ type Service struct {
 	timeout      time.Duration
 	logger       *slog.Logger
 	sourceBudget *sourcebudget.Manager
+}
+
+func (s *Service) readClaimedScope(ctx context.Context, w state.DirtyScopeWork, max int) (*scopeObservation, error) {
+	background, err := s.store.IsMirrorBackground(ctx, w)
+	if err != nil {
+		return nil, err
+	}
+	if background {
+		ctx = sourcebudget.Background(ctx)
+	}
+	return s.readScope(ctx, w.RootID, w.ScopeKey, max)
 }
 
 // WithSourceBudget returns an immutable service clone before actor startup.

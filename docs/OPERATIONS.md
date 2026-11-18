@@ -81,6 +81,14 @@ schema compatible
 
 ## Startup sequence
 
+Schema8/F4 candidates require an explicit runtime-account permission preflight,
+including Root budget registration even when F4 is OFF. See
+[F4 deployment and GRANT recipes](p0/P0-134-F4-DEPLOYMENT.md) and the
+[complete PR148+149 review](p0/P0-134-F4-FINAL-REVIEW.md). Doctor and serve check
+the configured writer profile without performing writes; running doctor as the
+migration owner does not validate a separate service account. The new check is
+for the writer service, not a health check for a consumer/read-only DB account.
+
 Recommended:
 
 ```bash

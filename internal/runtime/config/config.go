@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nathanxiangang-web/index-core/internal/incremental/rolling"
 	"github.com/nathanxiangang-web/index-core/internal/incremental/state"
 	"github.com/nathanxiangang-web/index-core/internal/sourcebudget"
 )
@@ -46,6 +47,8 @@ type Config struct {
 	SourceGlobalInterval      time.Duration `json:"source_global_interval"`
 	SourceRootInterval        time.Duration `json:"source_root_interval"`
 	SourceProviderInterval    time.Duration `json:"source_provider_interval"`
+	MirrorRollingPercent      int           `json:"mirror_rolling_percent"`
+	RuntimeQueryCosts         bool          `json:"runtime_query_costs"`
 }
 
 // Defaults returns the default configuration (loopback HTTP, safe limits).
@@ -70,6 +73,20 @@ func Defaults() Config {
 // Load reads configuration from the environment on top of Defaults.
 func Load() (Config, error) {
 	c := Defaults()
+	if v := os.Getenv("INDEXCORE_MIRROR_ROLLING_PERCENT"); v != "" {
+		n, e := strconv.Atoi(v)
+		if e != nil {
+			return Config{}, errors.New("invalid mirror rolling percent")
+		}
+		c.MirrorRollingPercent = n
+	}
+	if v := os.Getenv("INDEXCORE_RUNTIME_QUERY_COSTS"); v != "" {
+		b, e := strconv.ParseBool(v)
+		if e != nil {
+			return Config{}, errors.New("invalid runtime query costs flag")
+		}
+		c.RuntimeQueryCosts = b
+	}
 	if v := os.Getenv("INDEXCORE_INCREMENTAL_READ_WORKERS"); v != "" {
 		n, e := strconv.Atoi(v)
 		if e != nil {
@@ -157,6 +174,8 @@ func Load() (Config, error) {
 
 // RegisterFlags binds the configuration onto a flag set. Flags override env.
 func (c *Config) RegisterFlags(fs *flag.FlagSet) {
+	fs.IntVar(&c.MirrorRollingPercent, "mirror-rolling-percent", c.MirrorRollingPercent, "background rolling HTTP share:0 off,1..50 opt-in; requires hybrid F2")
+	fs.BoolVar(&c.RuntimeQueryCosts, "runtime-query-costs", c.RuntimeQueryCosts, "aggregate redacted Runtime SQL costs on shutdown (default off)")
 	fs.IntVar(&c.IncrementalReadWorkers, "incremental-read-workers", c.IncrementalReadWorkers, "incremental source readers:1(default serial),2,4,8 opt-in")
 	fs.DurationVar(&c.SourceGlobalInterval, "source-global-interval", c.SourceGlobalInterval, "global incremental HTTP minimum spacing")
 	fs.DurationVar(&c.SourceRootInterval, "source-root-interval", c.SourceRootInterval, "per-Root incremental HTTP minimum spacing")
@@ -195,6 +214,14 @@ func (c Config) LoopbackOnly() bool {
 
 // Validate rejects an invalid configuration before any background work starts.
 func (c Config) Validate() error {
+	if c.MirrorRollingPercent != 0 {
+		if !c.IncrementalRuntimeEnabled || c.IncrementalMirrorRevisit == 0 {
+			return errors.New("mirror rolling requires enabled hybrid runtime and F2")
+		}
+		if err := c.MirrorRollingPolicy().Validate(); err != nil {
+			return err
+		}
+	}
 	if c.IncrementalReadWorkers != 1 && c.IncrementalReadWorkers != 2 && c.IncrementalReadWorkers != 4 && c.IncrementalReadWorkers != 8 {
 		return errors.New("incremental-read-workers must be1/2/4/8")
 	}
@@ -257,6 +284,17 @@ func (c Config) SourceBudget() sourcebudget.Config {
 	b.Root = c.SourceRootInterval
 	b.Provider = c.SourceProviderInterval
 	return b
+}
+
+func (c Config) MirrorRollingPolicy() rolling.Policy {
+	d := c.SourceGlobalInterval
+	if c.SourceRootInterval > d {
+		d = c.SourceRootInterval
+	}
+	if c.SourceProviderInterval > d {
+		d = c.SourceProviderInterval
+	}
+	return rolling.Policy{SharePercent: c.MirrorRollingPercent, Spacing: d, Lease: 24 * time.Hour}
 }
 
 const (
