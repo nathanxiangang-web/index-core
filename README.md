@@ -1,5 +1,5 @@
 # IndexCore
-
+这是一个失败的项目 后续不再更新维护。
 **Provider-neutral canonical resource indexing kernel.**
 
 IndexCore collects resource observations from external sources, evaluates identity/completeness/safety, maintains one trustworthy Canonical Inventory, appends a canonical Change Journal, and exposes the result through a small read-only HTTP Query API.
